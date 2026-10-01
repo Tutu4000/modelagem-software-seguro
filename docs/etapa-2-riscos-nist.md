@@ -1,0 +1,221 @@
+# Etapa 2: Análise e Priorização de Riscos de Segurança
+
+Sistema analisado: **nugget-machine-3thousand-kill-master-0800**, plataforma de impressão 3D sob demanda (MVP).
+Método: ameaças classificadas por STRIDE e pontuadas por Probabilidade × Impacto (escalas de 1 a 4), na lógica de verossimilhança × impacto do NIST SP 800-30 Rev. 1.
+Data da análise: 2026-10-01.
+
+---
+
+## Parte 1: Mapeamento de Fontes da Documentação
+
+### Arquivos analisados
+
+| Arquivo | Conteúdo | Uso na análise |
+| --- | --- | --- |
+| `requisitos.md` | 24 requisitos funcionais (RF01–RF24) | Processos de negócio, perfis e operações |
+| `diagramas.md` | Mapa de requisitos (§1), casos de uso (§2), fluxo de compra (§3), ciclo de vida do pedido (§4), sequência com endpoints (§5), exceções e notificações (§6), modelo de domínio (§7), fluxo completo (§8) | Componentes, endpoints, fronteiras de confiança e fluxos de dados |
+| `README.md` | Visão geral e resumo do fluxo | Contexto do negócio |
+| `docs/`, `diagramas/`, `codigo/`, `evidencias/`, `roteiros/` | Arquivos vazios (estrutura do repositório) | Confirmam que não há modelo de ameaças formalizado |
+
+- `requisitos.md`, `diagramas.md` e o `README.md` com conteúdo estão no commit `49679ee`, que ainda não foi integrado ao `main`.
+- Nenhum documento define requisitos de segurança ou modelo de ameaças. Todas as ameaças abaixo foram extraídas dos componentes, endpoints e fluxos usando STRIDE.
+- Convenção de referência: §n é a seção n de `diagramas.md`; em §8, "bloco k" é o subgráfico numerado "k · ...".
+
+### Perfis de usuário
+
+| Perfil | Origem | Operações essenciais |
+| --- | --- | --- |
+| Usuário (cliente) | §2, §7 | Login, upload de STL e PDF, configuração, orçamento, pagamento, cancelamento, suporte, avaliação |
+| Equipe Técnica | §2, §5 | Revisão manual da DFM (RF20), montagem e insertos (RF22), suporte (RF11) |
+| Atendente de suporte | §6, §8 blocos 7 e 9 | Recebe escalonamentos e encaminha cancelamentos |
+| Operador de produção | Implícito em §4 | Move o pedido entre "Em Fatiamento", "Em Impressão", "Pós-Processamento", "Em Montagem" e "Enviado"; não aparece como ator |
+| Gateway de Pagamento | §2, §5 | Processa e confirma transações (RF08) |
+| Transportadora | §2, §5 | Cota frete (RF07) e atualiza a entrega (RF12, RF15) |
+
+### Processos de negócio críticos
+
+1. **Upload e validação do projeto:** upload do STL, prévia 3D, DFM e revisão técnica (RF02, RF03, RF19, RF20).
+2. **Orçamento e checkout:** material, fatiamento, acabamento, montagem, componentes, desconto, frete e pagamento (RF04–RF08, RF21–RF24).
+3. **Produção e entrega:** status do pedido, falhas de impressão, ruptura de estoque e incidentes de envio (RF12, RF14–RF16; §4).
+4. **Cancelamento e estorno** (RF10; §4, §8 bloco 8).
+5. **Comunicação com o cliente:** suporte, avaliações e notificações com fallback (RF11, RF13–RF17).
+
+### Componentes
+
+| Componente | Origem | Fronteira de confiança |
+| --- | --- | --- |
+| Interface Web | §5 | Lado do cliente (não confiável) |
+| Servidor da Aplicação: `POST /autenticacao/login`, `POST /modelos`, `GET /materiais/{id}/ficha-tecnica`, `POST /orcamentos`, `POST /frete/cotacao`, `POST /pagamentos` | §5 | Borda pública |
+| Renderização de prévia 3D | RF03; §5 (feita na mesma requisição do upload) | Interna, processa entrada não confiável |
+| Serviço DFM | RF19; §5 | Interna, processa entrada não confiável |
+| Estoque | RF16; §5 | Interna |
+| Serviço de Notificação (e-mail, SMS, WhatsApp, aplicativo) | RF14–RF17; §6 | Interna, entrega em canais externos |
+| Suporte (tickets) | RF11; §7 | Interna, recebe texto livre |
+| Gateway de Pagamento | RF08; §5 | Externa |
+| Transportadora | RF07, RF12, RF15; §5 | Externa |
+| Armazenamento de arquivos, banco de dados e painel interno | Implícitos em §7; não modelados | Não definida |
+
+### Ativos críticos
+
+| Ativo | Onde aparece | Por que é crítico |
+| --- | --- | --- |
+| Credenciais e sessões | RF01; §5 | Dão acesso a todos os outros ativos do cliente |
+| Dados pessoais (nome, e-mail, telefone, endereço) | §7 `Usuario`, `Endereco` | Protegidos pela LGPD |
+| Arquivos STL e desenhos técnicos PDF | §7 `ModeloSTL`, `ServicoMontagem` | Propriedade intelectual do cliente; um vazamento não pode ser desfeito |
+| Transações de pagamento | RF08; §7 `Pagamento` | Perda financeira direta; escopo PCI DSS |
+| Integridade do preço (orçamento, desconto, frete) | RF06, RF07, RF24 | Define quanto é cobrado |
+| Estado do pedido | §4 | Libera produção, envio e estorno |
+| Capacidade de processamento e insumos | RF03, RF19, RF16 | Recurso compartilhado por todos os clientes |
+| Canais de comunicação e reputação | RF13–RF17 | Confiança do cliente na marca |
+
+---
+
+## Parte 2: Tabela de Registro e Categorização de Riscos
+
+Faixas: 1–3 Baixo · 4–7 Moderado · 8–11 Alto · 12–16 Crítico.
+Total: **29 riscos**, sendo 4 críticos, 10 altos, 13 moderados e 2 baixos.
+
+| Arquivo / Origem | Ameaça (STRIDE) | Vulnerabilidade / Falta de Controle | Probabilidade (1-4) | Impacto (1-4) | Pontuação (P×I) | Criticidade |
+| --- | --- | --- | --- | --- | --- | --- |
+| **R01** · `requisitos.md` RF01; `diagramas.md` §8 bloco 1 | Spoofing | Login sem limite de tentativas, bloqueio progressivo ou MFA; o laço "Erro de autenticação → Login" do §8 não tem fim. Abre caminho para força bruta e credential stuffing. | 4 | 3 | 12 | Crítico |
+| **R02** · `diagramas.md` §8 bloco 1 ("Cadastro de conta") | Spoofing | Cadastro sem verificação de e-mail ou telefone e sem proteção contra automação. Contas falsas em massa amplificam R07, R23 e R26. | 3 | 2 | 6 | Moderado |
+| **R03** · `diagramas.md` §5 ("Sessão autenticada") | Spoofing | Sessão sem definição de expiração, revogação no logout, rotação após o login ou atributos de cookie (Secure, HttpOnly, SameSite). Permite sequestro de sessão e CSRF. | 2 | 3 | 6 | Moderado |
+| **R04** · `diagramas.md` §8 bloco 1 ("Possui conta?", "Credenciais válidas?") | Information Disclosure | Respostas diferentes para conta inexistente e senha errada permitem enumerar os e-mails cadastrados. Não há fluxo de recuperação de senha especificado. | 3 | 1 | 3 | Baixo |
+| **R05** · `requisitos.md` RF09, RF10, RF12; `diagramas.md` §7 (`Pedido.id`, `ModeloSTL`) | Elevation of Privilege | Não há modelo de autorização por objeto: nada garante que o pedido ou o modelo de um `id` pertence ao usuário da sessão (IDOR). Um cliente lê STL, PDFs e endereços de outros e cancela pedidos alheios. | 4 | 4 | 16 | Crítico |
+| **R06** · `diagramas.md` §2 (Equipe Técnica), §4, §5 ("Parecer técnico"), §6 ("suporte humano") | Elevation of Privilege | Perfis internos (revisor, atendente, operador de produção) não estão definidos, e ninguém é dono das transições de §4 nem do estorno. Um cliente que alcance essas funções aprova o próprio projeto, marca o pedido como enviado ou dispara estorno. | 3 | 4 | 12 | Crítico |
+| **R07** · `requisitos.md` RF02, RF03, RF19; `diagramas.md` §5 (`POST /modelos` devolve a prévia na mesma requisição) | Denial of Service | Sem limite de tamanho, de triângulos ou de uploads por usuário, e com renderização e DFM síncronas no servidor da aplicação. STL gigante ou malformado esgota CPU e memória e derruba a plataforma toda. | 3 | 4 | 12 | Crítico |
+| **R08** · `requisitos.md` RF02; `diagramas.md` §8 bloco 2 ("Arquivo STL válido?") | Elevation of Privilege | O critério de "STL válido" não está definido (extensão ou conteúdo). Arquivo malicioso explora o parser de malha do renderizador ou da DFM (execução de código), ou o nome do arquivo provoca path traversal. | 2 | 4 | 8 | Alto |
+| **R09** · `diagramas.md` §7 (`ModeloSTL.arquivo`, `urlPrevia`, `ServicoMontagem.desenhoTecnicoPDF`) | Information Disclosure | Propriedade intelectual do cliente sem requisito de cifragem em repouso, de retenção ou de acesso mínimo pela equipe; `urlPrevia` sugere link direto, sem assinatura nem expiração. | 3 | 3 | 9 | Alto |
+| **R10** · `requisitos.md` RF22; `diagramas.md` §3 e §8 bloco 3 ("upload de desenho técnico PDF") | Elevation of Privilege | O PDF enviado pelo cliente é aberto pela equipe de montagem sem sanitização nem visualização isolada. Um documento malicioso compromete a estação interna. | 3 | 3 | 9 | Alto |
+| **R11** · `requisitos.md` RF19, RF20; `diagramas.md` §4 | Tampering | §4 não define o que acontece se o arquivo for trocado depois de "Aprovado para Produção", nem garante que só o servidor executa essa transição. Uma peça não validada chega à produção. | 3 | 2 | 6 | Moderado |
+| **R12** · `requisitos.md` RF20; `diagramas.md` §5 ("Parecer técnico") | Repudiation | Parecer técnico sem registro de autor, data e versão (hash) do arquivo avaliado. Se a peça falhar, não há como provar o que foi aprovado. | 3 | 2 | 6 | Moderado |
+| **R13** · `requisitos.md` RF06, RF07, RF21–RF24; `diagramas.md` §5 (`POST /orcamentos`, `POST /frete/cotacao`), §7 (`precoUnitario`, `quantidade`) | Tampering | Não está definido que preço, desconto e frete são recalculados no servidor e congelados até o pagamento. Quantidade negativa ou zero, troca de quantidade depois do desconto progressivo ou frete alterado no cliente reduzem o total. | 3 | 3 | 9 | Alto |
+| **R14** · `requisitos.md` RF08; `diagramas.md` §5 ("PG → API: Aprovado") | Spoofing | A confirmação aparece só como resposta síncrona do gateway; o caminho assíncrono (PIX, boleto) não está desenhado e não exige webhook assinado. Uma confirmação forjada põe o pedido em produção sem pagamento. | 3 | 3 | 9 | Alto |
+| **R15** · `diagramas.md` §3 ("Pagamento aprovado? Não → Processar pagamento"), §8 bloco 4 ("Tentar novamente") | Spoofing | Retentativa de pagamento ilimitada e sem chave de idempotência. Permite testar cartões roubados (card testing) e gera cobranças duplicadas; o gateway pode suspender a conta. | 3 | 3 | 9 | Alto |
+| **R16** · `diagramas.md` §5 (Interface Web → `POST /pagamentos` → API → Gateway) | Information Disclosure | Os dados de cartão passam pelo servidor da aplicação, sem tokenização no front. A API entra no escopo PCI DSS e o número do cartão pode parar em logs ou no banco. | 2 | 4 | 8 | Alto |
+| **R17** · `requisitos.md` RF10; `diagramas.md` §4 ("Cancelamento Solicitado"), §8 bloco 8 | Tampering | Há uma corrida entre o pedido de cancelamento e o início da impressão, e §4 devolve o pedido a "Pago" quando a solicitação é recusada, mesmo vindo de "Em Fatiamento" (regressão de estado). Resultado possível: estorno feito e peça produzida. | 2 | 3 | 6 | Moderado |
+| **R18** · `requisitos.md` RF08–RF10; `diagramas.md` §4 | Repudiation | Sem trilha de auditoria para aceite do orçamento, pagamento, cancelamento e mudança de status. O cliente contesta a compra (chargeback) e a empresa não tem prova. | 3 | 2 | 6 | Moderado |
+| **R19** · `requisitos.md` RF07, RF08; `diagramas.md` §5 ("Cotar frete", "Processar transação") | Denial of Service | O checkout depende de chamadas síncronas à transportadora e ao gateway, sem timeout, fallback ou cache; a cotação de frete sem limite esgota a cota da API externa. As vendas param. | 3 | 3 | 9 | Alto |
+| **R20** · `requisitos.md` RF12, RF15; `diagramas.md` §2 (Transportadora → RF12), §8 bloco 6 | Spoofing | Atualizações de rastreio e de incidente vindas da transportadora sem autenticação da origem. Um "Entregue" falso encerra o pedido e libera a avaliação. | 2 | 2 | 4 | Moderado |
+| **R21** · `requisitos.md` RF11; `diagramas.md` §8 blocos 7 ("Encaminhar cancelamento") e 9 (escalonamento) | Spoofing | Suporte sem procedimento de verificação de identidade. Engenharia social obtém dados de um pedido ou cancela o pedido de outra pessoa. | 2 | 3 | 6 | Moderado |
+| **R22** · `requisitos.md` RF11, RF13; `diagramas.md` §7 (`TicketSuporte.mensagens`, `Avaliacao.comentario`) | Tampering | Texto livre de tickets, avaliações e feedback exibido no painel interno e na loja sem requisito de sanitização. XSS armazenado rouba a sessão de um atendente e amplia R06. | 3 | 3 | 9 | Alto |
+| **R23** · `requisitos.md` RF13; `diagramas.md` §4 ("Entregue → Avaliado"), §7 (`Pedido` → `0..1 Avaliacao`) | Spoofing | A regra "só o dono, só após a entrega, uma única vez" está no fluxo, mas não como validação no servidor. Avaliações falsas manipulam a reputação. | 2 | 2 | 4 | Moderado |
+| **R24** · `requisitos.md` RF14–RF17; `diagramas.md` §6, §8 bloco 9 | Spoofing | Notificações por e-mail, SMS e WhatsApp sem autenticação de remetente (SPF, DKIM, DMARC, remetente verificado). Avisos de "falha de impressão" ou "problema de envio" viram modelo pronto de phishing. | 3 | 3 | 9 | Alto |
+| **R25** · `requisitos.md` RF17; `diagramas.md` §6 | Information Disclosure | O fallback aciona canais alternativos com contatos não verificados ou desatualizados e envia dados do pedido e o endereço a terceiros. | 2 | 3 | 6 | Moderado |
+| **R26** · `requisitos.md` RF17; `diagramas.md` §6, §8 (disparos para "Serviço de notificação") | Denial of Service | Disparos e retentativas em canais pagos sem teto por usuário ou por evento. Permite SMS pumping com números cadastrados de propósito, e um bloqueio pelo provedor silencia todos os avisos. | 3 | 2 | 6 | Moderado |
+| **R27** · `requisitos.md` RF16; `diagramas.md` §5 (API → Estoque), §8 blocos 3 e 5 | Denial of Service | O estoque é verificado na configuração e de novo após o pagamento, sem reserva definida. Pedidos fantasmas esgotam o insumo ou pedidos pagos ficam sem material. | 2 | 2 | 4 | Moderado |
+| **R28** · `requisitos.md` RF18; `diagramas.md` §5 (`/ficha-tecnica`), §7 (`urlFichaTecnica`) | Tampering | "Links diretos" para fichas técnicas em domínios de terceiros, sem curadoria. Sujeitos a link quebrado, sequestro de domínio expirado ou redirecionamento aberto. | 2 | 1 | 2 | Baixo |
+| **R29** · `diagramas.md` §5 (Interface Web, API, DFM, Estoque, Transportadora, Gateway), §7 (`Usuario`, `Endereco`) | Information Disclosure | Nenhum requisito de TLS entre os componentes, inclusive os internos, nem de cifragem de dados pessoais em repouso. | 2 | 3 | 6 | Moderado |
+
+### Matriz Probabilidade × Impacto
+
+| Probabilidade \ Impacto | 1 (Baixo) | 2 (Moderado) | 3 (Alto) | 4 (Crítico) |
+| --- | --- | --- | --- | --- |
+| **4 (Alta)** | | | R01 | R05 |
+| **3 (Média Alta)** | R04 | R02, R11, R12, R18, R26 | R09, R10, R13, R14, R15, R19, R22, R24 | R06, R07 |
+| **2 (Média Baixa)** | R28 | R20, R23, R27 | R03, R17, R21, R25, R29 | R08, R16 |
+| **1 (Baixa)** | | | | |
+
+---
+
+## Parte 3: Plano de Priorização e Ações Recomendadas
+
+Critério de ordenação: pontuação P×I; em caso de empate, vem primeiro o maior impacto; persistindo o empate, o fluxo de dados de maior alcance (ver item 2).
+
+### 1. Riscos Críticos (12–16)
+
+Os quatro dependem de decisões que dão forma à arquitetura: quem é dono de cada recurso, que papéis existem, se o processamento de arquivos é síncrono e como o login é protegido. Deixados para a implementação, cada correção vira retrabalho espalhado por vários endpoints, em vez de um componente desenhado uma única vez.
+
+**1º · R05 · Acesso a objetos de outros usuários (IDOR) · 4 × 4 = 16**
+
+- **Impacto no negócio:** um único cliente autenticado percorre ids e baixa os STL e PDFs de todos os clientes, vê endereços e telefones e cancela pedidos alheios. Atinge a base inteira de uma vez, e um projeto vazado não pode ser recuperado. É incidente a comunicar à ANPD pela LGPD.
+- **Por que resolver na arquitetura:** a checagem de dono atravessa todos os endpoints de §5 e todas as entidades de §7. Sem dono no modelo de domínio e sem uma camada central de autorização, cada handler implementa a própria checagem, e basta um esquecer.
+- **Decisão de arquitetura:** dono explícito em `Pedido`, `ModeloSTL`, `ServicoMontagem` e `TicketSuporte`; ids não sequenciais; política de negar por padrão aplicada numa camada única.
+
+**2º · R06 · Funções internas sem papéis definidos · 3 × 4 = 12**
+
+- **Impacto no negócio:** a revisão técnica, as transições de produção e envio e o estorno não têm dono. Se um cliente alcançar essas funções, aprova o próprio projeto, marca o pedido como enviado ou dispara estorno. Um funcionário com acesso total vira ponto único de abuso interno.
+- **Por que resolver na arquitetura:** separar a API pública do back-office é uma decisão de implantação, e a máquina de estados de §4 precisa dizer quem executa cada transição. Se isso for decidido no código, vira condicional espalhada.
+- **Decisão de arquitetura:** catálogo de papéis (cliente, revisor técnico, atendente, operador de produção, administrador); matriz papel × transição de §4; back-office separado, com MFA obrigatório para funcionários.
+
+**3º · R07 · Esgotamento do processamento de STL · 3 × 4 = 12**
+
+- **Impacto no negócio:** o upload é a entrada de todo pedido. Com renderização e DFM síncronas no servidor da aplicação (§5), poucos arquivos com milhões de triângulos, maliciosos ou apenas escaneamentos 3D grandes, param a plataforma inteira, não só o upload.
+- **Por que resolver na arquitetura:** trocar o processamento síncrono por fila e workers muda o contrato da API (a prévia passa a ser assíncrona, com um status "Processando") e o front. O mesmo worker isolado também contém R08.
+- **Decisão de arquitetura:** fila de processamento; workers em sandbox, sem rede e com limite de CPU, memória e tempo; limite de tamanho e de triângulos checado antes de enfileirar; cota de uploads por usuário.
+
+**4º · R01 · Força bruta e credential stuffing no login · 4 × 3 = 12**
+
+- **Impacto no negócio:** credential stuffing com senhas vazadas de outros serviços é automatizado e barato. A conta tomada expõe dados pessoais, endereços, histórico e arquivos, e permite pedir e cancelar em nome do cliente.
+- **Por que resolver na arquitetura:** o laço sem fim do §8 bloco 1 precisa ser redesenhado. Limite de tentativas, bloqueio progressivo, MFA e recuperação de senha (que hoje não existe nos diagramas) exigem componentes próprios: limitador na borda, registro de tentativas e segundo fator.
+- **Decisão de arquitetura:** limite por IP e por conta, com espera progressiva; MFA opcional para clientes e obrigatório para funcionários; bloqueio de senhas sabidamente vazadas; recuperação de senha com token de uso único e expiração curta; mensagem de erro genérica, que também resolve R04.
+
+### 2. Riscos Altos e Moderados
+
+A ordem de atenção dentro de cada faixa segue os fluxos de dados mapeados na Parte 1:
+
+| Fluxo | Caminho em `diagramas.md` | Riscos |
+| --- | --- | --- |
+| **A · Dinheiro** | Orçamento → frete → pagamento → confirmação → estorno (§3, §5, §8 blocos 3, 4 e 8) | R13, R14, R15, R16, R17, R18, R19 |
+| **B · Arquivos do cliente** | Upload → prévia e DFM → armazenamento → equipe interna (§5, §7, §8 bloco 2) | R08, R09, R10, R11, R12 |
+| **C · Conteúdo e comunicação** | Tickets, avaliações, notificações e mensagens de terceiros (§6, §7, §8 blocos 6 a 9) | R20, R21, R22, R23, R24, R25, R26 |
+| **D · Identidade e transporte** | Cadastro, sessão e enlaces entre componentes (§5, §8 bloco 1) | R02, R03, R29 |
+| **E · Estoque** | Verificação e reserva de insumo (§5, §8 blocos 3 e 5) | R27 |
+
+- **A vem primeiro:** todo pedido pago passa por ele, a perda é imediata e mensurável, e ele recebe mensagens de dois terceiros (gateway e transportadora) que cruzam a fronteira de confiança.
+- **B em seguida:** leva entrada não confiável para processamento interno e para as estações da equipe. Boa parte das correções sai junto com R07 (o mesmo worker isolado).
+- **C depois:** o conteúdo do usuário chega à equipe (o XSS amplia R06), e as mensagens da plataforma saem para canais que a empresa não controla.
+- **D e E por último:** dependem mais de configuração do que de desenho, ou têm impacto local.
+
+**Riscos Altos (8–11)**
+
+| Ordem | ID | Risco | P × I | Fluxo | Justificativa |
+| --- | --- | --- | --- | --- | --- |
+| 5 | R13 | Manipulação de preço, desconto ou frete | 3 × 3 = 9 | A | Todo pedido passa por `POST /orcamentos`; a perda é direta e se repete em escala |
+| 6 | R14 | Confirmação de pagamento forjada | 3 × 3 = 9 | A | Produção sem receita; o caminho assíncrono (PIX, boleto) ainda não está desenhado |
+| 7 | R15 | Card testing e cobrança duplicada | 3 × 3 = 9 | A | O laço de retentativa está explícito em §3 e §8; o gateway pode suspender a conta |
+| 8 | R19 | Checkout parado por dependência externa | 3 × 3 = 9 | A | Duas chamadas síncronas a terceiros no caminho de toda venda |
+| 9 | R09 | Vazamento de STL e PDF armazenados | 3 × 3 = 9 | B | Ativo irrecuperável; `urlPrevia` é o ponto de exposição mais provável |
+| 10 | R10 | PDF malicioso contra a equipe interna | 3 × 3 = 9 | B | Única entrada de arquivo do cliente que uma pessoa abre diretamente |
+| 11 | R22 | XSS armazenado em tickets e avaliações | 3 × 3 = 9 | C | Leva à sessão de um funcionário e, por ela, a R06 |
+| 12 | R24 | Phishing com a identidade das notificações | 3 × 3 = 9 | C | O dano acontece fora do sistema, mas recai sobre a marca |
+| 13 | R16 | Dados de cartão passando pela API | 2 × 4 = 8 | A | Impacto máximo (PCI DSS); a probabilidade cai a quase zero com tokenização no front |
+| 14 | R08 | Exploração do parser de STL | 2 × 4 = 8 | B | Impacto máximo (execução de código); contido pelo mesmo sandbox de R07 |
+
+R16 e R08 ficam no fim da faixa pela pontuação, mas têm impacto 4 e saem baratos se decididos agora: tokenização no front para R16 e o sandbox de R07 para R08. Vale tratá-los no mesmo pacote dos críticos.
+
+**Riscos Moderados (4–7)**
+
+| Ordem | ID | Risco | P × I | Fluxo |
+| --- | --- | --- | --- | --- |
+| 15 | R17 | Corrida entre cancelamento e impressão; regressão de estado em §4 | 2 × 3 = 6 | A |
+| 16 | R21 | Engenharia social no suporte | 2 × 3 = 6 | C |
+| 17 | R25 | Vazamento por canal alternativo de notificação | 2 × 3 = 6 | C |
+| 18 | R03 | Sessão sem expiração e sem atributos de cookie definidos | 2 × 3 = 6 | D |
+| 19 | R29 | Falta de TLS interno e de cifragem em repouso | 2 × 3 = 6 | D |
+| 20 | R18 | Repúdio de compra por falta de trilha de auditoria | 3 × 2 = 6 | A |
+| 21 | R11 | Arquivo trocado após a aprovação da DFM | 3 × 2 = 6 | B |
+| 22 | R12 | Repúdio do parecer técnico | 3 × 2 = 6 | B |
+| 23 | R26 | Custo e bloqueio dos canais de SMS e WhatsApp | 3 × 2 = 6 | C |
+| 24 | R02 | Contas falsas em massa | 3 × 2 = 6 | D |
+| 25 | R20 | Rastreio falso da transportadora | 2 × 2 = 4 | C |
+| 26 | R23 | Avaliações falsas | 2 × 2 = 4 | C |
+| 27 | R27 | Esgotamento de estoque por pedidos fantasmas | 2 × 2 = 4 | E |
+
+Entre os moderados de pontuação 6, os de impacto 3 (vazamento de dados ou perda financeira) vêm antes dos de impacto 2. R02 fica no fim do grupo, mas é barato e reduz R07, R23 e R26; vale tratá-lo junto com R01.
+
+**Riscos Baixos (1–3):** R04 (3) se resolve com a mensagem de erro genérica de R01, e R28 (2) com fichas técnicas hospedadas pela própria plataforma.
+
+### 3. Recomendações Próximas
+
+| Pilar | Salvaguardas imediatas | Riscos tratados |
+| --- | --- | --- |
+| **1. Controle de acesso** | Autorização por objeto com negação por padrão; papéis com matriz papel × transição de estado; back-office separado com MFA; limite de tentativas e MFA no login; verificação de e-mail e telefone no cadastro; sessão com expiração e cookies Secure, HttpOnly e SameSite; verificação de identidade no suporte | R01, R02, R03, R04, R05, R06, R21, R23 |
+| **2. Isolamento de entradas não confiáveis** | Fila e workers em sandbox para STL; limites de tamanho e de triângulos; validação pelo conteúdo do arquivo, não pela extensão; PDF convertido ou exibido em ambiente isolado antes de chegar à equipe; sanitização de texto livre e Content Security Policy | R07, R08, R10, R22 |
+| **3. Integridade transacional** | Preço, desconto e frete calculados só no servidor e congelados num orçamento com validade; quantidade validada; confirmação de pagamento só por webhook assinado ou consulta ao gateway; chave de idempotência e limite de tentativas de pagamento; transições de estado atômicas (cancelamento versus início da impressão); nova DFM a cada troca de arquivo | R11, R13, R14, R15, R17 |
+| **4. Resiliência e disponibilidade** | Timeout, circuit breaker e cache na cotação de frete e no gateway; rate limit por endpoint; teto de envios por canal e por usuário nas notificações; reserva de estoque com expiração | R07, R19, R26, R27 |
+| **5. Criptografia e proteção de dados** | TLS em todos os enlaces, inclusive internos; cifragem em repouso de dados pessoais, STL e PDF; URLs de prévia assinadas e com expiração; tokenização do cartão no front, para que a API nunca veja o número; política de retenção e descarte de arquivos (LGPD) | R09, R16, R25, R29 |
+| **6. Auditoria e não repúdio** | Log append-only de login, aceite de orçamento, pagamento, cancelamento, parecer técnico (com hash do arquivo avaliado) e mudança de status. É também a base da detecção de intrusões da etapa 6 | R12, R18 |
+| **7. Comunicação e conteúdo confiáveis** | SPF, DKIM e DMARC no e-mail; remetentes verificados em SMS e WhatsApp; mensagens sem links de pagamento ou de senha; contato verificado antes de virar canal de fallback; autenticação das mensagens da transportadora; fichas técnicas hospedadas pela plataforma | R20, R24, R25, R28 |
+
+Os pilares 1 a 3 cobrem os 4 riscos críticos e 6 dos 10 altos; somando o pilar 5, chegam a 8 dos 10. O próximo passo é registrar essas salvaguardas como requisitos não funcionais de segurança e levá-las ao desenho de `docs/etapa-3-arquitetura-segura.md`.
