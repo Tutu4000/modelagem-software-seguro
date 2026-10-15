@@ -344,28 +344,28 @@ Os controles abaixo detalham as medidas da [seção 3.3](#33-recomendações-pr�
 
 |ID|Controle (onde e como funciona)|Função e categoria NIST|Responsável|Evidência e verificação|
 |-|-|-|-|-|
-|C01|Toda rota da API passa por um único ponto de autorização, que nega por padrão e confere se o pedido, o arquivo ou o laudo pertence ao usuário. Técnicos só acessam os pedidos atribuídos a eles pelo líder de produção|Protect (PR.AA)|Back-end|Teste automatizado em cada rota: o usuário A pede um recurso do usuário B e recebe 403. A revisão de código confirma que nenhuma rota fica fora desse ponto, e cada 403 é registrado no log|
-|C02|Pedidos, arquivos e laudos são identificados por UUID v4. O número exibido ao cliente não serve para buscar o recurso|Protect (PR.DS)|Back-end|Inspeção do esquema do banco. Teste que tenta IDs sequenciais e recebe 404|
-|C03|O armazenamento não tem nenhum objeto público. A API gera uma URL pré-assinada válida por 5 minutos, e só depois da conferência do C01|Protect (PR.DS, PR.AA)|Infraestrutura/DevOps e Back-end|Acesso direto ao armazenamento sem assinatura retorna 403, e uma URL expirada é recusada. A configuração do armazenamento é verificada todo mês|
-|C04|Os quatro perfis ([seção 3.1 da Etapa 1][e1-31]) são conferidos no servidor em todas as rotas de aprovação, edição de laudo e administração, sem depender do que a interface mostra|Protect (PR.AA)|Back-end|Um cliente que chama a rota de aprovação recebe 403 e o evento é registrado. A matriz de perfis por rota é revisada a cada versão|
-|C05|O painel interno fica em um endereço separado, acessível só pela VPN ou por uma lista de IPs. O login é por SSO com MFA para todos os perfis internos|Protect (PR.AA)|Infraestrutura/DevOps e Segurança da informação|Acessos de fora da VPN e logins sem o segundo fator são recusados. O relatório do SSO mostra MFA ativo em todas as contas internas|
-|C06|Uma conta interna só é criada a pedido do gestor e com o perfil aprovado pela segurança. Os acessos são revisados a cada três meses e removidos no mesmo dia do desligamento. Contas compartilhadas são proibidas|Govern (GV.RR), Protect (PR.AA)|Diretoria (aprova) e Segurança da informação (executa)|Ata de cada revisão trimestral. A lista de desligados do RH, comparada com as contas ativas, não mostra divergência|
-|C07|O login limita as tentativas por conta e por IP, com espera crescente e CAPTCHA depois de 5 falhas, sem bloqueio permanente. O cliente recebe aviso de login em dispositivo novo e pode ativar o MFA|Protect (PR.AA), Detect (DE.CM)|Back-end|Teste com 10 senhas erradas: a espera aumenta e o CAPTCHA aparece, mas o dono continua entrando com a senha certa. O aviso de dispositivo novo chega por e-mail|
-|C08|As sessões expiram depois de 30 minutos sem uso no painel e de 7 dias no site do cliente. O token é trocado a cada login e revogado no logout, e os cookies usam `HttpOnly`, `Secure` e `SameSite`|Protect (PR.AA)|Back-end|Inspeção dos cabeçalhos `Set-Cookie`. Um token reaproveitado depois do logout é recusado|
-|C09|Tudo o que o painel exibe vindo do cliente (mensagens, avaliações e nomes de arquivo) passa por codificação de saída. As páginas do painel usam CSP sem `unsafe-inline`|Protect (PR.PS)|Front-end|Um script inserido em cada um desses campos aparece como texto. O cabeçalho CSP está presente em todas as páginas do painel|
-|C10|O processamento usa uma fila com cota por conta (até 3 tarefas simultâneas). A API confere o tamanho, o formato e o número de polígonos antes de gravar o arquivo e de criar a tarefa. O escalonamento tem um teto de custo|Protect (PR.IR)|Back-end e Infraestrutura/DevOps|Um upload acima do limite é recusado antes da gravação. Num teste de carga com várias contas, a espera aumenta, mas o orçamento continua disponível|
-|C11|Os workers rodam em contêineres descartáveis, sem rede, sem root e com tempo e memória máximos por tarefa. A credencial de cada worker só lê o arquivo da tarefa. Os PDFs do RF22 são convertidos em imagem dentro do worker|Protect (PR.PS, PR.IR)|Infraestrutura/DevOps|Uma tarefa de teste que tenta acessar a rede ou outro arquivo falha, e uma tarefa que passa do tempo é encerrada. A configuração do contêiner é revisada a cada versão|
-|C12|As bibliotecas do fatiador, do visualizador e do conversor de PDF ficam inventariadas. A análise de dependências (SCA) roda a cada build, e falhas críticas são corrigidas em até 7 dias|Identify (ID.AM, ID.RA), Govern (GV.SC)|Segurança da informação e Infraestrutura/DevOps|O relatório da SCA acompanha cada versão, sem falha crítica aberta além do prazo|
-|C13|O checkout recebe só identificadores (material, quantidade, opções e CEP). Preço, desconto progressivo e frete são recalculados no servidor, e a divergência com o valor enviado é registrada|Protect (PR.DS), Detect (DE.CM)|Back-end|Num teste com preço, desconto ou quantidade adulterados, o valor cobrado é o recalculado e o evento vai para o log|
-|C14|O pedido só é marcado como pago depois de consultar o gateway ou validar a assinatura da notificação. O ID da transação fica vinculado ao pedido, e os pedidos pagos são conciliados todo dia com o extrato do gateway|Protect (PR.DS), Detect (DE.CM)|Back-end e Financeiro|Uma notificação sem assinatura ou com assinatura errada é recusada. O relatório diário de conciliação não tem divergência pendente|
-|C15|O retorno de rastreio é autenticado por assinatura HMAC, com uma chave para cada transportadora definida em contrato. O status recebido é confirmado na API da transportadora antes de o cliente ser avisado|Protect (PR.AA), Govern (GV.SC)|Back-end|Uma requisição sem assinatura ou com assinatura inválida é recusada e registrada|
-|C16|Todos os fluxos ([F1] a [F7]) usam TLS 1.2 ou superior, e o banco e o armazenamento são criptografados em repouso. O hash SHA-256 do STL é calculado no upload e conferido antes do fatiamento e da impressão. Os laudos têm histórico de versões e guardam o hash da versão enviada ao cliente|Protect (PR.DS), Detect (DE.CM)|Back-end e Infraestrutura/DevOps|A varredura de TLS não encontra protocolo fraco. Um arquivo alterado no armazenamento bloqueia o fatiamento. O hash do laudo enviado confere com a versão guardada|
-|C17|O pagamento usa a página ou a tokenização de um gateway certificado PCI DSS, e o contrato define a guarda dos comprovantes e o processo de contestação. CPF, endereço, e-mail e dados de pagamento são mascarados nos logs, e só o serviço de pedidos acessa a API de checkout|Protect (PR.DS), Govern (GV.SC)|Back-end e Encarregado de dados (DPO)|A busca automática por padrões de CPF e cartão nos logs não encontra nada. A integração e o contrato com o gateway são revisados a cada ano|
-|C18|O log de auditoria só aceita inclusões e fica fora da base e das permissões da aplicação. Ele registra quem, quando, o quê, o IP e os valores antes e depois para aprovações, cancelamentos, pagamentos, trocas de endereço, laudos e avaliações. Cancelamentos e trocas de endereço são confirmados ao cliente pelo canal cadastrado|Protect (PR.DS), Detect (DE.CM), Respond (RS.AN)|Infraestrutura/DevOps e Back-end|Cada ação listada gera um registro. Uma tentativa de apagar ou alterar o log com a credencial da aplicação falha|
-|C19|Regras de alerta sobre o log e o monitoramento disparam em casos como enumeração de IDs, pico de uploads ou na fila, acesso interno fora do horário ou da rede e divergência na conciliação. O plano de resposta prevê revogar sessões, bloquear contas, investigar pelo log e comunicar clientes e ANPD|Detect (DE.AE), Respond (RS.MA, RS.AN, RS.CO)|Segurança da informação|Uma simulação de incidente por semestre (por exemplo, conta de técnico invadida), com relatório. Cada regra tem um responsável e um prazo de atendimento|
-|C20|O banco, o armazenamento e uma cópia do log de auditoria têm backup diário em outra conta. A recuperação inclui restaurar os dados, reprocessar os pedidos afetados, recriar os workers a partir de imagens limpas e trocar as credenciais comprometidas|Recover (RC.RP)|Infraestrutura/DevOps|Um teste de restauração por semestre, com o tempo medido, e o roteiro de recuperação executado na simulação do C19|
-|C21|O suporte só troca o endereço depois de confirmação pelo e-mail ou telefone cadastrado, e nenhuma troca é feita depois do despacho. Os atendentes são treinados contra engenharia social|Protect (PR.AA, PR.AT)|Coordenação de suporte|Auditoria mensal de uma amostra dos chamados de troca de endereço e um teste de engenharia social simulado por ano|
-|C22|A política de gestão de riscos adota os critérios desta etapa, define que a diretoria aprova toda aceitação de risco e prevê a revisão do registro a cada seis meses, além de uma revisão extra depois de cada incidente ou mudança grande no sistema|Govern (GV.RM), Identify (ID.RA)|Diretoria e Segurança da informação|Política aprovada e publicada, e a ata de cada revisão semestral com o registro atualizado|
+|<a id="c01"></a>C01|Toda rota da API passa por um único ponto de autorização, que nega por padrão e confere se o pedido, o arquivo ou o laudo pertence ao usuário. Técnicos só acessam os pedidos atribuídos a eles pelo líder de produção|Protect (PR.AA)|Back-end|Teste automatizado em cada rota: o usuário A pede um recurso do usuário B e recebe 403. A revisão de código confirma que nenhuma rota fica fora desse ponto, e cada 403 é registrado no log|
+|<a id="c02"></a>C02|Pedidos, arquivos e laudos são identificados por UUID v4. O número exibido ao cliente não serve para buscar o recurso|Protect (PR.DS)|Back-end|Inspeção do esquema do banco. Teste que tenta IDs sequenciais e recebe 404|
+|<a id="c03"></a>C03|O armazenamento não tem nenhum objeto público. A API gera uma URL pré-assinada válida por 5 minutos, e só depois da conferência do C01|Protect (PR.DS, PR.AA)|Infraestrutura/DevOps e Back-end|Acesso direto ao armazenamento sem assinatura retorna 403, e uma URL expirada é recusada. A configuração do armazenamento é verificada todo mês|
+|<a id="c04"></a>C04|Os quatro perfis ([seção 3.1 da Etapa 1][e1-31]) são conferidos no servidor em todas as rotas de aprovação, edição de laudo e administração, sem depender do que a interface mostra|Protect (PR.AA)|Back-end|Um cliente que chama a rota de aprovação recebe 403 e o evento é registrado. A matriz de perfis por rota é revisada a cada versão|
+|<a id="c05"></a>C05|O painel interno fica em um endereço separado, acessível só pela VPN ou por uma lista de IPs. O login é por SSO com MFA para todos os perfis internos|Protect (PR.AA)|Infraestrutura/DevOps e Segurança da informação|Acessos de fora da VPN e logins sem o segundo fator são recusados. O relatório do SSO mostra MFA ativo em todas as contas internas|
+|<a id="c06"></a>C06|Uma conta interna só é criada a pedido do gestor e com o perfil aprovado pela segurança. Os acessos são revisados a cada três meses e removidos no mesmo dia do desligamento. Contas compartilhadas são proibidas|Govern (GV.RR), Protect (PR.AA)|Diretoria (aprova) e Segurança da informação (executa)|Ata de cada revisão trimestral. A lista de desligados do RH, comparada com as contas ativas, não mostra divergência|
+|<a id="c07"></a>C07|O login limita as tentativas por conta e por IP, com espera crescente e CAPTCHA depois de 5 falhas, sem bloqueio permanente. O cliente recebe aviso de login em dispositivo novo e pode ativar o MFA|Protect (PR.AA), Detect (DE.CM)|Back-end|Teste com 10 senhas erradas: a espera aumenta e o CAPTCHA aparece, mas o dono continua entrando com a senha certa. O aviso de dispositivo novo chega por e-mail|
+|<a id="c08"></a>C08|As sessões expiram depois de 30 minutos sem uso no painel e de 7 dias no site do cliente. O token é trocado a cada login e revogado no logout, e os cookies usam `HttpOnly`, `Secure` e `SameSite`|Protect (PR.AA)|Back-end|Inspeção dos cabeçalhos `Set-Cookie`. Um token reaproveitado depois do logout é recusado|
+|<a id="c09"></a>C09|Tudo o que o painel exibe vindo do cliente (mensagens, avaliações e nomes de arquivo) passa por codificação de saída. As páginas do painel usam CSP sem `unsafe-inline`|Protect (PR.PS)|Front-end|Um script inserido em cada um desses campos aparece como texto. O cabeçalho CSP está presente em todas as páginas do painel|
+|<a id="c10"></a>C10|O processamento usa uma fila com cota por conta (até 3 tarefas simultâneas). A API confere o tamanho, o formato e o número de polígonos antes de gravar o arquivo e de criar a tarefa. O escalonamento tem um teto de custo|Protect (PR.IR)|Back-end e Infraestrutura/DevOps|Um upload acima do limite é recusado antes da gravação. Num teste de carga com várias contas, a espera aumenta, mas o orçamento continua disponível|
+|<a id="c11"></a>C11|Os workers rodam em contêineres descartáveis, sem rede, sem root e com tempo e memória máximos por tarefa. A credencial de cada worker só lê o arquivo da tarefa. Os PDFs do RF22 são convertidos em imagem dentro do worker|Protect (PR.PS, PR.IR)|Infraestrutura/DevOps|Uma tarefa de teste que tenta acessar a rede ou outro arquivo falha, e uma tarefa que passa do tempo é encerrada. A configuração do contêiner é revisada a cada versão|
+|<a id="c12"></a>C12|As bibliotecas do fatiador, do visualizador e do conversor de PDF ficam inventariadas. A análise de dependências (SCA) roda a cada build, e falhas críticas são corrigidas em até 7 dias|Identify (ID.AM, ID.RA), Govern (GV.SC)|Segurança da informação e Infraestrutura/DevOps|O relatório da SCA acompanha cada versão, sem falha crítica aberta além do prazo|
+|<a id="c13"></a>C13|O checkout recebe só identificadores (material, quantidade, opções e CEP). Preço, desconto progressivo e frete são recalculados no servidor, e a divergência com o valor enviado é registrada|Protect (PR.DS), Detect (DE.CM)|Back-end|Num teste com preço, desconto ou quantidade adulterados, o valor cobrado é o recalculado e o evento vai para o log|
+|<a id="c14"></a>C14|O pedido só é marcado como pago depois de consultar o gateway ou validar a assinatura da notificação. O ID da transação fica vinculado ao pedido, e os pedidos pagos são conciliados todo dia com o extrato do gateway|Protect (PR.DS), Detect (DE.CM)|Back-end e Financeiro|Uma notificação sem assinatura ou com assinatura errada é recusada. O relatório diário de conciliação não tem divergência pendente|
+|<a id="c15"></a>C15|O retorno de rastreio é autenticado por assinatura HMAC, com uma chave para cada transportadora definida em contrato. O status recebido é confirmado na API da transportadora antes de o cliente ser avisado|Protect (PR.AA), Govern (GV.SC)|Back-end|Uma requisição sem assinatura ou com assinatura inválida é recusada e registrada|
+|<a id="c16"></a>C16|Todos os fluxos ([F1] a [F7]) usam TLS 1.2 ou superior, e o banco e o armazenamento são criptografados em repouso. O hash SHA-256 do STL é calculado no upload e conferido antes do fatiamento e da impressão. Os laudos têm histórico de versões e guardam o hash da versão enviada ao cliente|Protect (PR.DS), Detect (DE.CM)|Back-end e Infraestrutura/DevOps|A varredura de TLS não encontra protocolo fraco. Um arquivo alterado no armazenamento bloqueia o fatiamento. O hash do laudo enviado confere com a versão guardada|
+|<a id="c17"></a>C17|O pagamento usa a página ou a tokenização de um gateway certificado PCI DSS, e o contrato define a guarda dos comprovantes e o processo de contestação. CPF, endereço, e-mail e dados de pagamento são mascarados nos logs, e só o serviço de pedidos acessa a API de checkout|Protect (PR.DS), Govern (GV.SC)|Back-end e Encarregado de dados (DPO)|A busca automática por padrões de CPF e cartão nos logs não encontra nada. A integração e o contrato com o gateway são revisados a cada ano|
+|<a id="c18"></a>C18|O log de auditoria só aceita inclusões e fica fora da base e das permissões da aplicação. Ele registra quem, quando, o quê, o IP e os valores antes e depois para aprovações, cancelamentos, pagamentos, trocas de endereço, laudos e avaliações. Cancelamentos e trocas de endereço são confirmados ao cliente pelo canal cadastrado|Protect (PR.DS), Detect (DE.CM), Respond (RS.AN)|Infraestrutura/DevOps e Back-end|Cada ação listada gera um registro. Uma tentativa de apagar ou alterar o log com a credencial da aplicação falha|
+|<a id="c19"></a>C19|Regras de alerta sobre o log e o monitoramento disparam em casos como enumeração de IDs, pico de uploads ou na fila, acesso interno fora do horário ou da rede e divergência na conciliação. O plano de resposta prevê revogar sessões, bloquear contas, investigar pelo log e comunicar clientes e ANPD|Detect (DE.AE), Respond (RS.MA, RS.AN, RS.CO)|Segurança da informação|Uma simulação de incidente por semestre (por exemplo, conta de técnico invadida), com relatório. Cada regra tem um responsável e um prazo de atendimento|
+|<a id="c20"></a>C20|O banco, o armazenamento e uma cópia do log de auditoria têm backup diário em outra conta. A recuperação inclui restaurar os dados, reprocessar os pedidos afetados, recriar os workers a partir de imagens limpas e trocar as credenciais comprometidas|Recover (RC.RP)|Infraestrutura/DevOps|Um teste de restauração por semestre, com o tempo medido, e o roteiro de recuperação executado na simulação do C19|
+|<a id="c21"></a>C21|O suporte só troca o endereço depois de confirmação pelo e-mail ou telefone cadastrado, e nenhuma troca é feita depois do despacho. Os atendentes são treinados contra engenharia social|Protect (PR.AA, PR.AT)|Coordenação de suporte|Auditoria mensal de uma amostra dos chamados de troca de endereço e um teste de engenharia social simulado por ano|
+|<a id="c22"></a>C22|A política de gestão de riscos adota os critérios desta etapa, define que a diretoria aprova toda aceitação de risco e prevê a revisão do registro a cada seis meses, além de uma revisão extra depois de cada incidente ou mudança grande no sistema|Govern (GV.RM), Identify (ID.RA)|Diretoria e Segurança da informação|Política aprovada e publicada, e a ata de cada revisão semestral com o registro atualizado|
 
 ### 4.4 Mapeamento dos riscos para as funções do NIST
 
@@ -413,41 +413,41 @@ Cada X corresponde a um controle atribuído ao risco no plano da seção 4.5. A 
 
 |Risco|Estratégia|Controles propostos|Funções relacionadas|Responsáveis|Evidências e verificação|
 |-|-|-|-|-|-|
-|[R01] Conta de cliente invadida|Reduzir|C07, C08, C19|Protect, Detect, Respond|Back-end e Segurança da informação|Teste com 10 senhas erradas; token recusado depois do logout; aviso de login em dispositivo novo recebido|
-|[R02] Desvio de entrega pelo suporte|Reduzir|C21, C18|Protect, Detect|Coordenação de suporte e Back-end|Auditoria mensal dos chamados de troca de endereço; cada troca registrada no log com a confirmação do cliente|
-|[R03] Falso técnico no painel|Reduzir|C05, C06, C18, C19, C20|Govern, Protect, Detect, Respond, Recover|Infraestrutura/DevOps, Segurança da informação e Diretoria|Acessos sem VPN ou sem MFA recusados; revisão trimestral sem divergência com o RH; simulação de conta de técnico invadida|
-|[R04] Transportadora falsa|Reduzir|C15|Govern, Protect|Back-end|Retorno sem assinatura HMAC recusado; chave de cada transportadora registrada no contrato|
-|[R05] STL alterado|Reduzir|C16|Protect, Detect|Back-end e Infraestrutura/DevOps|STL alterado no armazenamento bloqueia o fatiamento; varredura de TLS sem protocolo fraco|
-|[R06] Pedidos de terceiros alterados|Reduzir|C01, C02, C18, C19, C20|Protect, Detect, Respond, Recover|Back-end, Segurança da informação e Infraestrutura/DevOps|Teste de IDOR em todas as rotas de pedido; IDs sequenciais retornam 404; alerta de 403 em sequência; status restaurados a partir do log na simulação|
-|[R07] Preço alterado no checkout|Reduzir|C13, C14|Protect, Detect|Back-end e Financeiro|Checkout com preço adulterado cobra o valor recalculado; conciliação diária sem divergência|
-|[R08] Desconto indevido|Reduzir|C13|Protect, Detect|Back-end|Quantidade falsa não gera desconto, e a divergência é registrada|
-|[R09] Laudo DFM alterado|Reduzir|C04, C16, C18|Protect, Detect|Back-end e Líder de produção|Só o técnico atribuído edita o laudo; hash do laudo enviado confere com a versão guardada; cada edição registrada|
-|[R10] Disputa de pagamento|Compartilhar|C14, C17|Govern, Detect|Financeiro e Back-end|Contrato com o gateway define comprovantes e contestação; todo pedido pago tem ID de transação; conciliação diária|
-|[R11] Cliente nega o cancelamento|Reduzir|C18|Protect, Respond|Back-end e Coordenação de suporte|Cada cancelamento gera registro (usuário, data e IP) e confirmação no canal cadastrado|
-|[R12] Técnico nega a aprovação|Reduzir|C06, C18|Govern, Protect, Respond|Líder de produção e Segurança da informação|Nenhuma conta compartilhada na revisão trimestral; cada aprovação ligada a uma conta pessoal no log|
-|[R13] Autoria de avaliação negada|Aceitar|C18, C22|Govern, Identify|Diretoria e Segurança da informação|Aceitação aprovada em ata; cada avaliação registrada com conta, data e IP; revisão semestral|
-|[R14] Download de STL de terceiros|Reduzir|C01, C02, C03, C16, C19|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Segurança da informação|Troca de ID na URL retorna 403 ou 404; nenhum objeto público no armazenamento; URL expirada recusada|
-|[R15] Dados de pagamento expostos|Evitar|C17|Govern, Protect|Back-end e Encarregado de dados (DPO)|Nenhum número de cartão no banco nem nos logs (busca automática); revisão anual da integração com o gateway|
-|[R16] Dados de outros clientes|Reduzir|C01, C02, C19|Protect, Detect, Respond|Back-end e Encarregado de dados (DPO)|Teste de IDOR nas rotas de histórico, cadastro e laudo; plano de comunicação à ANPD revisado na simulação|
-|[R17] Desenhos técnicos expostos|Reduzir|C01, C03, C16, C19|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Líder de produção|Técnico não atribuído recebe 403 ao abrir o PDF; PDFs criptografados em repouso|
-|[R18] Bloqueio por força bruta|Reduzir|C07|Protect, Detect|Back-end|Na força bruta simulada, a espera cresce e o dono continua entrando|
-|[R19] Envio abusivo de arquivos|Reduzir|C10, C19|Protect, Detect|Back-end e Infraestrutura/DevOps|Upload acima do limite recusado antes da gravação; alerta de pico de uploads disparado no teste|
-|[R20] Sobrecarga do processamento|Reduzir|C10, C11, C19|Protect, Detect, Respond|Infraestrutura/DevOps e Back-end|No teste de carga com várias contas, o orçamento continua disponível; tarefa acima do tempo é encerrada|
-|[R21] Execução de código por STL|Reduzir|C11, C12, C19, C20|Govern, Identify, Protect, Detect, Respond, Recover|Infraestrutura/DevOps e Segurança da informação|Worker sem rede e sem acesso a outros arquivos no teste; SCA sem falha crítica aberta; workers recriados a partir de imagem limpa na simulação|
-|[R22] Autoaprovação e funções administrativas|Reduzir|C04, C18, C19|Protect, Detect, Respond|Back-end e Segurança da informação|Cliente que chama a rota de aprovação recebe 403 e o evento é registrado; matriz de perfis por rota revisada a cada versão|
-|[R23] Pagamento falso|Reduzir|C14|Protect, Detect|Back-end e Financeiro|Notificação sem assinatura recusada; o retorno do navegador não muda o pedido para pago|
-|[R24] XSS armazenado no painel|Reduzir|C08, C09, C19|Protect, Detect, Respond|Front-end, Back-end e Segurança da informação|Script em mensagem, avaliação e nome de arquivo aparece como texto; CSP e cookie `HttpOnly` presentes|
-|[R25] Logs de auditoria alterados|Reduzir|C18, C20|Protect, Recover|Infraestrutura/DevOps|A credencial da aplicação não consegue apagar nem alterar o log; cópia do log restaurada no teste semestral|
-|[R26] PDF malicioso|Evitar|C11|Protect|Infraestrutura/DevOps e Líder de produção|O painel só mostra a imagem convertida, e nenhum técnico baixa o PDF original|
+|[R01] Conta de cliente invadida|Reduzir|[C07], [C08], [C19]|Protect, Detect, Respond|Back-end e Segurança da informação|Teste com 10 senhas erradas; token recusado depois do logout; aviso de login em dispositivo novo recebido|
+|[R02] Desvio de entrega pelo suporte|Reduzir|[C21], [C18]|Protect, Detect|Coordenação de suporte e Back-end|Auditoria mensal dos chamados de troca de endereço; cada troca registrada no log com a confirmação do cliente|
+|[R03] Falso técnico no painel|Reduzir|[C05], [C06], [C18], [C19], [C20]|Govern, Protect, Detect, Respond, Recover|Infraestrutura/DevOps, Segurança da informação e Diretoria|Acessos sem VPN ou sem MFA recusados; revisão trimestral sem divergência com o RH; simulação de conta de técnico invadida|
+|[R04] Transportadora falsa|Reduzir|[C15]|Govern, Protect|Back-end|Retorno sem assinatura HMAC recusado; chave de cada transportadora registrada no contrato|
+|[R05] STL alterado|Reduzir|[C16]|Protect, Detect|Back-end e Infraestrutura/DevOps|STL alterado no armazenamento bloqueia o fatiamento; varredura de TLS sem protocolo fraco|
+|[R06] Pedidos de terceiros alterados|Reduzir|[C01], [C02], [C18], [C19], [C20]|Protect, Detect, Respond, Recover|Back-end, Segurança da informação e Infraestrutura/DevOps|Teste de IDOR em todas as rotas de pedido; IDs sequenciais retornam 404; alerta de 403 em sequência; status restaurados a partir do log na simulação|
+|[R07] Preço alterado no checkout|Reduzir|[C13], [C14]|Protect, Detect|Back-end e Financeiro|Checkout com preço adulterado cobra o valor recalculado; conciliação diária sem divergência|
+|[R08] Desconto indevido|Reduzir|[C13]|Protect, Detect|Back-end|Quantidade falsa não gera desconto, e a divergência é registrada|
+|[R09] Laudo DFM alterado|Reduzir|[C04], [C16], [C18]|Protect, Detect|Back-end e Líder de produção|Só o técnico atribuído edita o laudo; hash do laudo enviado confere com a versão guardada; cada edição registrada|
+|[R10] Disputa de pagamento|Compartilhar|[C14], [C17]|Govern, Detect|Financeiro e Back-end|Contrato com o gateway define comprovantes e contestação; todo pedido pago tem ID de transação; conciliação diária|
+|[R11] Cliente nega o cancelamento|Reduzir|[C18]|Protect, Respond|Back-end e Coordenação de suporte|Cada cancelamento gera registro (usuário, data e IP) e confirmação no canal cadastrado|
+|[R12] Técnico nega a aprovação|Reduzir|[C06], [C18]|Govern, Protect, Respond|Líder de produção e Segurança da informação|Nenhuma conta compartilhada na revisão trimestral; cada aprovação ligada a uma conta pessoal no log|
+|[R13] Autoria de avaliação negada|Aceitar|[C18], [C22]|Govern, Identify|Diretoria e Segurança da informação|Aceitação aprovada em ata; cada avaliação registrada com conta, data e IP; revisão semestral|
+|[R14] Download de STL de terceiros|Reduzir|[C01], [C02], [C03], [C16], [C19]|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Segurança da informação|Troca de ID na URL retorna 403 ou 404; nenhum objeto público no armazenamento; URL expirada recusada|
+|[R15] Dados de pagamento expostos|Evitar|[C17]|Govern, Protect|Back-end e Encarregado de dados (DPO)|Nenhum número de cartão no banco nem nos logs (busca automática); revisão anual da integração com o gateway|
+|[R16] Dados de outros clientes|Reduzir|[C01], [C02], [C19]|Protect, Detect, Respond|Back-end e Encarregado de dados (DPO)|Teste de IDOR nas rotas de histórico, cadastro e laudo; plano de comunicação à ANPD revisado na simulação|
+|[R17] Desenhos técnicos expostos|Reduzir|[C01], [C03], [C16], [C19]|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Líder de produção|Técnico não atribuído recebe 403 ao abrir o PDF; PDFs criptografados em repouso|
+|[R18] Bloqueio por força bruta|Reduzir|[C07]|Protect, Detect|Back-end|Na força bruta simulada, a espera cresce e o dono continua entrando|
+|[R19] Envio abusivo de arquivos|Reduzir|[C10], [C19]|Protect, Detect|Back-end e Infraestrutura/DevOps|Upload acima do limite recusado antes da gravação; alerta de pico de uploads disparado no teste|
+|[R20] Sobrecarga do processamento|Reduzir|[C10], [C11], [C19]|Protect, Detect, Respond|Infraestrutura/DevOps e Back-end|No teste de carga com várias contas, o orçamento continua disponível; tarefa acima do tempo é encerrada|
+|[R21] Execução de código por STL|Reduzir|[C11], [C12], [C19], [C20]|Govern, Identify, Protect, Detect, Respond, Recover|Infraestrutura/DevOps e Segurança da informação|Worker sem rede e sem acesso a outros arquivos no teste; SCA sem falha crítica aberta; workers recriados a partir de imagem limpa na simulação|
+|[R22] Autoaprovação e funções administrativas|Reduzir|[C04], [C18], [C19]|Protect, Detect, Respond|Back-end e Segurança da informação|Cliente que chama a rota de aprovação recebe 403 e o evento é registrado; matriz de perfis por rota revisada a cada versão|
+|[R23] Pagamento falso|Reduzir|[C14]|Protect, Detect|Back-end e Financeiro|Notificação sem assinatura recusada; o retorno do navegador não muda o pedido para pago|
+|[R24] XSS armazenado no painel|Reduzir|[C08], [C09], [C19]|Protect, Detect, Respond|Front-end, Back-end e Segurança da informação|Script em mensagem, avaliação e nome de arquivo aparece como texto; CSP e cookie `HttpOnly` presentes|
+|[R25] Logs de auditoria alterados|Reduzir|[C18], [C20]|Protect, Recover|Infraestrutura/DevOps|A credencial da aplicação não consegue apagar nem alterar o log; cópia do log restaurada no teste semestral|
+|[R26] PDF malicioso|Evitar|[C11]|Protect|Infraestrutura/DevOps e Líder de produção|O painel só mostra a imagem convertida, e nenhum técnico baixa o PDF original|
 
 ### 4.6 Ordem inicial de implementação
 
 |Onda|Controles|Riscos tratados|Justificativa|
 |-|-|-|-|
-|0. Governança, antes do código|C22, C06|[R03], [R12], [R13]|Não exigem código e custam pouco. Definem quem aprova a aceitação de riscos e quem libera as contas internas. Sem o C06, o SSO do C05 não tem regra para criar e remover contas|
-|1. Decisões de arquitetura (Etapa 3)|C01, C02, C03, C04, C05, C10, C11|Os seis críticos ([R03], [R06], [R14], [R17], [R20], [R22]), além de [R16], [R19], [R21] e [R26]|Mudar depois sai caro: os IDs exigiriam migração de dados, a fila mudaria o contrato da API e a autorização teria de ser refeita rota a rota. O C01 vem antes do C03, porque a URL pré-assinada só é gerada depois da conferência do dono. O C10 e o C11 entram juntos porque atuam no mesmo componente|
-|2. Primeira versão do sistema|C18, C09, C13, C14, C07, C08, C16, C17|[R01], [R05], [R07], [R08], [R09], [R10], [R11], [R15], [R18], [R23], [R24], [R25]|O C18 vem primeiro porque o log é base para os alertas do C19 e para os riscos de repúdio. O C09 vem em seguida porque o [R24] contornaria a VPN e o MFA da onda 1. O C13 e o C14 evitam prejuízo direto e são simples. Os demais protegem as contas de clientes e os dados|
-|3. Antes de entrar em produção|C19, C20, C12, C15, C21|[R02], [R04], [R21], e reforço para os demais|O C19 depende dos eventos gerados pelas ondas anteriores. O C20 só faz sentido com dados reais. O C12 entra junto com o pipeline da Etapa 7. O C15 depende do contrato com cada transportadora. O C21 é uma regra de atendimento e pode ser antecipado assim que o suporte começar a operar|
+|0. Governança, antes do código|[C22], [C06]|[R03], [R12], [R13]|Não exigem código e custam pouco. Definem quem aprova a aceitação de riscos e quem libera as contas internas. Sem o [C06], o SSO do [C05] não tem regra para criar e remover contas|
+|1. Decisões de arquitetura (Etapa 3)|[C01], [C02], [C03], [C04], [C05], [C10], [C11]|Os seis críticos ([R03], [R06], [R14], [R17], [R20], [R22]), além de [R16], [R19], [R21] e [R26]|Mudar depois sai caro: os IDs exigiriam migração de dados, a fila mudaria o contrato da API e a autorização teria de ser refeita rota a rota. O [C01] vem antes do [C03], porque a URL pré-assinada só é gerada depois da conferência do dono. O [C10] e o [C11] entram juntos porque atuam no mesmo componente|
+|2. Primeira versão do sistema|[C18], [C09], [C13], [C14], [C07], [C08], [C16], [C17]|[R01], [R05], [R07], [R08], [R09], [R10], [R11], [R15], [R18], [R23], [R24], [R25]|O [C18] vem primeiro porque o log é base para os alertas do [C19] e para os riscos de repúdio. O [C09] vem em seguida porque o [R24] contornaria a VPN e o MFA da onda 1. O [C13] e o [C14] evitam prejuízo direto e são simples. Os demais protegem as contas de clientes e os dados|
+|3. Antes de entrar em produção|[C19], [C20], [C12], [C15], [C21]|[R02], [R04], [R21], e reforço para os demais|O [C19] depende dos eventos gerados pelas ondas anteriores. O [C20] só faz sentido com dados reais. O [C12] entra junto com o pipeline da Etapa 7. O [C15] depende do contrato com cada transportadora. O [C21] é uma regra de atendimento e pode ser antecipado assim que o suporte começar a operar|
 
 A ordem será revista na Etapa 3, quando as decisões da onda 1 forem detalhadas.
 
@@ -455,34 +455,34 @@ A ordem será revista na Etapa 3, quando as decisões da onda 1 forem detalhadas
 
 Em geral, os controles reduzem a probabilidade. O impacto só cai quando o controle limita o alcance do dano. É o caso do isolamento dos workers no [R21], da fila no [R20], que deixa o sistema mais lento em vez de pará-lo, e do log nos riscos de repúdio ([R11], [R12]), em que a prova encerra a disputa. Nos vazamentos de projetos, o impacto continua 4, porque um projeto vazado continua irreversível, por isso esses riscos não ficam abaixo de Médio.
 
-|Risco|Nível inicial|P×I residual estimado|Nível residual esperado|Condição para aceitar o residual|
+|Risco|Nível inicial|P*I residual estimado|Nível residual esperado|Condição para aceitar o residual|
 |-|-|-|-|-|
-|[R01]|Alto|2 × 3 = 6|Médio|Testes do C07 e do C08 aprovados e aviso de dispositivo novo funcionando. Como o MFA é opcional para clientes, a adesão é acompanhada todo mês|
-|[R02]|Alto|1 × 3 = 3|Baixo|Auditoria mensal sem nenhuma troca de endereço feita sem confirmação|
-|[R03]|Crítico|1 × 4 = 4|Médio|MFA em todas as contas internas, revisão trimestral sem divergência e simulação de conta de técnico invadida contida|
-|[R04]|Médio|1 × 2 = 2|Baixo|Retorno sem assinatura recusado no teste|
-|[R05]|Médio|1 × 3 = 3|Baixo|Arquivo alterado no armazenamento bloqueia o fatiamento no teste|
-|[R06]|Crítico|1 × 4 = 4|Médio|Testes de IDOR aprovados em todas as rotas de pedido e nenhum achado de IDOR na verificação da Etapa 5|
-|[R07]|Alto|1 × 3 = 3|Baixo|Teste de preço adulterado aprovado e conciliação sem divergência por 30 dias|
-|[R08]|Médio|1 × 2 = 2|Baixo|Teste de quantidade falsa aprovado|
-|[R09]|Médio|1 × 3 = 3|Baixo|Só o técnico atribuído edita o laudo, e o hash confere no teste|
-|[R10]|Médio|1 × 2 = 2|Baixo|Contrato com o gateway assinado e todos os pedidos pagos com ID de transação|
-|[R11]|Médio|3 × 1 = 3|Baixo|O cliente ainda pode negar, mas todo cancelamento tem registro e confirmação, o que encerra a disputa|
-|[R12]|Médio|2 × 1 = 2|Baixo|Nenhuma conta compartilhada e todas as aprovações nominais no log|
-|[R13]|Baixo|1 × 1 = 1|Baixo|Aceitação aprovada pela diretoria e revisada a cada seis meses|
-|[R14]|Crítico|1 × 4 = 4|Médio|Testes de IDOR e de URL expirada aprovados, nenhum objeto público na verificação mensal e nenhum achado na Etapa 5|
-|[R15]|Médio|1 × 2 = 2|Baixo|Nenhum CPF ou número de cartão encontrado na busca nos logs. Como o cartão não passa pelo sistema, o que pode vazar é só o token|
-|[R16]|Alto|1 × 3 = 3|Baixo|Testes de IDOR nas rotas de histórico, cadastro e laudo aprovados|
-|[R17]|Crítico|1 × 4 = 4|Médio|Técnico não atribuído recebe 403 e os PDFs estão criptografados em repouso|
-|[R18]|Médio|3 × 1 = 3|Baixo|As tentativas continuam, mas no teste de força bruta o dono continua entrando|
-|[R19]|Alto|2 × 2 = 4|Médio|Upload acima do limite recusado e alerta de pico testado. Um atacante com muitas contas ainda consegue causar lentidão|
-|[R20]|Crítico|2 × 2 = 4|Médio|No teste de carga, o orçamento continua disponível e a espera fica dentro do limite definido pela diretoria|
-|[R21]|Alto|2 × 2 = 4|Médio|Teste de isolamento aprovado e SCA sem falha crítica aberta por mais de 7 dias. Falhas ainda desconhecidas continuam possíveis|
-|[R22]|Crítico|1 × 4 = 4|Médio|Testes de perfil por rota aprovados e nenhum achado de escalonamento de privilégio na Etapa 5|
-|[R23]|Médio|1 × 3 = 3|Baixo|Notificação sem assinatura recusada no teste|
-|[R24]|Alto|1 × 4 = 4|Médio|Teste de XSS nos campos do painel aprovado e CSP ativa. Um script que escape continuaria agindo com a sessão de um usuário interno|
-|[R25]|Médio|1 × 2 = 2|Baixo|A credencial da aplicação não altera o log, e a restauração da cópia foi testada|
-|[R26]|Médio|1 × 3 = 3|Baixo|O painel não oferece nenhum caminho para baixar o PDF original|
+|[R01]|Alto|2 * 3 = 6|Médio|Testes do C07 e do C08 aprovados e aviso de dispositivo novo funcionando. Como o MFA é opcional para clientes, a adesão é acompanhada todo mês|
+|[R02]|Alto|1 * 3 = 3|Baixo|Auditoria mensal sem nenhuma troca de endereço feita sem confirmação|
+|[R03]|Crítico|1 * 4 = 4|Médio|MFA em todas as contas internas, revisão trimestral sem divergência e simulação de conta de técnico invadida contida|
+|[R04]|Médio|1 * 2 = 2|Baixo|Retorno sem assinatura recusado no teste|
+|[R05]|Médio|1 * 3 = 3|Baixo|Arquivo alterado no armazenamento bloqueia o fatiamento no teste|
+|[R06]|Crítico|1 * 4 = 4|Médio|Testes de IDOR aprovados em todas as rotas de pedido e nenhum achado de IDOR na verificação da Etapa 5|
+|[R07]|Alto|1 * 3 = 3|Baixo|Teste de preço adulterado aprovado e conciliação sem divergência por 30 dias|
+|[R08]|Médio|1 * 2 = 2|Baixo|Teste de quantidade falsa aprovado|
+|[R09]|Médio|1 * 3 = 3|Baixo|Só o técnico atribuído edita o laudo, e o hash confere no teste|
+|[R10]|Médio|1 * 2 = 2|Baixo|Contrato com o gateway assinado e todos os pedidos pagos com ID de transação|
+|[R11]|Médio|3 * 1 = 3|Baixo|O cliente ainda pode negar, mas todo cancelamento tem registro e confirmação, o que encerra a disputa|
+|[R12]|Médio|2 * 1 = 2|Baixo|Nenhuma conta compartilhada e todas as aprovações nominais no log|
+|[R13]|Baixo|1 * 1 = 1|Baixo|Aceitação aprovada pela diretoria e revisada a cada seis meses|
+|[R14]|Crítico|1 * 4 = 4|Médio|Testes de IDOR e de URL expirada aprovados, nenhum objeto público na verificação mensal e nenhum achado na Etapa 5|
+|[R15]|Médio|1 * 2 = 2|Baixo|Nenhum CPF ou número de cartão encontrado na busca nos logs. Como o cartão não passa pelo sistema, o que pode vazar é só o token|
+|[R16]|Alto|1 * 3 = 3|Baixo|Testes de IDOR nas rotas de histórico, cadastro e laudo aprovados|
+|[R17]|Crítico|1 * 4 = 4|Médio|Técnico não atribuído recebe 403 e os PDFs estão criptografados em repouso|
+|[R18]|Médio|3 * 1 = 3|Baixo|As tentativas continuam, mas no teste de força bruta o dono continua entrando|
+|[R19]|Alto|2 * 2 = 4|Médio|Upload acima do limite recusado e alerta de pico testado. Um atacante com muitas contas ainda consegue causar lentidão|
+|[R20]|Crítico|2 * 2 = 4|Médio|No teste de carga, o orçamento continua disponível e a espera fica dentro do limite definido pela diretoria|
+|[R21]|Alto|2 * 2 = 4|Médio|Teste de isolamento aprovado e SCA sem falha crítica aberta por mais de 7 dias. Falhas ainda desconhecidas continuam possíveis|
+|[R22]|Crítico|1 * 4 = 4|Médio|Testes de perfil por rota aprovados e nenhum achado de escalonamento de privilégio na Etapa 5|
+|[R23]|Médio|1 * 3 = 3|Baixo|Notificação sem assinatura recusada no teste|
+|[R24]|Alto|1 * 4 = 4|Médio|Teste de XSS nos campos do painel aprovado e CSP ativa. Um script que escape continuaria agindo com a sessão de um usuário interno|
+|[R25]|Médio|1 * 2 = 2|Baixo|A credencial da aplicação não altera o log, e a restauração da cópia foi testada|
+|[R26]|Médio|1 * 3 = 3|Baixo|O painel não oferece nenhum caminho para baixar o PDF original|
 
 Pela estimativa, nenhum risco continuaria Alto ou Crítico: 10 ficariam Médios e 16 Baixos. Pelo C22, manter um residual Médio exige aprovação da diretoria. Esses valores são uma estimativa: a redução só será confirmada depois da implementação, dos testes e da coleta das evidências da seção 4.5.
 
@@ -585,3 +585,26 @@ Pela estimativa, nenhum risco continuaria Alto ou Crítico: 10 ficariam Médios 
 [R24]: #22-registro-de-riscos
 [R25]: #22-registro-de-riscos
 [R26]: #22-registro-de-riscos
+
+[C01]: #c01
+[C02]: #c02
+[C03]: #c03
+[C04]: #c04
+[C05]: #c05
+[C06]: #c06
+[C07]: #c07
+[C08]: #c08
+[C09]: #c09
+[C10]: #c10
+[C11]: #c11
+[C12]: #c12
+[C13]: #c13
+[C14]: #c14
+[C15]: #c15
+[C16]: #c16
+[C17]: #c17
+[C18]: #c18
+[C19]: #c19
+[C20]: #c20
+[C21]: #c21
+[C22]: #c22
