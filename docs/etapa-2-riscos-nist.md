@@ -440,6 +440,76 @@ Cada X corresponde a um controle atribuído ao risco no plano da seção 4.5. A 
 |[R25] Logs de auditoria alterados|Reduzir|C18, C20|Protect, Recover|Infraestrutura/DevOps|A credencial da aplicação não consegue apagar nem alterar o log; cópia do log restaurada no teste semestral|
 |[R26] PDF malicioso|Evitar|C11|Protect|Infraestrutura/DevOps e Líder de produção|O painel só mostra a imagem convertida, e nenhum técnico baixa o PDF original|
 
+### 4.6 Ordem inicial de implementação
+
+|Onda|Controles|Riscos tratados|Justificativa|
+|-|-|-|-|
+|0. Governança, antes do código|C22, C06|[R03], [R12], [R13]|Não exigem código e custam pouco. Definem quem aprova a aceitação de riscos e quem libera as contas internas. Sem o C06, o SSO do C05 não tem regra para criar e remover contas|
+|1. Decisões de arquitetura (Etapa 3)|C01, C02, C03, C04, C05, C10, C11|Os seis críticos ([R03], [R06], [R14], [R17], [R20], [R22]), além de [R16], [R19], [R21] e [R26]|Mudar depois sai caro: os IDs exigiriam migração de dados, a fila mudaria o contrato da API e a autorização teria de ser refeita rota a rota. O C01 vem antes do C03, porque a URL pré-assinada só é gerada depois da conferência do dono. O C10 e o C11 entram juntos porque atuam no mesmo componente|
+|2. Primeira versão do sistema|C18, C09, C13, C14, C07, C08, C16, C17|[R01], [R05], [R07], [R08], [R09], [R10], [R11], [R15], [R18], [R23], [R24], [R25]|O C18 vem primeiro porque o log é base para os alertas do C19 e para os riscos de repúdio. O C09 vem em seguida porque o [R24] contornaria a VPN e o MFA da onda 1. O C13 e o C14 evitam prejuízo direto e são simples. Os demais protegem as contas de clientes e os dados|
+|3. Antes de entrar em produção|C19, C20, C12, C15, C21|[R02], [R04], [R21], e reforço para os demais|O C19 depende dos eventos gerados pelas ondas anteriores. O C20 só faz sentido com dados reais. O C12 entra junto com o pipeline da Etapa 7. O C15 depende do contrato com cada transportadora. O C21 é uma regra de atendimento e pode ser antecipado assim que o suporte começar a operar|
+
+A ordem será revista na Etapa 3, quando as decisões da onda 1 forem detalhadas.
+
+### 4.7 Estimativa do risco residual
+
+Em geral, os controles reduzem a probabilidade. O impacto só cai quando o controle limita o alcance do dano. É o caso do isolamento dos workers no [R21], da fila no [R20], que deixa o sistema mais lento em vez de pará-lo, e do log nos riscos de repúdio ([R11], [R12]), em que a prova encerra a disputa. Nos vazamentos de projetos, o impacto continua 4, porque um projeto vazado continua irreversível, por isso esses riscos não ficam abaixo de Médio.
+
+|Risco|Nível inicial|P×I residual estimado|Nível residual esperado|Condição para aceitar o residual|
+|-|-|-|-|-|
+|[R01]|Alto|2 × 3 = 6|Médio|Testes do C07 e do C08 aprovados e aviso de dispositivo novo funcionando. Como o MFA é opcional para clientes, a adesão é acompanhada todo mês|
+|[R02]|Alto|1 × 3 = 3|Baixo|Auditoria mensal sem nenhuma troca de endereço feita sem confirmação|
+|[R03]|Crítico|1 × 4 = 4|Médio|MFA em todas as contas internas, revisão trimestral sem divergência e simulação de conta de técnico invadida contida|
+|[R04]|Médio|1 × 2 = 2|Baixo|Retorno sem assinatura recusado no teste|
+|[R05]|Médio|1 × 3 = 3|Baixo|Arquivo alterado no armazenamento bloqueia o fatiamento no teste|
+|[R06]|Crítico|1 × 4 = 4|Médio|Testes de IDOR aprovados em todas as rotas de pedido e nenhum achado de IDOR na verificação da Etapa 5|
+|[R07]|Alto|1 × 3 = 3|Baixo|Teste de preço adulterado aprovado e conciliação sem divergência por 30 dias|
+|[R08]|Médio|1 × 2 = 2|Baixo|Teste de quantidade falsa aprovado|
+|[R09]|Médio|1 × 3 = 3|Baixo|Só o técnico atribuído edita o laudo, e o hash confere no teste|
+|[R10]|Médio|1 × 2 = 2|Baixo|Contrato com o gateway assinado e todos os pedidos pagos com ID de transação|
+|[R11]|Médio|3 × 1 = 3|Baixo|O cliente ainda pode negar, mas todo cancelamento tem registro e confirmação, o que encerra a disputa|
+|[R12]|Médio|2 × 1 = 2|Baixo|Nenhuma conta compartilhada e todas as aprovações nominais no log|
+|[R13]|Baixo|1 × 1 = 1|Baixo|Aceitação aprovada pela diretoria e revisada a cada seis meses|
+|[R14]|Crítico|1 × 4 = 4|Médio|Testes de IDOR e de URL expirada aprovados, nenhum objeto público na verificação mensal e nenhum achado na Etapa 5|
+|[R15]|Médio|1 × 2 = 2|Baixo|Nenhum CPF ou número de cartão encontrado na busca nos logs. Como o cartão não passa pelo sistema, o que pode vazar é só o token|
+|[R16]|Alto|1 × 3 = 3|Baixo|Testes de IDOR nas rotas de histórico, cadastro e laudo aprovados|
+|[R17]|Crítico|1 × 4 = 4|Médio|Técnico não atribuído recebe 403 e os PDFs estão criptografados em repouso|
+|[R18]|Médio|3 × 1 = 3|Baixo|As tentativas continuam, mas no teste de força bruta o dono continua entrando|
+|[R19]|Alto|2 × 2 = 4|Médio|Upload acima do limite recusado e alerta de pico testado. Um atacante com muitas contas ainda consegue causar lentidão|
+|[R20]|Crítico|2 × 2 = 4|Médio|No teste de carga, o orçamento continua disponível e a espera fica dentro do limite definido pela diretoria|
+|[R21]|Alto|2 × 2 = 4|Médio|Teste de isolamento aprovado e SCA sem falha crítica aberta por mais de 7 dias. Falhas ainda desconhecidas continuam possíveis|
+|[R22]|Crítico|1 × 4 = 4|Médio|Testes de perfil por rota aprovados e nenhum achado de escalonamento de privilégio na Etapa 5|
+|[R23]|Médio|1 × 3 = 3|Baixo|Notificação sem assinatura recusada no teste|
+|[R24]|Alto|1 × 4 = 4|Médio|Teste de XSS nos campos do painel aprovado e CSP ativa. Um script que escape continuaria agindo com a sessão de um usuário interno|
+|[R25]|Médio|1 × 2 = 2|Baixo|A credencial da aplicação não altera o log, e a restauração da cópia foi testada|
+|[R26]|Médio|1 × 3 = 3|Baixo|O painel não oferece nenhum caminho para baixar o PDF original|
+
+Pela estimativa, nenhum risco continuaria Alto ou Crítico: 10 ficariam Médios e 16 Baixos. Pelo C22, manter um residual Médio exige aprovação da diretoria. Esses valores são uma estimativa: a redução só será confirmada depois da implementação, dos testes e da coleta das evidências da seção 4.5.
+
+## Parte 5 - Considerações finais
+
+* **Riscos mais importantes:** os seis críticos ([R03], [R06], [R14], [R17], [R20] e [R22]), mais o [R21] e o [R24], que têm o mesmo alcance (todos os clientes) mas exigem mais capacidade técnica.
+* **Razões da priorização:** além da pontuação, pesaram o fato de que um projeto vazado não pode ser recuperado, a quantidade de clientes afetados e o custo de corrigir depois uma decisão de arquitetura. Também subiram na lista os riscos que contornam outros controles ([R24]) e os que servem de base para outros ([R25]).
+* **Estratégias predominantes:** reduzir, em 22 dos 26 riscos. Dois riscos são evitados ([R15] e [R26]), um é compartilhado com o gateway ([R10]) e um é aceito ([R13]).
+* **Funções do NIST mais relevantes:** Protect, presente em 24 riscos, e Detect, em 19. Respond aparece em 12 riscos, Govern em 7, Recover em 4 e Identify em 2. Recover é pouco usado porque os riscos mais graves são vazamentos, que não têm como ser desfeitos.
+* **Controles essenciais:** a autorização centralizada (C01), o acesso ao painel por SSO, MFA e VPN (C05), a fila e os workers isolados (C10 e C11) e o log de auditoria (C18). Também o C19 (alertas e resposta), que aparece em 11 riscos.
+* **Principais dificuldades:**
+  * distinguir evitar de reduzir no [R15] e no [R26];
+  * decidir quando marcar Recover em casos de vazamento;
+  * definir responsáveis para uma empresa hipotética;
+  * escrever controles específicos sem multiplicar o número deles.
+* **Limitações:**
+  * o sistema ainda está em projeto, e as notas partem de condições supostas, não de testes;
+  * os responsáveis, os prazos e os limites (5 minutos, 3 tarefas, 7 dias) são propostas;
+  * a escala de 1 a 4 é grosseira;
+  * o risco residual é só uma estimativa.
+* **Próximas etapas:**
+  * **Etapa 3:** os controles da onda 1 viram requisitos e decisões de arquitetura para os riscos críticos.
+  * **Etapa 4:** detalha como práticas de código seguro o C01 (autorização por objeto) e o C13 (recálculo no servidor).
+  * **Etapa 5:** verifica na prática IDOR, XSS, cabeçalhos e cookies ([R14], [R22], [R24]).
+  * **Etapa 6:** usa as regras do C19 como base.
+  * **Etapa 7:** traz o C12 e os testes da seção 4.5 como condições do pipeline.
+
 [e1-31]: etapa-1-ameacas-stride.md#31-usuários-e-perfis-de-acesso
 [e1-32]: etapa-1-ameacas-stride.md#32-elementos-do-sistema
 [e1-4]: etapa-1-ameacas-stride.md#4-visão-geral-da-arquitetura-e-fluxo
