@@ -237,17 +237,17 @@ A ordem parte da pontuação, com alguns ajustes. Um risco resolvido pelo mesmo 
 
 ### 3.3 Recomendações próximas
 
-As medidas abaixo estão agrupadas por área. As três primeiras cobrem todos os riscos críticos e devem entrar na Etapa 3 (arquitetura segura).
+As medidas foram agrupadas por área e detalhadas como controles no [catálogo da seção 4.3](#43-catálogo-de-controles), cada um com responsável e forma de verificação. As três primeiras áreas cobrem todos os riscos críticos e devem entrar na Etapa 3 (arquitetura segura).
 
-|Área|Medidas imediatas|Riscos reduzidos|
+|Área|Controles|Riscos reduzidos|
 |-|-|-|
-|Controle de acesso|Verificação de permissão em um único ponto da API, negando por padrão; conferência do dono em todo acesso a pedido, arquivo e laudo; IDs aleatórios (UUID); permissões dos quatro perfis descritos na [seção 3.1 da Etapa 1][e1-31] verificadas no servidor|[R06], [R14], [R16], [R17], [R22]|
-|Autenticação|SSO com MFA para perfis internos; painel em endereço separado, acessível pela VPN ou por lista de IPs; processo documentado de criação, revisão e remoção de contas internas; limite de tentativas com espera crescente; sessões com expiração e cookies `HttpOnly`, `Secure` e `SameSite`|[R01], [R03], [R18], [R24]|
-|Processamento isolado|Fila com cota por conta; limites de tamanho e de polígonos conferidos na API; workers descartáveis em contêiner sem rede e sem privilégios, com tempo máximo e limite de memória; credencial do worker válida só para o arquivo da tarefa|[R19], [R20], [R21], [R26]|
-|Regras de negócio no servidor|Preço, desconto e frete recalculados no checkout; pagamento confirmado com o gateway ou pela assinatura da notificação; retorno da transportadora autenticado|[R04], [R07], [R08], [R23]|
-|Criptografia e proteção de dados|TLS em todos os fluxos ([F1] a [F7]); criptografia em repouso no armazenamento e no banco; hash SHA-256 do arquivo no upload, conferido antes do fatiamento e da impressão; dados pessoais e de pagamento mascarados nos logs; tokenização pelo gateway, sem guardar número de cartão|[R05], [R09], [R15], e reforço para [R14] e [R17]|
-|Registro de auditoria|Log que só aceita inclusões, guardado fora da base da aplicação, com quem fez, quando, o quê e os valores antes e depois, para aprovações, cancelamentos, pagamentos, trocas de endereço e laudos|[R10], [R11], [R12], [R13], [R25]|
-|Atendimento|Troca de endereço só depois de confirmação pelo e-mail ou telefone cadastrado; nenhuma troca depois do despacho|[R02]|
+|Controle de acesso|C01 a C04|[R06], [R09], [R14], [R16], [R17], [R22]|
+|Autenticação, sessões e painel interno|C05 a C09|[R01], [R03], [R12], [R18], [R24]|
+|Processamento isolado|C10 a C12|[R19], [R20], [R21], [R26]|
+|Regras de negócio e integrações|C13 a C15|[R04], [R07], [R08], [R10], [R23]|
+|Criptografia e proteção de dados|C16 e C17|[R05], [R09], [R10], [R14], [R15], [R17]|
+|Auditoria, detecção e recuperação|C18 a C20|Apoiam 17 riscos e são os controles principais do [R11] e do [R25]|
+|Atendimento e governança|C21 e C22|[R02], [R13]|
 
 ## Parte 4 - Tratamento dos riscos
 
@@ -337,6 +337,108 @@ O NIST Cybersecurity Framework 2.0 organiza os resultados de segurança em seis 
 |RS.AN|A investigação descobre a causa e o alcance do incidente|
 |RS.CO|O incidente é comunicado a clientes, parceiros e autoridades|
 |RC.RP|Sistemas e dados são restaurados depois do incidente|
+
+### 4.3 Catálogo de controles
+
+Os controles abaixo detalham as medidas da [seção 3.3](#33-recomendações-próximas). Cada um diz onde é aplicado, como funciona, quem responde por ele e como confirmar que existe e funciona. Os responsáveis são equipes ou papéis da empresa que opera a plataforma: Back-end, Front-end, Infraestrutura/DevOps, Segurança da informação, Líder de produção, Coordenação de suporte, Financeiro, Encarregado de dados (DPO) e Diretoria.
+
+|ID|Controle (onde e como funciona)|Função e categoria NIST|Responsável|Evidência e verificação|
+|-|-|-|-|-|
+|C01|Toda rota da API passa por um único ponto de autorização, que nega por padrão e confere se o pedido, o arquivo ou o laudo pertence ao usuário. Técnicos só acessam os pedidos atribuídos a eles pelo líder de produção|Protect (PR.AA)|Back-end|Teste automatizado em cada rota: o usuário A pede um recurso do usuário B e recebe 403. A revisão de código confirma que nenhuma rota fica fora desse ponto, e cada 403 é registrado no log|
+|C02|Pedidos, arquivos e laudos são identificados por UUID v4. O número exibido ao cliente não serve para buscar o recurso|Protect (PR.DS)|Back-end|Inspeção do esquema do banco. Teste que tenta IDs sequenciais e recebe 404|
+|C03|O armazenamento não tem nenhum objeto público. A API gera uma URL pré-assinada válida por 5 minutos, e só depois da conferência do C01|Protect (PR.DS, PR.AA)|Infraestrutura/DevOps e Back-end|Acesso direto ao armazenamento sem assinatura retorna 403, e uma URL expirada é recusada. A configuração do armazenamento é verificada todo mês|
+|C04|Os quatro perfis ([seção 3.1 da Etapa 1][e1-31]) são conferidos no servidor em todas as rotas de aprovação, edição de laudo e administração, sem depender do que a interface mostra|Protect (PR.AA)|Back-end|Um cliente que chama a rota de aprovação recebe 403 e o evento é registrado. A matriz de perfis por rota é revisada a cada versão|
+|C05|O painel interno fica em um endereço separado, acessível só pela VPN ou por uma lista de IPs. O login é por SSO com MFA para todos os perfis internos|Protect (PR.AA)|Infraestrutura/DevOps e Segurança da informação|Acessos de fora da VPN e logins sem o segundo fator são recusados. O relatório do SSO mostra MFA ativo em todas as contas internas|
+|C06|Uma conta interna só é criada a pedido do gestor e com o perfil aprovado pela segurança. Os acessos são revisados a cada três meses e removidos no mesmo dia do desligamento. Contas compartilhadas são proibidas|Govern (GV.RR), Protect (PR.AA)|Diretoria (aprova) e Segurança da informação (executa)|Ata de cada revisão trimestral. A lista de desligados do RH, comparada com as contas ativas, não mostra divergência|
+|C07|O login limita as tentativas por conta e por IP, com espera crescente e CAPTCHA depois de 5 falhas, sem bloqueio permanente. O cliente recebe aviso de login em dispositivo novo e pode ativar o MFA|Protect (PR.AA), Detect (DE.CM)|Back-end|Teste com 10 senhas erradas: a espera aumenta e o CAPTCHA aparece, mas o dono continua entrando com a senha certa. O aviso de dispositivo novo chega por e-mail|
+|C08|As sessões expiram depois de 30 minutos sem uso no painel e de 7 dias no site do cliente. O token é trocado a cada login e revogado no logout, e os cookies usam `HttpOnly`, `Secure` e `SameSite`|Protect (PR.AA)|Back-end|Inspeção dos cabeçalhos `Set-Cookie`. Um token reaproveitado depois do logout é recusado|
+|C09|Tudo o que o painel exibe vindo do cliente (mensagens, avaliações e nomes de arquivo) passa por codificação de saída. As páginas do painel usam CSP sem `unsafe-inline`|Protect (PR.PS)|Front-end|Um script inserido em cada um desses campos aparece como texto. O cabeçalho CSP está presente em todas as páginas do painel|
+|C10|O processamento usa uma fila com cota por conta (até 3 tarefas simultâneas). A API confere o tamanho, o formato e o número de polígonos antes de gravar o arquivo e de criar a tarefa. O escalonamento tem um teto de custo|Protect (PR.IR)|Back-end e Infraestrutura/DevOps|Um upload acima do limite é recusado antes da gravação. Num teste de carga com várias contas, a espera aumenta, mas o orçamento continua disponível|
+|C11|Os workers rodam em contêineres descartáveis, sem rede, sem root e com tempo e memória máximos por tarefa. A credencial de cada worker só lê o arquivo da tarefa. Os PDFs do RF22 são convertidos em imagem dentro do worker|Protect (PR.PS, PR.IR)|Infraestrutura/DevOps|Uma tarefa de teste que tenta acessar a rede ou outro arquivo falha, e uma tarefa que passa do tempo é encerrada. A configuração do contêiner é revisada a cada versão|
+|C12|As bibliotecas do fatiador, do visualizador e do conversor de PDF ficam inventariadas. A análise de dependências (SCA) roda a cada build, e falhas críticas são corrigidas em até 7 dias|Identify (ID.AM, ID.RA), Govern (GV.SC)|Segurança da informação e Infraestrutura/DevOps|O relatório da SCA acompanha cada versão, sem falha crítica aberta além do prazo|
+|C13|O checkout recebe só identificadores (material, quantidade, opções e CEP). Preço, desconto progressivo e frete são recalculados no servidor, e a divergência com o valor enviado é registrada|Protect (PR.DS), Detect (DE.CM)|Back-end|Num teste com preço, desconto ou quantidade adulterados, o valor cobrado é o recalculado e o evento vai para o log|
+|C14|O pedido só é marcado como pago depois de consultar o gateway ou validar a assinatura da notificação. O ID da transação fica vinculado ao pedido, e os pedidos pagos são conciliados todo dia com o extrato do gateway|Protect (PR.DS), Detect (DE.CM)|Back-end e Financeiro|Uma notificação sem assinatura ou com assinatura errada é recusada. O relatório diário de conciliação não tem divergência pendente|
+|C15|O retorno de rastreio é autenticado por assinatura HMAC, com uma chave para cada transportadora definida em contrato. O status recebido é confirmado na API da transportadora antes de o cliente ser avisado|Protect (PR.AA), Govern (GV.SC)|Back-end|Uma requisição sem assinatura ou com assinatura inválida é recusada e registrada|
+|C16|Todos os fluxos ([F1] a [F7]) usam TLS 1.2 ou superior, e o banco e o armazenamento são criptografados em repouso. O hash SHA-256 do STL é calculado no upload e conferido antes do fatiamento e da impressão. Os laudos têm histórico de versões e guardam o hash da versão enviada ao cliente|Protect (PR.DS), Detect (DE.CM)|Back-end e Infraestrutura/DevOps|A varredura de TLS não encontra protocolo fraco. Um arquivo alterado no armazenamento bloqueia o fatiamento. O hash do laudo enviado confere com a versão guardada|
+|C17|O pagamento usa a página ou a tokenização de um gateway certificado PCI DSS, e o contrato define a guarda dos comprovantes e o processo de contestação. CPF, endereço, e-mail e dados de pagamento são mascarados nos logs, e só o serviço de pedidos acessa a API de checkout|Protect (PR.DS), Govern (GV.SC)|Back-end e Encarregado de dados (DPO)|A busca automática por padrões de CPF e cartão nos logs não encontra nada. A integração e o contrato com o gateway são revisados a cada ano|
+|C18|O log de auditoria só aceita inclusões e fica fora da base e das permissões da aplicação. Ele registra quem, quando, o quê, o IP e os valores antes e depois para aprovações, cancelamentos, pagamentos, trocas de endereço, laudos e avaliações. Cancelamentos e trocas de endereço são confirmados ao cliente pelo canal cadastrado|Protect (PR.DS), Detect (DE.CM), Respond (RS.AN)|Infraestrutura/DevOps e Back-end|Cada ação listada gera um registro. Uma tentativa de apagar ou alterar o log com a credencial da aplicação falha|
+|C19|Regras de alerta sobre o log e o monitoramento disparam em casos como enumeração de IDs, pico de uploads ou na fila, acesso interno fora do horário ou da rede e divergência na conciliação. O plano de resposta prevê revogar sessões, bloquear contas, investigar pelo log e comunicar clientes e ANPD|Detect (DE.AE), Respond (RS.MA, RS.AN, RS.CO)|Segurança da informação|Uma simulação de incidente por semestre (por exemplo, conta de técnico invadida), com relatório. Cada regra tem um responsável e um prazo de atendimento|
+|C20|O banco, o armazenamento e uma cópia do log de auditoria têm backup diário em outra conta. A recuperação inclui restaurar os dados, reprocessar os pedidos afetados, recriar os workers a partir de imagens limpas e trocar as credenciais comprometidas|Recover (RC.RP)|Infraestrutura/DevOps|Um teste de restauração por semestre, com o tempo medido, e o roteiro de recuperação executado na simulação do C19|
+|C21|O suporte só troca o endereço depois de confirmação pelo e-mail ou telefone cadastrado, e nenhuma troca é feita depois do despacho. Os atendentes são treinados contra engenharia social|Protect (PR.AA, PR.AT)|Coordenação de suporte|Auditoria mensal de uma amostra dos chamados de troca de endereço e um teste de engenharia social simulado por ano|
+|C22|A política de gestão de riscos adota os critérios desta etapa, define que a diretoria aprova toda aceitação de risco e prevê a revisão do registro a cada seis meses, além de uma revisão extra depois de cada incidente ou mudança grande no sistema|Govern (GV.RM), Identify (ID.RA)|Diretoria e Segurança da informação|Política aprovada e publicada, e a ata de cada revisão semestral com o registro atualizado|
+
+### 4.4 Mapeamento dos riscos para as funções do NIST
+
+Cada X corresponde a um controle atribuído ao risco no plano da seção 4.5. A função só foi marcada quando esse controle tem papel real no tratamento daquele risco.
+
+|Risco|Govern|Identify|Protect|Detect|Respond|Recover|
+|-|:-:|:-:|:-:|:-:|:-:|:-:|
+|[R01]||| X | X | X ||
+|[R02]||| X | X |||
+|[R03]| X || X | X | X | X |
+|[R04]| X || X ||||
+|[R05]||| X | X |||
+|[R06]||| X | X | X | X |
+|[R07]||| X | X |||
+|[R08]||| X | X |||
+|[R09]||| X | X |||
+|[R10]| X ||| X |||
+|[R11]||| X || X ||
+|[R12]| X || X || X ||
+|[R13]| X | X |||||
+|[R14]||| X | X | X ||
+|[R15]| X || X ||||
+|[R16]||| X | X | X ||
+|[R17]||| X | X | X ||
+|[R18]||| X | X |||
+|[R19]||| X | X |||
+|[R20]||| X | X | X ||
+|[R21]| X | X | X | X | X | X |
+|[R22]||| X | X | X ||
+|[R23]||| X | X |||
+|[R24]||| X | X | X ||
+|[R25]||| X ||| X |
+|[R26]||| X ||||
+
+**Por que algumas funções ficaram em branco:**
+
+* **Recover** só foi marcado quando há algo a restaurar: pedidos e laudos alterados ([R03], [R06]), servidores comprometidos ([R21]) ou logs apagados ([R25]). Nos vazamentos ([R14], [R16], [R17]) não há o que recuperar, porque um dado vazado não volta a ser sigiloso. Ali o tratamento é conter e comunicar (Respond).
+* **Identify** foi marcado no [R21], cuja falha está em bibliotecas de terceiros que precisam de inventário, e no [R13], que só pode ser aceito com reavaliação periódica. O inventário de ativos da Etapa 1 e este registro sustentam todos os riscos e por isso não foram marcados linha a linha.
+* **Govern** aparece quando o risco depende de um processo interno ([R03], [R12]), de um contrato com terceiros ([R04], [R10], [R15], [R21]) ou de uma decisão de aceitação ([R13]).
+* **Respond** ficou de fora dos riscos de dano limitado e reversível, como [R07], [R08] e [R18], em que a própria proteção resolve o caso sem abrir um incidente.
+* O [R21] é o único com as seis funções. A execução de código nos workers envolve fornecedores (Govern), inventário (Identify), isolamento (Protect), alerta (Detect), contenção (Respond) e reconstrução dos servidores (Recover).
+* O [R26] só tem Protect porque a estratégia é evitar: o técnico deixa de abrir o PDF original.
+
+### 4.5 Plano de tratamento
+
+|Risco|Estratégia|Controles propostos|Funções relacionadas|Responsáveis|Evidências e verificação|
+|-|-|-|-|-|-|
+|[R01] Conta de cliente invadida|Reduzir|C07, C08, C19|Protect, Detect, Respond|Back-end e Segurança da informação|Teste com 10 senhas erradas; token recusado depois do logout; aviso de login em dispositivo novo recebido|
+|[R02] Desvio de entrega pelo suporte|Reduzir|C21, C18|Protect, Detect|Coordenação de suporte e Back-end|Auditoria mensal dos chamados de troca de endereço; cada troca registrada no log com a confirmação do cliente|
+|[R03] Falso técnico no painel|Reduzir|C05, C06, C18, C19, C20|Govern, Protect, Detect, Respond, Recover|Infraestrutura/DevOps, Segurança da informação e Diretoria|Acessos sem VPN ou sem MFA recusados; revisão trimestral sem divergência com o RH; simulação de conta de técnico invadida|
+|[R04] Transportadora falsa|Reduzir|C15|Govern, Protect|Back-end|Retorno sem assinatura HMAC recusado; chave de cada transportadora registrada no contrato|
+|[R05] STL alterado|Reduzir|C16|Protect, Detect|Back-end e Infraestrutura/DevOps|STL alterado no armazenamento bloqueia o fatiamento; varredura de TLS sem protocolo fraco|
+|[R06] Pedidos de terceiros alterados|Reduzir|C01, C02, C18, C19, C20|Protect, Detect, Respond, Recover|Back-end, Segurança da informação e Infraestrutura/DevOps|Teste de IDOR em todas as rotas de pedido; IDs sequenciais retornam 404; alerta de 403 em sequência; status restaurados a partir do log na simulação|
+|[R07] Preço alterado no checkout|Reduzir|C13, C14|Protect, Detect|Back-end e Financeiro|Checkout com preço adulterado cobra o valor recalculado; conciliação diária sem divergência|
+|[R08] Desconto indevido|Reduzir|C13|Protect, Detect|Back-end|Quantidade falsa não gera desconto, e a divergência é registrada|
+|[R09] Laudo DFM alterado|Reduzir|C04, C16, C18|Protect, Detect|Back-end e Líder de produção|Só o técnico atribuído edita o laudo; hash do laudo enviado confere com a versão guardada; cada edição registrada|
+|[R10] Disputa de pagamento|Compartilhar|C14, C17|Govern, Detect|Financeiro e Back-end|Contrato com o gateway define comprovantes e contestação; todo pedido pago tem ID de transação; conciliação diária|
+|[R11] Cliente nega o cancelamento|Reduzir|C18|Protect, Respond|Back-end e Coordenação de suporte|Cada cancelamento gera registro (usuário, data e IP) e confirmação no canal cadastrado|
+|[R12] Técnico nega a aprovação|Reduzir|C06, C18|Govern, Protect, Respond|Líder de produção e Segurança da informação|Nenhuma conta compartilhada na revisão trimestral; cada aprovação ligada a uma conta pessoal no log|
+|[R13] Autoria de avaliação negada|Aceitar|C18, C22|Govern, Identify|Diretoria e Segurança da informação|Aceitação aprovada em ata; cada avaliação registrada com conta, data e IP; revisão semestral|
+|[R14] Download de STL de terceiros|Reduzir|C01, C02, C03, C16, C19|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Segurança da informação|Troca de ID na URL retorna 403 ou 404; nenhum objeto público no armazenamento; URL expirada recusada|
+|[R15] Dados de pagamento expostos|Evitar|C17|Govern, Protect|Back-end e Encarregado de dados (DPO)|Nenhum número de cartão no banco nem nos logs (busca automática); revisão anual da integração com o gateway|
+|[R16] Dados de outros clientes|Reduzir|C01, C02, C19|Protect, Detect, Respond|Back-end e Encarregado de dados (DPO)|Teste de IDOR nas rotas de histórico, cadastro e laudo; plano de comunicação à ANPD revisado na simulação|
+|[R17] Desenhos técnicos expostos|Reduzir|C01, C03, C16, C19|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Líder de produção|Técnico não atribuído recebe 403 ao abrir o PDF; PDFs criptografados em repouso|
+|[R18] Bloqueio por força bruta|Reduzir|C07|Protect, Detect|Back-end|Na força bruta simulada, a espera cresce e o dono continua entrando|
+|[R19] Envio abusivo de arquivos|Reduzir|C10, C19|Protect, Detect|Back-end e Infraestrutura/DevOps|Upload acima do limite recusado antes da gravação; alerta de pico de uploads disparado no teste|
+|[R20] Sobrecarga do processamento|Reduzir|C10, C11, C19|Protect, Detect, Respond|Infraestrutura/DevOps e Back-end|No teste de carga com várias contas, o orçamento continua disponível; tarefa acima do tempo é encerrada|
+|[R21] Execução de código por STL|Reduzir|C11, C12, C19, C20|Govern, Identify, Protect, Detect, Respond, Recover|Infraestrutura/DevOps e Segurança da informação|Worker sem rede e sem acesso a outros arquivos no teste; SCA sem falha crítica aberta; workers recriados a partir de imagem limpa na simulação|
+|[R22] Autoaprovação e funções administrativas|Reduzir|C04, C18, C19|Protect, Detect, Respond|Back-end e Segurança da informação|Cliente que chama a rota de aprovação recebe 403 e o evento é registrado; matriz de perfis por rota revisada a cada versão|
+|[R23] Pagamento falso|Reduzir|C14|Protect, Detect|Back-end e Financeiro|Notificação sem assinatura recusada; o retorno do navegador não muda o pedido para pago|
+|[R24] XSS armazenado no painel|Reduzir|C08, C09, C19|Protect, Detect, Respond|Front-end, Back-end e Segurança da informação|Script em mensagem, avaliação e nome de arquivo aparece como texto; CSP e cookie `HttpOnly` presentes|
+|[R25] Logs de auditoria alterados|Reduzir|C18, C20|Protect, Recover|Infraestrutura/DevOps|A credencial da aplicação não consegue apagar nem alterar o log; cópia do log restaurada no teste semestral|
+|[R26] PDF malicioso|Evitar|C11|Protect|Infraestrutura/DevOps e Líder de produção|O painel só mostra a imagem convertida, e nenhum técnico baixa o PDF original|
 
 [e1-31]: etapa-1-ameacas-stride.md#31-usuários-e-perfis-de-acesso
 [e1-32]: etapa-1-ameacas-stride.md#32-elementos-do-sistema
