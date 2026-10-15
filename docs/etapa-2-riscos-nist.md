@@ -125,6 +125,48 @@ Cada linha é um risco. O ID segue a numeração da ameaça de origem: R01 a R22
 
 São 26 riscos: 6 críticos, 7 altos, 12 médios e 1 baixo.
 
+### 2.4 Justificativas das avaliações
+
+A probabilidade 3 foi dada quando o ataque pode ser feito com ferramentas comuns (navegador, proxy, script ou listas de senhas vazadas) e a condição descrita na Etapa 1 é plausível. A probabilidade 2 foi dada quando o ataque depende de uma falha específica de configuração ou de implementação, de capacidade técnica ou de acesso interno.
+
+|Risco|Por que a probabilidade|Por que o impacto|Afetados e consequências|
+|-|-|-|-|
+|[R01]|**3:** ataques com senhas vazadas são comuns e automatizados, e o login não tem MFA nem limite de tentativas|**3:** o dano fica em uma conta por vez, mas inclui os projetos e os pedidos daquele cliente|Cliente e seus STL, PDF, dados pessoais e pedidos. Vazamento de projetos de uma conta e pedidos fraudulentos|
+|[R02]|**3:** nome, CPF e número do pedido aparecem em notas fiscais, e-mails e vazamentos, e o suporte só confere esses dados|**3:** a vítima perde uma peça já paga e a empresa precisa reembolsar|Cliente, suporte e financeiro. Peça desviada, reembolso e perda de confiança|
+|[R03]|**3:** técnicos usam o painel todos os dias, phishing direcionado é comum e contas de ex-funcionários podem continuar ativas ([CA08])|**4:** o painel dá acesso aos projetos de todos os clientes e às aprovações, e um vazamento de projetos não pode ser desfeito|Todos os clientes e a produção. Vazamento em massa, aprovações indevidas e peças defeituosas|
+|[R04]|**2:** o atacante precisa descobrir o endereço e o formato do retorno da transportadora, que não ficam visíveis ao cliente|**2:** o status ou o frete errado é corrigido consultando a transportadora, sem perda de dados|Clientes com pedidos em trânsito e suporte. Informação de entrega errada e mais chamados|
+|[R05]|**2:** alterar o arquivo exige interceptar o tráfego ou ter permissão de escrita no armazenamento|**3:** uma peça com defeito oculto pode ser fabricada, entregue e falhar durante o uso|Cliente e produção. Peça defeituosa, retrabalho e discussão de responsabilidade|
+|[R06]|**3:** com IDs sequenciais e sem conferência do dono, basta trocar um número na requisição, e um script repete isso para todos os pedidos ([CA06])|**4:** pode cancelar ou aprovar todos os pedidos em produção ao mesmo tempo|Todos os clientes, produção e financeiro. Atrasos em massa, aprovações indevidas e reembolsos|
+|[R07]|**3:** qualquer cliente consegue alterar a requisição com as ferramentas do navegador ou um proxy|**3:** prejuízo financeiro direto em cada pedido adulterado|Empresa (financeiro). Peças vendidas abaixo do custo|
+|[R08]|**3:** a mesma facilidade do [R07], porque a quantidade vem do cliente|**2:** o prejuízo se limita ao percentual do desconto e pode ser cobrado depois da conferência do pedido|Empresa (financeiro). Descontos indevidos|
+|[R09]|**2:** é preciso ter permissão de escrita sobre o laudo, por meio de uma conta interna ([R03]) ou de uma falha no armazenamento|**3:** o cliente muda o projeto seguindo uma orientação falsa e recebe uma peça defeituosa|Cliente e técnicos. Peça defeituosa e perda de confiança no laudo|
+|[R10]|**2:** contestações acontecem, mas o gateway guarda os comprovantes. O problema só aparece se a transação não estiver ligada ao pedido|**2:** a disputa envolve um pedido e pode ser resolvida com o comprovante do gateway|Cliente e financeiro. Atraso na solução da disputa|
+|[R11]|**3:** arrependimento e contestação de cancelamento são comuns no pós-venda, e hoje não há log nem confirmação|**2:** a disputa envolve o reembolso de um pedido e tem solução|Cliente, suporte e financeiro. Reembolso contestado sem evidência|
+|[R12]|**2:** depende de uma peça aprovada com falha e do uso de contas compartilhadas|**3:** sem saber quem aprovou, a empresa não consegue apurar a responsabilidade pela peça defeituosa|Técnicos, produção e cliente. Responsabilidade indefinida e risco jurídico|
+|[R13]|**2:** avaliações ofensivas acontecem, mas negar a autoria exige que a avaliação não esteja ligada a uma conta|**1:** avaliações não são ativo importante ([seção 3.2 da Etapa 1][e1-32]) e podem ser removidas|Empresa (reputação). Pequeno transtorno|
+|[R14]|**3:** basta copiar o endereço do próprio arquivo no visualizador e trocar o identificador ([CA01])|**4:** expõe a propriedade intelectual de todos os clientes, e o vazamento não pode ser desfeito|Todos os clientes. Vazamento de projetos e perda de confiança na plataforma|
+|[R15]|**2:** depende de um erro de configuração, como um log de depuração ou uma permissão mal definida na API de checkout|**3:** dados de pagamento expostos permitem fraude e ferem a LGPD|Clientes e financeiro. Fraude, notificação à ANPD e multa|
+|[R16]|**3:** o mesmo IDOR do [R06], com a mesma facilidade|**3:** vazamento de dados pessoais (CPF e endereço) e laudos, como define a premissa da [seção 2.1](#21-critérios)|Clientes. Violação de privacidade, LGPD e golpes usando os dados vazados|
+|[R17]|**3:** os PDFs ficam no mesmo armazenamento do [R14] e todos os técnicos acessam todos os arquivos|**4:** os desenhos têm segredos industriais, e o vazamento não pode ser desfeito|Clientes que usam o RF22. Vazamento de propriedade intelectual|
+|[R18]|**3:** força bruta automatizada contra telas de login é frequente em qualquer serviço exposto|**2:** as contas atingidas ficam sem acesso por um tempo, sem perda de dados|Clientes. Indisponibilidade temporária do login|
+|[R19]|**3:** qualquer conta pode enviar arquivos sem limite, e gerar um arquivo enorme é trivial|**3:** o serviço fica lento e o custo de armazenamento sobe, mas os arquivos podem ser apagados e o serviço volta sem perda de dados|Todos os clientes e infraestrutura. Lentidão e custo extra|
+|[R20]|**3:** até clientes legítimos enviam modelos pesados, e um atacante com várias contas ([CA07]) satura o processamento sem fila nem cota|**4:** sem processamento, nenhum cliente consegue orçar ou comprar|Todos os clientes e a receita. Parada do serviço principal|
+|[R21]|**2:** exige uma falha conhecida no leitor de STL e capacidade técnica para explorá-la|**4:** quem controla os servidores alcança os arquivos de todos os clientes|Todos os clientes e infraestrutura. Comprometimento dos servidores e vazamento em massa|
+|[R22]|**3:** a requisição de aprovação aparece no navegador, e a interface só esconde a opção ([CA05])|**4:** permite aprovar peças sem revisão e usar funções administrativas como preços, descontos e contas|Produção, todos os clientes e financeiro. Aprovações indevidas e alteração de preços|
+|[R23]|**2:** depende de a integração aceitar o retorno do navegador ou não validar a assinatura da notificação|**3:** a peça é produzida e entregue sem pagamento|Financeiro e produção. Prejuízo por pedido|
+|[R24]|**2:** exige conhecimento de XSS e que o painel não codifique a saída|**4:** a sessão roubada de um técnico ou administrador tem o mesmo alcance do [R03]|Equipe interna e todos os clientes. Vazamento em massa e aprovações indevidas|
+|[R25]|**2:** exige acesso interno ou um processo comprometido com permissão sobre a base|**3:** as evidências de disputas e incidentes se perdem, o que agrava [R10], [R11] e [R12]|Empresa e clientes em disputa. Responsabilidades e incidentes sem apuração|
+|[R26]|**2:** depende de uma falha no leitor de PDF do técnico e de um ataque direcionado|**3:** compromete a máquina de um técnico, que tem acesso ao painel, mas o dano começa em uma estação|Técnicos e painel interno. Porta de entrada para o [R03]|
+
+**Por que os níveis representam o contexto:**
+
+* **Críticos:** todos combinam um ataque fácil (P = 3) com um dano irreversível ou que atinge todos os clientes (I = 4). São os riscos que a plataforma não consegue absorver, porque perder o sigilo dos projetos encerra o modelo de negócio.
+* **Altos:** são de dois tipos. Uns são fáceis, mas atingem um cliente ou um pedido por vez ([R01], [R02], [R07], [R16], [R19]). Outros são graves, mas dependem de capacidade técnica ([R21], [R24]).
+* **Médios:** dependem de condições específicas ou causam danos que podem ser recuperados.
+* **Baixo:** só o [R13], cujo ativo não foi considerado importante na Etapa 1.
+
+A pontuação serviu de ponto de partida. A Parte 3 ajusta a ordem entre riscos com a mesma pontuação.
+
 ## Parte 3 - Plano de priorização
 
 ### 3.1 Riscos críticos (12 a 16)
