@@ -249,6 +249,95 @@ As medidas abaixo estão agrupadas por área. As três primeiras cobrem todos os
 |Registro de auditoria|Log que só aceita inclusões, guardado fora da base da aplicação, com quem fez, quando, o quê e os valores antes e depois, para aprovações, cancelamentos, pagamentos, trocas de endereço e laudos|[R10], [R11], [R12], [R13], [R25]|
 |Atendimento|Troca de endereço só depois de confirmação pelo e-mail ou telefone cadastrado; nenhuma troca depois do despacho|[R02]|
 
+## Parte 4 - Tratamento dos riscos
+
+### 4.1 Estratégias de tratamento
+
+|Estratégia|Uso neste sistema|
+|-|-|
+|Evitar|Eliminar a atividade ou condição que dá origem ao risco|
+|Reduzir|Diminuir a probabilidade ou o impacto com controles|
+|Compartilhar|Passar parte da operação ou das consequências a um terceiro|
+|Aceitar|Manter o risco de forma consciente, com justificativa e acompanhamento|
+
+|Risco|Estratégia|Justificativa|
+|-|-|-|
+|[R01]|Reduzir|O login é indispensável. Limite de tentativas, regras de sessão e MFA opcional diminuem a chance de invasão|
+|[R02]|Reduzir|O suporte precisa continuar trocando endereços. Confirmar pelo canal cadastrado diminui a chance de golpe, e proibir a troca depois do despacho limita o dano|
+|[R03]|Reduzir|O painel é necessário à operação. SSO com MFA, rede restrita e gestão das contas internas diminuem a chance de acesso indevido|
+|[R04]|Reduzir|A integração com a transportadora é necessária. Autenticar o retorno impede mensagens de origem falsa|
+|[R05]|Reduzir|O hash conferido antes do fatiamento detecta a alteração, e o TLS dificulta a interceptação|
+|[R06]|Reduzir|A conferência do dono em um ponto único da API e os IDs aleatórios diminuem a chance do ataque|
+|[R07]|Reduzir|O servidor recalcula o preço e ignora o valor enviado pelo navegador|
+|[R08]|Reduzir|O mesmo recálculo do [R07] vale para o desconto|
+|[R09]|Reduzir|Controle de quem pode editar, histórico de versões e hash da versão enviada ao cliente|
+|[R10]|Compartilhar|O gateway guarda os comprovantes e conduz as contestações (chargeback) conforme o contrato. Ao sistema cabe vincular a transação ao pedido e conferir os dois|
+|[R11]|Reduzir|O log de auditoria e a confirmação no canal cadastrado criam a prova do cancelamento|
+|[R12]|Reduzir|Contas pessoais e log de auditoria tornam cada aprovação nominal|
+|[R13]|Aceitar|O ativo não é importante e o impacto é 1. Veja as condições abaixo|
+|[R14]|Reduzir|Armazenamento privado, URL pré-assinada e conferência do dono|
+|[R15]|Evitar|Com a página ou a tokenização do gateway, o número do cartão nunca entra no sistema. O que sobra (valor, status e token) é mascarado nos logs|
+|[R16]|Reduzir|A mesma conferência do dono do [R06], aplicada às consultas|
+|[R17]|Reduzir|Os mesmos controles do [R14], mais a restrição dos técnicos aos arquivos dos pedidos atribuídos a eles|
+|[R18]|Reduzir|Espera crescente e CAPTCHA em vez de bloqueio permanente da conta|
+|[R19]|Reduzir|Limites de tamanho, formato e espaço conferidos antes de gravar o arquivo|
+|[R20]|Reduzir|Fila, cota por conta e limites por tarefa fazem o sistema ficar mais lento em vez de parar|
+|[R21]|Reduzir|Atualizar as bibliotecas diminui a probabilidade, e o isolamento dos workers diminui o impacto|
+|[R22]|Reduzir|O perfil é conferido no servidor em todas as rotas de aprovação e administração|
+|[R23]|Reduzir|O pedido só é marcado como pago depois de consultar o gateway ou validar a assinatura da notificação|
+|[R24]|Reduzir|Codificação de saída e CSP impedem que o script rode no painel|
+|[R25]|Reduzir|Log que só aceita inclusões, guardado fora da base e das permissões da aplicação|
+|[R26]|Evitar|O técnico deixa de abrir o PDF original. O arquivo é convertido em imagem dentro do worker isolado do [R21], e só a imagem chega ao painel|
+
+**Aceitação do [R13]**
+
+* **Motivo:** a Etapa 1 não considera as avaliações um ativo importante, e uma avaliação ofensiva pode ser removida. Controles como moderação prévia de todas as avaliações custariam mais do que o dano que evitam.
+* **Quem aprova:** a diretoria, com parecer do responsável por segurança da informação.
+* **Condições:** cada avaliação fica registrada com a conta, a data e o IP de quem a enviou. Só clientes com pedido entregue podem avaliar. Avaliações denunciadas passam por moderação manual.
+* **Revisão:** a cada seis meses, junto com a revisão do registro de riscos. A revisão é antecipada se as avaliações passarem a influenciar o ranking, os preços ou as vendas, ou se houver um incidente envolvendo uma avaliação.
+
+### 4.2 Funções do NIST CSF 2.0
+
+O NIST Cybersecurity Framework 2.0 organiza os resultados de segurança em seis funções. Cada função se divide em categorias, que descrevem um resultado esperado. Os controles são as medidas concretas que este sistema adota para alcançar esses resultados. A função não é um controle.
+
+|Função|Finalidade|Como se aplica à plataforma|
+|-|-|-|
+|Govern (GV)|Definir políticas, responsabilidades, prioridades e critérios de decisão|Política de gestão de riscos e critérios de aceitação (como o do [R13]); quem cria e aprova contas internas; obrigações da LGPD; contratos com o gateway e a transportadora|
+|Identify (ID)|Conhecer ativos, dependências, vulnerabilidades e riscos|Inventário dos ativos ([seção 3.2 da Etapa 1][e1-32]) e das bibliotecas do fatiador e do visualizador; este registro de riscos e a revisão dele|
+|Protect (PR)|Implementar salvaguardas para reduzir a probabilidade ou o impacto|Autenticação, autorização por objeto, isolamento dos workers, criptografia e recálculo de preços no servidor|
+|Detect (DE)|Identificar eventos suspeitos, falhas e possíveis incidentes|Logs de auditoria e alertas: enumeração de IDs, pico na fila de processamento, acesso interno fora do padrão e divergência na conciliação de pagamentos|
+|Respond (RS)|Conter, analisar, comunicar e tratar incidentes|Revogar sessões, bloquear contas, investigar pelo log e comunicar clientes e ANPD em caso de vazamento|
+|Recover (RC)|Restaurar serviços e dados e reduzir os prejuízos causados|Restaurar banco e armazenamento a partir do backup, reprocessar pedidos afetados e avisar os clientes da volta do serviço|
+
+**Função, resultado esperado e controle**
+
+|Função|Resultado esperado (categoria do CSF 2.0)|Controle neste sistema|
+|-|-|-|
+|Protect|PR.AA: o acesso aos ativos fica limitado a identidades autenticadas e autorizadas|SSO com MFA para entrar no painel interno|
+|Detect|DE.CM: os ativos são monitorados para encontrar eventos adversos|Alerta quando uma conta recebe muitas respostas 403 em sequência, o que indica enumeração de IDs|
+|Govern|GV.RR: papéis, responsabilidades e autoridades estão definidos|Processo documentado de criação, revisão e remoção das contas internas|
+
+**Categorias usadas neste documento**
+
+|Categoria|Resultado esperado|
+|-|-|
+|GV.RM|Prioridades, tolerância a riscos e critérios de decisão estão definidos e são usados|
+|GV.RR|Papéis, responsabilidades e autoridades estão definidos e são cobrados|
+|GV.SC|Os riscos de fornecedores e parceiros (gateway, transportadora e bibliotecas de terceiros) são conhecidos e tratados em contrato|
+|ID.AM|Dados, sistemas, software e serviços estão inventariados e são geridos conforme sua importância|
+|ID.RA|Vulnerabilidades e riscos são identificados, avaliados e priorizados|
+|PR.AA|O acesso fica limitado a identidades autenticadas e autorizadas|
+|PR.AT|As pessoas são treinadas para realizar suas tarefas com segurança|
+|PR.DS|A confidencialidade, a integridade e a disponibilidade dos dados são protegidas|
+|PR.PS|Hardware, software e serviços são configurados e mantidos de forma segura|
+|PR.IR|A infraestrutura tem capacidade suficiente e isolamento entre os ambientes|
+|DE.CM|Os ativos são monitorados para encontrar eventos adversos|
+|DE.AE|Os eventos suspeitos são analisados para entender o ataque|
+|RS.MA|O plano de resposta é executado quando um incidente é declarado|
+|RS.AN|A investigação descobre a causa e o alcance do incidente|
+|RS.CO|O incidente é comunicado a clientes, parceiros e autoridades|
+|RC.RP|Sistemas e dados são restaurados depois do incidente|
+
 [e1-31]: etapa-1-ameacas-stride.md#31-usuários-e-perfis-de-acesso
 [e1-32]: etapa-1-ameacas-stride.md#32-elementos-do-sistema
 [e1-4]: etapa-1-ameacas-stride.md#4-visão-geral-da-arquitetura-e-fluxo
