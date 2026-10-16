@@ -117,8 +117,97 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 
 **Log de auditoria.** Cada registro do log ([C18]) tem os campos que permitem reconstruir a ação: quem executou, o alvo, a operação, a justificativa (obrigatória nas exceções, como uma aprovação fora do fluxo normal), o horário em UTC, o estado anterior, o novo estado e o resultado.
 
+## 4. Decisões de arquitetura
+
+|Decisão|Riscos tratados|Requisito|Justificativa resumida|
+|-|-|-|-|
+|[D01](#d01--o-servidor-decide-autorização-por-objeto-em-um-ponto-único)|[R06], [R14], [R16], [R17]|[RS01]|Esconder dados na interface não impede que o cliente peça o recurso de outro. Só o servidor pode decidir quem acessa cada objeto|
+|[D02](#d02--painel-interno-separado-com-defesa-em-profundidade)|[R03], [R22], [R24]|[RS02]|Ocultar opções na interface não impede o acesso direto às funções. As rotas administrativas saem da API pública e passam a exigir várias camadas|
+|[D03](#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura)|[R19], [R20], [R21], [R26]|[RS03]|Sem fila nem isolamento, um único cliente derruba ou compromete o processamento de todos|
+
+#### D01 — O servidor decide: autorização por objeto em um ponto único
+
+**Problema ou risco tratado:** [R14], [R06], [R16] e [R17], do grupo A da Etapa 2 ([RS01]). Os números de pedido são sequenciais e o servidor não confere o dono do recurso. Assim, um usuário autenticado consegue ler ou alterar pedidos, arquivos e laudos de outros clientes ([CA01], [CA06]).
+
+**Decisão:**
+
+* O cliente só envia a intenção: o que quer fazer e sobre qual recurso. A identidade do usuário vem do token validado no servidor, nunca de um campo da requisição.
+* Toda rota passa pelo módulo de autorização central antes de chegar ao módulo de negócio. Esse módulo carrega o recurso, confere se ele pertence ao usuário (ou se o pedido está atribuído ao técnico) e nega tudo o que não estiver explicitamente permitido.
+* Pedidos, arquivos e laudos usam UUID. Os arquivos só são entregues por URL pré-assinada de 5 minutos, gerada depois dessa conferência.
+
+**Motivo:**
+
+* **Cliente solicita, servidor decide:** o navegador está fora do controle da plataforma (FC1), e qualquer campo enviado por ele pode ser alterado com um proxy.
+* **Negação por padrão e mediação completa:** se cada rota fizesse a própria verificação, bastaria uma rota esquecida para o IDOR continuar. Com um ponto único, a regra é aplicada em toda requisição e pode ser testada de uma vez.
+* O UUID não substitui a conferência do dono (a [IDOR Prevention Cheat Sheet][cs-idor] trata IDs aleatórios só como camada extra), mas impede a enumeração em massa por script. Trocar o formato depois exigiria migrar os dados e quebraria links já enviados aos clientes.
+
+**Componente afetado:** API back-end (módulo de autorização e rotas do cliente), banco de dados (chaves em UUID) e armazenamento de arquivos (sem objetos públicos).
+
+**Resultado esperado:** cada usuário só alcança os próprios pedidos, arquivos e laudos. Uma tentativa de acessar recursos de outro cliente recebe 403 e fica no log ([C18]). Tentativas repetidas disparam o alerta de enumeração ([C19]).
+
+#### D02 — Painel interno separado, com defesa em profundidade
+
+**Problema ou risco tratado:** [R22], [R03] e [R24], do grupo B da Etapa 2 ([RS02]). A interface só esconde a opção de aprovar ([CA05]), o painel não exige MFA nem restringe a rede de acesso ([CA08]), e o conteúdo enviado por clientes aparece no painel sem codificação.
+
+**Decisão:**
+
+* O painel tem endereço próprio e usa rotas próprias na API. As rotas de aprovação, laudo e administração não existem entre as rotas usadas pelos clientes.
+* O acesso tem quatro camadas: VPN ou lista de IPs, SSO com MFA, perfil e atribuição conferidos em cada rota e log de auditoria com alerta de acesso fora do padrão.
+* As permissões seguem o menor privilégio (matriz abaixo), e a aprovação de um projeto exige o técnico atribuído ao pedido.
+
+**Motivo:**
+
+* **Redução da superfície de ataque:** uma rota que não existe na API pública não pode ser chamada pela internet, mesmo por quem tem um token válido.
+* **Defesa em profundidade:**
+  * uma senha de técnico vazada esbarra no MFA;
+  * quem consegue passar do MFA ainda precisa estar na rede interna;
+  * dentro da rede, o perfil limita o que pode ser feito;
+  * e o log registra a ação e dispara o alerta.
+
+  O [ASVS 5.0.0, requisito 8.4.2][asvs-v8] pede essas várias camadas para interfaces administrativas, sem depender só da localização na rede.
+* **Separação de funções:** quem cuida da infraestrutura não tem autoridade sobre laudos e aprovações, e cada aprovação é feita por uma pessoa identificada, com conta pessoal ([C06]).
+
+**Matriz de menor privilégio**
+
+|Perfil|Pode|Não pode|
+|-|-|-|
+|Cliente|Enviar arquivos, configurar, pagar, acompanhar, cancelar e avaliar os próprios pedidos|Ver pedidos e arquivos de outros clientes, aprovar a revisão técnica, alterar preços ou o status de produção|
+|Atendente de suporte|Consultar pedidos, responder chamados e trocar o endereço de entrega depois de confirmar pelo canal cadastrado ([C21])|Baixar STL e PDF dos clientes, aprovar projetos, alterar preços e descontos|
+|Técnico de produção|Abrir os arquivos dos pedidos atribuídos a ele, emitir o laudo DFM, aprovar ou reprovar esses projetos e atualizar o status de produção|Acessar pedidos não atribuídos a ele, alterar preços, criar contas|
+|Administrador|Gerenciar preços, descontos, materiais, estoque e contas internas, com aprovação da segurança para novos perfis ([C06])|Aprovar projetos ou editar laudos|
+|Infraestrutura/DevOps|Manter servidores, banco, fila e workers e consultar métricas|Aprovar projetos, editar laudos ou alterar pedidos, mesmo com acesso técnico ao banco|
+
+**Componente afetado:** painel interno, serviço de autenticação (SSO), rotas do painel na API e log de auditoria.
+
+**Resultado esperado:** as funções administrativas deixam de ser alcançáveis pela internet. Uma credencial vazada, sozinha, não dá acesso ao painel. Toda aprovação tem um autor identificado no log.
+
+#### D03 — Processamento assíncrono com workers isolados e falha segura
+
+**Problema ou risco tratado:** [R20], [R19], [R21] e [R26], do grupo C da Etapa 2 ([RS03]). Renderização, fatiamento e DFM rodam sem fila nem limites, e bibliotecas de terceiros leem arquivos enviados por qualquer cliente em servidores com acesso amplo ao armazenamento ([CA02], [CA07]).
+
+**Decisão:**
+
+* O upload só é aceito depois de a API conferir o formato real, o tamanho e o número de triângulos. O arquivo aceito vira uma tarefa em uma fila com cota por conta.
+* As tarefas rodam em workers descartáveis: contêineres sem rede, sem root, com tempo e memória máximos e uma credencial que só lê o arquivo daquela tarefa. Os PDFs do RF22 são convertidos em imagem no mesmo ambiente.
+* O orçamento passa a ter o estado "em processamento". Se a fila lotar ou os workers caírem, o pedido espera nesse estado e nada é aprovado sem o resultado do DFM. Quando o serviço volta, as tarefas são reprocessadas na ordem de chegada.
+
+**Motivo:**
+
+* **Falha segura:** diante de uma falha, o sistema nega em vez de liberar. Liberar o orçamento sem DFM levaria à produção de peças inviáveis, e mostrar o erro técnico ao cliente exporia detalhes internos ([A10:2025]).
+* **Contenção do impacto:** se um STL malicioso conseguir executar código, ele fica preso em um contêiner sem rede, que só enxerga um arquivo e é destruído ao fim da tarefa. É isso que reduz o impacto do [R21] de 4 para 2 no risco residual da Etapa 2.
+* **Limites antes da fila:** conferir o arquivo antes de gravar e de enfileirar evita gastar armazenamento e CPU com arquivos que seriam recusados depois.
+* Trocar o processamento imediato pela fila muda o contrato da API e a interface, que passa a mostrar o estado "em processamento". Por isso, a decisão precisa ser tomada agora, antes do código.
+
+**Componente afetado:** API (módulos de arquivos e de orçamento), fila, workers, armazenamento e aplicação web (exibição do estado "em processamento").
+
+**Resultado esperado:** sob carga, o sistema fica mais lento, mas continua aceitando pedidos e orçamentos. Nenhum orçamento é liberado sem DFM, e uma falha no fatiador não alcança os arquivos dos outros clientes.
+
 [e2-31]: etapa-2-riscos-nist.md#31-riscos-críticos-12-a-16
 [e2-46]: etapa-2-riscos-nist.md#46-ordem-inicial-de-implementação
+
+[RS01]: #1-requisitos-de-segurança
+[RS02]: #1-requisitos-de-segurança
+[RS03]: #1-requisitos-de-segurança
 
 [R03]: etapa-2-riscos-nist.md#22-registro-de-riscos
 [R06]: etapa-2-riscos-nist.md#22-registro-de-riscos
@@ -137,6 +226,7 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 [C03]: etapa-2-riscos-nist.md#c03
 [C04]: etapa-2-riscos-nist.md#c04
 [C05]: etapa-2-riscos-nist.md#c05
+[C06]: etapa-2-riscos-nist.md#c06
 [C07]: etapa-2-riscos-nist.md#c07
 [C08]: etapa-2-riscos-nist.md#c08
 [C09]: etapa-2-riscos-nist.md#c09
@@ -150,11 +240,14 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 [C18]: etapa-2-riscos-nist.md#c18
 [C19]: etapa-2-riscos-nist.md#c19
 [C20]: etapa-2-riscos-nist.md#c20
+[C21]: etapa-2-riscos-nist.md#c21
 
 [CA01]: etapa-1-ameacas-stride.md#ca01--roubo-de-projeto-confidencial
 [CA02]: etapa-1-ameacas-stride.md#ca02--arquivo-stl-malicioso
 [CA05]: etapa-1-ameacas-stride.md#ca05--autoaprovação-da-revisão-técnica
+[CA06]: etapa-1-ameacas-stride.md#ca06--cancelamento-de-pedidos-de-outros-clientes
 [CA07]: etapa-1-ameacas-stride.md#ca07--sobrecarga-do-processamento-de-modelos
+[CA08]: etapa-1-ameacas-stride.md#ca08--falso-técnico-aprova-peça-adulterada
 
 [CWE-285]: https://cwe.mitre.org/data/definitions/285.html
 [CWE-400]: https://cwe.mitre.org/data/definitions/400.html
