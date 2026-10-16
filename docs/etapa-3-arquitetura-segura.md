@@ -26,6 +26,97 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 |[R22]|[CWE-602]: Client-Side Enforcement of Server-Side Security, com [CWE-285]: Improper Authorization|[A01:2025] Broken Access Control, segundo a qual o controle de acesso só é eficaz em código confiável no servidor; [API5:2023] Broken Function Level Authorization; [ASVS 5.0.0, requisitos 8.3.1 e 8.2.1][asvs-v8]: a autorização é aplicada em uma camada de serviço confiável, e cada função só é liberada a quem tem permissão explícita; [Authorization Cheat Sheet][cs-authz]: *Deny by Default* e *Validate the Permissions on Every Request*|A interface esconde o botão de aprovar, mas a rota de aprovação responde a qualquer usuário autenticado ([CA05]). O alvo é uma **função** administrativa, e não um objeto de outro cliente, por isso a categoria é BFLA (API5), e não BOLA (API1). O RS02 tira essas rotas da API pública e faz o servidor conferir o perfil em toda requisição|
 |[R20]|[CWE-770]: Allocation of Resources Without Limits or Throttling, com [CWE-400]: Uncontrolled Resource Consumption|[API4:2023] Unrestricted Resource Consumption, que cita tamanho máximo de upload, tempo de execução e memória por tarefa; [ASVS 5.0.0][asvs-v5], requisitos 5.2.1 (só aceitar arquivos que possam ser processados sem negação de serviço), 5.2.2 (conferir se o conteúdo corresponde à extensão) e 5.2.4 (cota de arquivos por usuário), e [requisito 2.4.1][asvs-v2] (controles contra automação que esgota cotas e recursos caros); [A10:2025] Mishandling of Exceptional Conditions e [CWE-636]: Not Failing Securely ('Failing Open'), para o comportamento quando os workers caem; [File Upload Cheat Sheet][cs-upload]|O fatiamento e a análise DFM consomem muita CPU e memória. Sem limites, uma única conta com modelos de milhões de triângulos ocupa os workers de todos ([CA07]). O RS03 aplica os limites antes de gravar e de enfileirar, e define que a falha dos workers deixa o orçamento "em processamento", sem liberar o pedido|
 
+## 3. Diagrama da arquitetura segura
+
+O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png).
+
+```mermaid
+flowchart LR
+    subgraph INTERNET["Internet (não confiável)"]
+        CLI([Cliente])
+        WEB["Aplicação web<br/>+ visualizador 3D"]
+    end
+
+    subgraph INTERNA["Rede interna / VPN"]
+        EQ(["Técnico, suporte<br/>e administrador"])
+        PAINEL["Painel interno<br/>C09 codificação de saída + CSP"]
+    end
+
+    subgraph AUTH["Autenticação"]
+        IDP["IdP dos clientes<br/>C07 limite de tentativas<br/>C08 sessão e cookies"]
+        SSO["SSO da equipe<br/>C05 MFA obrigatório"]
+    end
+
+    subgraph API["API back-end (monólito modular)"]
+        PUB["Rotas do cliente<br/>identidade só do token"]
+        PRIV["Rotas do painel<br/>aceitas só da VPN"]
+        AZ{{"Autorização central<br/>C01 dono do objeto<br/>C04 perfil por rota<br/>nega por padrão"}}
+        PED["Pedidos e orçamento<br/>C13 recálculo no servidor"]
+        ARQ["Arquivos<br/>C10 limites de upload<br/>C03 URL pré-assinada"]
+        PAG["Pagamentos<br/>C14 confirmação no gateway"]
+        LOGI["Logística<br/>C15 retorno com HMAC"]
+        REV["Revisão técnica e admin<br/>só pelas rotas do painel"]
+    end
+
+    subgraph PROC["Processamento isolado"]
+        FILA[["Fila<br/>C10 cota por conta"]]
+        WK["Workers descartáveis<br/>C11 sem rede, tempo e<br/>memória máximos"]
+    end
+
+    subgraph DADOS["Dados"]
+        DB[("Banco de dados<br/>C02 UUID, C16 criptografia<br/>conta de menor privilégio")]
+        S3[("Armazenamento privado<br/>C03, C16")]
+        AUD[("Log de auditoria<br/>C18 só inclusões")]
+        BKP[("Backup<br/>C20")]
+    end
+
+    MON["Monitoramento<br/>C19 alertas e resposta"]
+
+    subgraph EXT["Serviços externos"]
+        GW["Gateway de pagamento<br/>C17 tokenização"]
+        TR["Transportadoras"]
+        NOT["E-mail e SMS"]
+    end
+
+    CLI --> WEB
+    WEB -->|"FC1: HTTPS + token"| PUB
+    WEB -.->|login| IDP
+    EQ --> PAINEL
+    PAINEL -->|"FC2: VPN"| PRIV
+    PAINEL -.->|login| SSO
+    PUB --> AZ
+    PRIV --> AZ
+    AZ --> PED & ARQ & PAG & LOGI & REV
+    ARQ -->|"FC3: tarefa"| FILA
+    FILA --> WK
+    WK -->|"lê só o arquivo da tarefa"| S3
+    PED -->|FC4| DB
+    REV --> DB
+    ARQ -->|FC4| S3
+    PAG <-->|"FC5: assinatura"| GW
+    LOGI <-->|"FC5: HMAC"| TR
+    PED -.-> NOT
+    AZ -.->|"decisões e ações sensíveis"| AUD
+    AUD --> MON
+    DB & S3 & AUD -.-> BKP
+```
+
+### 3.1 Fronteiras de confiança
+
+Todo dado que cruza uma fronteira de confiança é tratado como não confiável e validado no ponto de entrada.
+
+|ID|Fronteira|O que muda ao cruzar|Controles na passagem|
+|-|-|-|-|
+|FC1|Navegador do cliente → rotas do cliente na API|O dado sai de um dispositivo que o usuário controla por completo, inclusive com proxy ou script, e entra no servidor|Identidade obtida só do token ([RS01](#1-requisitos-de-segurança)); dono do objeto conferido ([C01]); preço recalculado no servidor ([C13]); limites de upload ([C10])|
+|FC2|Painel interno → rotas do painel na API|Entram ações privilegiadas: aprovações, laudos, preços e contas|VPN ou lista de IPs e SSO com MFA ([C05]); perfil conferido por rota ([C04]); codificação de saída e CSP no painel ([C09])|
+|FC3|API → fila e workers|Um arquivo enviado por qualquer cliente passa a ser lido por bibliotecas de terceiros|Formato, tamanho e número de triângulos conferidos antes de enfileirar ([C10]); workers sem rede, sem root e com credencial válida só para o arquivo da tarefa ([C11])|
+|FC4|API → banco e armazenamento|A aplicação passa a tocar nos dados de todos os clientes|Conta do banco com menor privilégio, limitada às tabelas e aos comandos de cada módulo; UUID ([C02]); armazenamento privado com URL pré-assinada ([C03]); criptografia em repouso ([C16])|
+|FC5|Serviços externos → API|Mensagens de terceiros mudam o estado do pedido, como "pago" ou "entregue"|Notificação do gateway com assinatura validada ([C14]); retorno da transportadora com HMAC ([C15]); cartão tokenizado pelo gateway ([C17])|
+
+**Monólito modular.** A API é um único sistema dividido em módulos (pedidos e orçamento, arquivos, pagamentos, logística, revisão técnica). Cada módulo só acessa os dados pela própria interface, e todos passam pelo mesmo ponto de autorização. Essa separação não exige microsserviços. Os workers são a exceção: rodam fora da API porque processam arquivos não confiáveis e precisam de isolamento próprio (FC3).
+
+**Log de auditoria.** Cada registro do log ([C18]) tem os campos que permitem reconstruir a ação: quem executou, o alvo, a operação, a justificativa (obrigatória nas exceções, como uma aprovação fora do fluxo normal), o horário em UTC, o estado anterior, o novo estado e o resultado.
+
 [e2-31]: etapa-2-riscos-nist.md#31-riscos-críticos-12-a-16
 [e2-46]: etapa-2-riscos-nist.md#46-ordem-inicial-de-implementação
 
@@ -48,6 +139,7 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 [C05]: etapa-2-riscos-nist.md#c05
 [C07]: etapa-2-riscos-nist.md#c07
 [C08]: etapa-2-riscos-nist.md#c08
+[C09]: etapa-2-riscos-nist.md#c09
 [C10]: etapa-2-riscos-nist.md#c10
 [C11]: etapa-2-riscos-nist.md#c11
 [C13]: etapa-2-riscos-nist.md#c13

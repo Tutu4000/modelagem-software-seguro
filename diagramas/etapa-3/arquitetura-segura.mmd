@@ -1,0 +1,68 @@
+flowchart LR
+    subgraph INTERNET["Internet (não confiável)"]
+        CLI([Cliente])
+        WEB["Aplicação web<br/>+ visualizador 3D"]
+    end
+
+    subgraph INTERNA["Rede interna / VPN"]
+        EQ(["Técnico, suporte<br/>e administrador"])
+        PAINEL["Painel interno<br/>C09 codificação de saída + CSP"]
+    end
+
+    subgraph AUTH["Autenticação"]
+        IDP["IdP dos clientes<br/>C07 limite de tentativas<br/>C08 sessão e cookies"]
+        SSO["SSO da equipe<br/>C05 MFA obrigatório"]
+    end
+
+    subgraph API["API back-end (monólito modular)"]
+        PUB["Rotas do cliente<br/>identidade só do token"]
+        PRIV["Rotas do painel<br/>aceitas só da VPN"]
+        AZ{{"Autorização central<br/>C01 dono do objeto<br/>C04 perfil por rota<br/>nega por padrão"}}
+        PED["Pedidos e orçamento<br/>C13 recálculo no servidor"]
+        ARQ["Arquivos<br/>C10 limites de upload<br/>C03 URL pré-assinada"]
+        PAG["Pagamentos<br/>C14 confirmação no gateway"]
+        LOGI["Logística<br/>C15 retorno com HMAC"]
+        REV["Revisão técnica e admin<br/>só pelas rotas do painel"]
+    end
+
+    subgraph PROC["Processamento isolado"]
+        FILA[["Fila<br/>C10 cota por conta"]]
+        WK["Workers descartáveis<br/>C11 sem rede, tempo e<br/>memória máximos"]
+    end
+
+    subgraph DADOS["Dados"]
+        DB[("Banco de dados<br/>C02 UUID, C16 criptografia<br/>conta de menor privilégio")]
+        S3[("Armazenamento privado<br/>C03, C16")]
+        AUD[("Log de auditoria<br/>C18 só inclusões")]
+        BKP[("Backup<br/>C20")]
+    end
+
+    MON["Monitoramento<br/>C19 alertas e resposta"]
+
+    subgraph EXT["Serviços externos"]
+        GW["Gateway de pagamento<br/>C17 tokenização"]
+        TR["Transportadoras"]
+        NOT["E-mail e SMS"]
+    end
+
+    CLI --> WEB
+    WEB -->|"FC1: HTTPS + token"| PUB
+    WEB -.->|login| IDP
+    EQ --> PAINEL
+    PAINEL -->|"FC2: VPN"| PRIV
+    PAINEL -.->|login| SSO
+    PUB --> AZ
+    PRIV --> AZ
+    AZ --> PED & ARQ & PAG & LOGI & REV
+    ARQ -->|"FC3: tarefa"| FILA
+    FILA --> WK
+    WK -->|"lê só o arquivo da tarefa"| S3
+    PED -->|FC4| DB
+    REV --> DB
+    ARQ -->|FC4| S3
+    PAG <-->|"FC5: assinatura"| GW
+    LOGI <-->|"FC5: HMAC"| TR
+    PED -.-> NOT
+    AZ -.->|"decisões e ações sensíveis"| AUD
+    AUD --> MON
+    DB & S3 & AUD -.-> BKP
