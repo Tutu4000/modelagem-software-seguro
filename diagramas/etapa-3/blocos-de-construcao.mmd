@@ -1,0 +1,71 @@
+flowchart TB
+    CLI(["Cliente"])
+    EQ(["Equipe interna"])
+
+    subgraph SIS["Plataforma de impressão 3D sob demanda"]
+        direction TB
+
+        subgraph ACESSO["Acesso"]
+            direction LR
+            A1["Aplicação web<br/>+ visualizador 3D"]
+            A2["Painel interno<br/>só pela VPN, C09"]
+            A3["Balanceador de carga<br/>TLS e limite de requisições"]
+        end
+
+        subgraph IDENT["Identidade"]
+            direction LR
+            I1["IdP dos clientes<br/>C07, C08"]
+            I2["SSO da equipe<br/>C05 MFA"]
+        end
+
+        subgraph APP["Aplicação: API back-end, N réplicas sem estado"]
+            direction LR
+            P0{{"Autorização central<br/>C01, C04"}}
+            P1["Pedidos e orçamento<br/>C13"]
+            P2["Arquivos<br/>C03, C10"]
+            P3["Pagamentos<br/>C14"]
+            P4["Logística<br/>C15"]
+            P5["Revisão técnica<br/>e administração"]
+        end
+
+        subgraph PROC["Processamento isolado"]
+            direction LR
+            W1[["Fila<br/>C10 cota por conta"]]
+            W2["Autoscaler<br/>C10 teto de custo"]
+            W3["Workers descartáveis (N)<br/>C11"]
+        end
+
+        subgraph DADOS["Dados"]
+            direction LR
+            D1[("Banco principal<br/>C02, C16")]
+            D2[("Réplicas de leitura")]
+            D3[("Estado compartilhado<br/>contadores e revogação")]
+            D4[("Armazenamento de objetos<br/>C03, C16")]
+        end
+
+        subgraph OPS["Segurança e operação"]
+            direction LR
+            O1[("Log central e de auditoria<br/>C18")]
+            O2["Monitoramento e resposta<br/>C19"]
+            O3[("Backup<br/>C20")]
+            O4["Imagem endurecida<br/>C12"]
+        end
+    end
+
+    subgraph EXT["Serviços externos"]
+        direction LR
+        E1["Gateway de pagamento<br/>C17"]
+        E2["Transportadoras"]
+        E3["E-mail e SMS"]
+    end
+
+    CLI --> ACESSO
+    EQ --> ACESSO
+    ACESSO --> IDENT
+    ACESSO --> APP
+    APP --> PROC
+    APP --> DADOS
+    PROC --> DADOS
+    APP <--> EXT
+    APP -.-> OPS
+    PROC -.-> OPS

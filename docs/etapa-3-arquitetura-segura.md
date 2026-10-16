@@ -28,7 +28,7 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 
 ## 3. Diagrama da arquitetura segura
 
-O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png).
+O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
 
 ```mermaid
 flowchart LR
@@ -129,6 +129,94 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 |FC3|API → fila e workers|Um arquivo enviado por qualquer cliente passa a ser lido por bibliotecas de terceiros|Formato, tamanho e número de triângulos conferidos antes de enfileirar ([C10]); workers sem rede, sem root e com credencial válida só para o arquivo da tarefa ([C11])|
 |FC4|API → banco e armazenamento|A aplicação passa a tocar nos dados de todos os clientes|Conta do banco com menor privilégio, limitada às tabelas e aos comandos de cada módulo; UUID ([C02]); armazenamento privado com URL pré-assinada ([C03]); criptografia em repouso ([C16])|
 |FC5|Serviços externos → API|Mensagens de terceiros mudam o estado do pedido, como "pago" ou "entregue"|Notificação do gateway com assinatura validada ([C14]); retorno da transportadora com HMAC ([C15]); cartão tokenizado pelo gateway ([C17])|
+
+### 3.2 Visão em blocos de construção
+
+Esta visão deixa os fluxos de lado e mostra como o sistema se divide em blocos, cada um com uma responsabilidade. As setas indicam só quem depende de quem. A fonte está em [blocos-de-construcao.mmd](../diagramas/etapa-3/blocos-de-construcao.mmd), e a imagem, em [blocos-de-construcao.png](../diagramas/etapa-3/blocos-de-construcao.png).
+
+```mermaid
+flowchart TB
+    CLI(["Cliente"])
+    EQ(["Equipe interna"])
+
+    subgraph SIS["Plataforma de impressão 3D sob demanda"]
+        direction TB
+
+        subgraph ACESSO["Acesso"]
+            direction LR
+            A1["Aplicação web<br/>+ visualizador 3D"]
+            A2["Painel interno<br/>só pela VPN, C09"]
+            A3["Balanceador de carga<br/>TLS e limite de requisições"]
+        end
+
+        subgraph IDENT["Identidade"]
+            direction LR
+            I1["IdP dos clientes<br/>C07, C08"]
+            I2["SSO da equipe<br/>C05 MFA"]
+        end
+
+        subgraph APP["Aplicação: API back-end, N réplicas sem estado"]
+            direction LR
+            P0{{"Autorização central<br/>C01, C04"}}
+            P1["Pedidos e orçamento<br/>C13"]
+            P2["Arquivos<br/>C03, C10"]
+            P3["Pagamentos<br/>C14"]
+            P4["Logística<br/>C15"]
+            P5["Revisão técnica<br/>e administração"]
+        end
+
+        subgraph PROC["Processamento isolado"]
+            direction LR
+            W1[["Fila<br/>C10 cota por conta"]]
+            W2["Autoscaler<br/>C10 teto de custo"]
+            W3["Workers descartáveis (N)<br/>C11"]
+        end
+
+        subgraph DADOS["Dados"]
+            direction LR
+            D1[("Banco principal<br/>C02, C16")]
+            D2[("Réplicas de leitura")]
+            D3[("Estado compartilhado<br/>contadores e revogação")]
+            D4[("Armazenamento de objetos<br/>C03, C16")]
+        end
+
+        subgraph OPS["Segurança e operação"]
+            direction LR
+            O1[("Log central e de auditoria<br/>C18")]
+            O2["Monitoramento e resposta<br/>C19"]
+            O3[("Backup<br/>C20")]
+            O4["Imagem endurecida<br/>C12"]
+        end
+    end
+
+    subgraph EXT["Serviços externos"]
+        direction LR
+        E1["Gateway de pagamento<br/>C17"]
+        E2["Transportadoras"]
+        E3["E-mail e SMS"]
+    end
+
+    CLI --> ACESSO
+    EQ --> ACESSO
+    ACESSO --> IDENT
+    ACESSO --> APP
+    APP --> PROC
+    APP --> DADOS
+    PROC --> DADOS
+    APP <--> EXT
+    APP -.-> OPS
+    PROC -.-> OPS
+```
+
+|Bloco|Responsabilidade|Controles|Como escala|
+|-|-|-|-|
+|Acesso|Recebe o tráfego de clientes e da equipe: aplicação web, painel interno e balanceador de carga|[C09]; limite de requisições no balanceador|A aplicação web é feita de arquivos estáticos, servidos por várias instâncias. O balanceador é um serviço gerenciado. O painel tem pouco tráfego e roda em duas réplicas, pela disponibilidade|
+|Identidade|Autentica clientes (IdP) e equipe interna (SSO com MFA)|[C05], [C07], [C08]|Serviço gerenciado. Os contadores de tentativas ficam no estado compartilhado, para valer em todas as instâncias|
+|Aplicação|Regras de negócio, divididas em módulos que ficam atrás da autorização central|[C01], [C03], [C04], [C13], [C14], [C15]|Réplicas iguais e sem estado atrás do balanceador. O monólito escala inteiro, o que basta porque a parte cara do sistema fica no bloco de processamento|
+|Processamento isolado|Renderização, fatiamento e DFM de arquivos não confiáveis|[C10], [C11]|É o principal ponto de escala. O autoscaler cria e remove workers conforme o tamanho da fila, até o teto de custo|
+|Dados|Registros dos pedidos, arquivos dos clientes e estado compartilhado entre as réplicas|[C02], [C03], [C16]|O armazenamento de objetos escala sozinho. Consultas e relatórios vão para réplicas de leitura. As gravações ficam no banco principal, que cresce na vertical, e o estado compartilhado roda em cluster|
+|Segurança e operação|Log central e de auditoria, monitoramento, backup e a imagem base de todas as instâncias|[C12], [C18], [C19], [C20]|O volume de logs cresce com o número de instâncias. Log e monitoramento são serviços centrais, para não depender de nenhuma instância|
+|Serviços externos|Pagamento, frete e notificações|[C14], [C15], [C17]|Ficam fora do controle da plataforma. A escala depende dos limites de cada parceiro|
 
 **Monólito modular.** A API é um único sistema dividido em módulos (pedidos e orçamento, arquivos, pagamentos, logística, revisão técnica). Cada módulo só acessa os dados pela própria interface, e todos passam pelo mesmo ponto de autorização. Essa separação não exige microsserviços. Os workers são a exceção: rodam fora da API porque processam arquivos não confiáveis e precisam de isolamento próprio (FC3).
 
