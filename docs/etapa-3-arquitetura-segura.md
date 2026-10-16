@@ -28,7 +28,7 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 
 ## 3. Diagrama da arquitetura segura
 
-O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png).
+O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png).
 
 ```mermaid
 flowchart LR
@@ -47,7 +47,9 @@ flowchart LR
         SSO["SSO da equipe<br/>C05 MFA obrigatório"]
     end
 
-    subgraph API["API back-end (monólito modular)"]
+    LB["Balanceador de carga<br/>TLS e limite de requisições"]
+
+    subgraph API["API back-end (monólito modular, N réplicas sem estado)"]
         PUB["Rotas do cliente<br/>identidade só do token"]
         PRIV["Rotas do painel<br/>aceitas só da VPN"]
         AZ{{"Autorização central<br/>C01 dono do objeto<br/>C04 perfil por rota<br/>nega por padrão"}}
@@ -60,17 +62,23 @@ flowchart LR
 
     subgraph PROC["Processamento isolado"]
         FILA[["Fila<br/>C10 cota por conta"]]
-        WK["Workers descartáveis<br/>C11 sem rede, tempo e<br/>memória máximos"]
+        ASC["Autoscaler<br/>escala pelo tamanho da fila<br/>C10 teto de custo"]
+        WK["Workers descartáveis (N)<br/>C11 sem rede, tempo e<br/>memória máximos"]
     end
 
     subgraph DADOS["Dados"]
-        DB[("Banco de dados<br/>C02 UUID, C16 criptografia<br/>conta de menor privilégio")]
-        S3[("Armazenamento privado<br/>C03, C16")]
-        AUD[("Log de auditoria<br/>C18 só inclusões")]
+        DB[("Banco principal<br/>C02 UUID, C16 criptografia<br/>pool de conexões e<br/>conta de menor privilégio")]
+        DBR[("Réplicas de leitura<br/>consultas e relatórios")]
+        RED[("Estado compartilhado<br/>contadores do C07 e do C10<br/>tokens revogados do C08")]
+        S3[("Armazenamento de objetos<br/>privado, C03, C16")]
         BKP[("Backup<br/>C20")]
     end
 
-    MON["Monitoramento<br/>C19 alertas e resposta"]
+    subgraph OPS["Segurança e operação"]
+        AUD[("Log central e de auditoria<br/>C18 só inclusões")]
+        MON["Monitoramento<br/>C19 alertas e resposta"]
+        IMG["Imagem endurecida<br/>C12 análise de dependências"]
+    end
 
     subgraph EXT["Serviços externos"]
         GW["Gateway de pagamento<br/>C17 tokenização"]
@@ -79,25 +87,34 @@ flowchart LR
     end
 
     CLI --> WEB
-    WEB -->|"FC1: HTTPS + token"| PUB
+    WEB -->|"FC1: HTTPS + token"| LB
+    LB --> PUB
     WEB -.->|login| IDP
     EQ --> PAINEL
     PAINEL -->|"FC2: VPN"| PRIV
     PAINEL -.->|login| SSO
+    IDP -.->|"tentativas de login"| RED
     PUB --> AZ
     PRIV --> AZ
+    AZ -.->|"cotas e revogação"| RED
     AZ --> PED & ARQ & PAG & LOGI & REV
     ARQ -->|"FC3: tarefa"| FILA
     FILA --> WK
+    FILA -.->|"tamanho da fila"| ASC
+    ASC -.->|"cria e remove"| WK
     WK -->|"lê só o arquivo da tarefa"| S3
     PED -->|FC4| DB
     REV --> DB
+    DB -.->|replicação| DBR
     ARQ -->|FC4| S3
     PAG <-->|"FC5: assinatura"| GW
     LOGI <-->|"FC5: HMAC"| TR
     PED -.-> NOT
     AZ -.->|"decisões e ações sensíveis"| AUD
+    WK -.->|logs| AUD
     AUD --> MON
+    IMG -.->|"mesma imagem"| API
+    IMG -.->|"mesma imagem"| WK
     DB & S3 & AUD -.-> BKP
 ```
 
@@ -107,7 +124,7 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 
 |ID|Fronteira|O que muda ao cruzar|Controles na passagem|
 |-|-|-|-|
-|FC1|Navegador do cliente → rotas do cliente na API|O dado sai de um dispositivo que o usuário controla por completo, inclusive com proxy ou script, e entra no servidor|Identidade obtida só do token ([RS01](#1-requisitos-de-segurança)); dono do objeto conferido ([C01]); preço recalculado no servidor ([C13]); limites de upload ([C10])|
+|FC1|Navegador do cliente → balanceador e rotas do cliente na API|O dado sai de um dispositivo que o usuário controla por completo, inclusive com proxy ou script, e entra no servidor|Identidade obtida só do token ([RS01](#1-requisitos-de-segurança)); dono do objeto conferido ([C01]); preço recalculado no servidor ([C13]); limites de upload ([C10]); limite de requisições no balanceador|
 |FC2|Painel interno → rotas do painel na API|Entram ações privilegiadas: aprovações, laudos, preços e contas|VPN ou lista de IPs e SSO com MFA ([C05]); perfil conferido por rota ([C04]); codificação de saída e CSP no painel ([C09])|
 |FC3|API → fila e workers|Um arquivo enviado por qualquer cliente passa a ser lido por bibliotecas de terceiros|Formato, tamanho e número de triângulos conferidos antes de enfileirar ([C10]); workers sem rede, sem root e com credencial válida só para o arquivo da tarefa ([C11])|
 |FC4|API → banco e armazenamento|A aplicação passa a tocar nos dados de todos os clientes|Conta do banco com menor privilégio, limitada às tabelas e aos comandos de cada módulo; UUID ([C02]); armazenamento privado com URL pré-assinada ([C03]); criptografia em repouso ([C16])|
@@ -232,6 +249,7 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 [C09]: etapa-2-riscos-nist.md#c09
 [C10]: etapa-2-riscos-nist.md#c10
 [C11]: etapa-2-riscos-nist.md#c11
+[C12]: etapa-2-riscos-nist.md#c12
 [C13]: etapa-2-riscos-nist.md#c13
 [C14]: etapa-2-riscos-nist.md#c14
 [C15]: etapa-2-riscos-nist.md#c15
