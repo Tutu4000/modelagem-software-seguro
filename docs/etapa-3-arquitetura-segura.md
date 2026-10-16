@@ -28,7 +28,7 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 
 ## 3. Diagrama da arquitetura segura
 
-O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
+O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), com uma versão editável no draw.io em [arquitetura-segura.drawio](../diagramas/etapa-3/arquitetura-segura.drawio), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
 
 ```mermaid
 flowchart LR
@@ -132,7 +132,7 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 
 ### 3.2 Visão em blocos de construção
 
-Esta visão deixa os fluxos de lado e mostra como o sistema se divide em blocos, cada um com uma responsabilidade. As setas indicam só quem depende de quem. A fonte está em [blocos-de-construcao.mmd](../diagramas/etapa-3/blocos-de-construcao.mmd), e a imagem, em [blocos-de-construcao.png](../diagramas/etapa-3/blocos-de-construcao.png).
+Esta visão deixa os fluxos de lado e mostra como o sistema se divide em blocos, cada um com uma responsabilidade. As setas indicam só quem depende de quem. A fonte está em [blocos-de-construcao.mmd](../diagramas/etapa-3/blocos-de-construcao.mmd), com uma versão editável no draw.io em [blocos-de-construcao.drawio](../diagramas/etapa-3/blocos-de-construcao.drawio), e a imagem, em [blocos-de-construcao.png](../diagramas/etapa-3/blocos-de-construcao.png).
 
 ```mermaid
 flowchart TB
