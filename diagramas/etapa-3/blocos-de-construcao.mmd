@@ -8,53 +8,72 @@ flowchart TB
         subgraph ACESSO["Acesso"]
             direction LR
             A1["Aplicação web<br/>+ visualizador 3D"]
-            A2["Painel interno<br/>só pela VPN, C09"]
-            A3["Balanceador de carga<br/>TLS e limite de requisições"]
+            A2["Painel interno"]
+            N_A2["só pela VPN<br/>C09: codificação de saída e CSP"]:::nota
+            A3["Balanceador de carga"]
+            N_A3["TLS e limite de requisições"]:::nota
         end
 
         subgraph IDENT["Identidade"]
             direction LR
-            I1["IdP dos clientes<br/>C07, C08"]
-            I2["SSO da equipe<br/>C05 MFA"]
+            I1["IdP dos clientes"]
+            N_I1["C07: limite de tentativas<br/>C08: sessão e cookies"]:::nota
+            I2["SSO da equipe"]
+            N_I2["C05: MFA obrigatório"]:::nota
         end
 
         subgraph APP["Aplicação: API back-end, N réplicas sem estado"]
             direction LR
-            P0{{"Autorização central<br/>C01, C04"}}
-            P1["Pedidos e orçamento<br/>C13"]
-            P2["Arquivos<br/>C03, C10"]
-            P3["Pagamentos<br/>C14"]
-            P4["Logística<br/>C15"]
+            P0{{"Autorização central"}}
+            N_P0["C01: dono do objeto<br/>C04: perfil por rota"]:::nota
+            P1["Pedidos e orçamento"]
+            N_P1["C13: recálculo no servidor"]:::nota
+            P2["Arquivos"]
+            N_P2["C03: URL pré-assinada<br/>C10: limites de upload"]:::nota
+            P3["Pagamentos"]
+            N_P3["C14: confirmação no gateway"]:::nota
+            P4["Logística"]
+            N_P4["C15: retorno com HMAC"]:::nota
             P5["Revisão técnica<br/>e administração"]
         end
 
         subgraph PROC["Processamento isolado"]
             direction LR
-            W1[["Fila<br/>C10 cota por conta"]]
-            W2["Autoscaler<br/>C10 teto de custo"]
-            W3["Workers descartáveis (N)<br/>C11"]
+            W1[["Fila"]]
+            N_W1["C10: cota por conta"]:::nota
+            W2["Autoscaler"]
+            N_W2["C10: teto de custo"]:::nota
+            W3["Workers descartáveis (N)"]
+            N_W3["C11: sem rede, tempo e<br/>memória máximos"]:::nota
         end
 
         subgraph DADOS["Dados"]
             direction LR
-            D1[("Banco principal<br/>C02, C16")]
+            D1[("Banco principal")]
+            N_D1["C02: UUID<br/>C16: criptografia"]:::nota
             D2[("Réplicas de leitura")]
             D3[("Estado compartilhado<br/>contadores e revogação")]
-            D4[("Armazenamento de objetos<br/>C03, C16")]
+            D4[("Armazenamento de objetos")]
+            N_D4["C03: URL pré-assinada<br/>C16: criptografia"]:::nota
         end
 
         subgraph OPS["Segurança e operação"]
             direction LR
-            O1[("Log central e de auditoria<br/>C18")]
-            O2["Monitoramento e resposta<br/>C19"]
-            O3[("Backup<br/>C20")]
-            O4["Imagem endurecida<br/>C12"]
+            O1[("Log central e de auditoria")]
+            N_O1["C18: só inclusões"]:::nota
+            O2["Monitoramento"]
+            N_O2["C19: alertas e resposta"]:::nota
+            O3[("Backup")]
+            N_O3["C20: cópia diária e<br/>restauração testada"]:::nota
+            O4["Imagem endurecida"]
+            N_O4["C12: análise de dependências"]:::nota
         end
     end
 
     subgraph EXT["Serviços externos"]
         direction LR
-        E1["Gateway de pagamento<br/>C17"]
+        E1["Gateway de pagamento"]
+        N_E1["C17: tokenização"]:::nota
         E2["Transportadoras"]
         E3["E-mail e SMS"]
     end
@@ -69,3 +88,25 @@ flowchart TB
     APP <--> EXT
     APP -.-> OPS
     PROC -.-> OPS
+
+    A2 -.- N_A2
+    A3 -.- N_A3
+    I1 -.- N_I1
+    I2 -.- N_I2
+    P0 -.- N_P0
+    P1 -.- N_P1
+    P2 -.- N_P2
+    P3 -.- N_P3
+    P4 -.- N_P4
+    W1 -.- N_W1
+    W2 -.- N_W2
+    W3 -.- N_W3
+    D1 -.- N_D1
+    D4 -.- N_D4
+    O1 -.- N_O1
+    O2 -.- N_O2
+    O3 -.- N_O3
+    O4 -.- N_O4
+    E1 -.- N_E1
+
+    classDef nota fill:#fff9c4,stroke:#c9b800,stroke-dasharray:4 3,color:#333,font-size:11px

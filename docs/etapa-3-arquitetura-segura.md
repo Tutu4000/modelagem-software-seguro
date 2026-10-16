@@ -28,7 +28,7 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 
 ## 3. Diagrama da arquitetura segura
 
-O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e os rótulos C01 a C20 mostram onde ficam os controles da Etapa 2. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), com uma versão editável no draw.io em [arquitetura-segura.drawio](../diagramas/etapa-3/arquitetura-segura.drawio), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
+O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e as notas em amarelo, ligadas por linha pontilhada, mostram os controles da Etapa 2 (C01 a C20) e as regras de segurança de cada componente. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), com uma versão editável no draw.io em [arquitetura-segura.drawio](../diagramas/etapa-3/arquitetura-segura.drawio), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
 
 ```mermaid
 flowchart LR
@@ -39,49 +39,72 @@ flowchart LR
 
     subgraph INTERNA["Rede interna / VPN"]
         EQ(["Técnico, suporte<br/>e administrador"])
-        PAINEL["Painel interno<br/>C09 codificação de saída + CSP"]
+        PAINEL["Painel interno"]
+        N_PAINEL["C09: codificação de saída e CSP"]:::nota
     end
 
     subgraph AUTH["Autenticação"]
-        IDP["IdP dos clientes<br/>C07 limite de tentativas<br/>C08 sessão e cookies"]
-        SSO["SSO da equipe<br/>C05 MFA obrigatório"]
+        IDP["IdP dos clientes"]
+        N_IDP["C07: limite de tentativas<br/>C08: sessão e cookies"]:::nota
+        SSO["SSO da equipe"]
+        N_SSO["C05: MFA obrigatório"]:::nota
     end
 
-    LB["Balanceador de carga<br/>TLS e limite de requisições"]
+    LB["Balanceador de carga"]
+    N_LB["TLS e limite de requisições"]:::nota
 
     subgraph API["API back-end (monólito modular, N réplicas sem estado)"]
-        PUB["Rotas do cliente<br/>identidade só do token"]
-        PRIV["Rotas do painel<br/>aceitas só da VPN"]
-        AZ{{"Autorização central<br/>C01 dono do objeto<br/>C04 perfil por rota<br/>nega por padrão"}}
-        PED["Pedidos e orçamento<br/>C13 recálculo no servidor"]
-        ARQ["Arquivos<br/>C10 limites de upload<br/>C03 URL pré-assinada"]
-        PAG["Pagamentos<br/>C14 confirmação no gateway"]
-        LOGI["Logística<br/>C15 retorno com HMAC"]
-        REV["Revisão técnica e admin<br/>só pelas rotas do painel"]
+        PUB["Rotas do cliente"]
+        N_PUB["identidade só do token"]:::nota
+        PRIV["Rotas do painel"]
+        N_PRIV["aceitas só da VPN"]:::nota
+        AZ{{"Autorização central"}}
+        N_AZ["C01: dono do objeto<br/>C04: perfil por rota<br/>nega por padrão"]:::nota
+        PED["Pedidos e orçamento"]
+        N_PED["C13: recálculo no servidor"]:::nota
+        ARQ["Arquivos"]
+        N_ARQ["C10: limites de upload<br/>C03: URL pré-assinada"]:::nota
+        PAG["Pagamentos"]
+        N_PAG["C14: confirmação no gateway"]:::nota
+        LOGI["Logística"]
+        N_LOGI["C15: retorno com HMAC"]:::nota
+        REV["Revisão técnica e admin"]
+        N_REV["só pelas rotas do painel"]:::nota
     end
 
     subgraph PROC["Processamento isolado"]
-        FILA[["Fila<br/>C10 cota por conta"]]
-        ASC["Autoscaler<br/>escala pelo tamanho da fila<br/>C10 teto de custo"]
-        WK["Workers descartáveis (N)<br/>C11 sem rede, tempo e<br/>memória máximos"]
+        FILA[["Fila"]]
+        N_FILA["C10: cota por conta"]:::nota
+        ASC["Autoscaler<br/>escala pelo tamanho da fila"]
+        N_ASC["C10: teto de custo"]:::nota
+        WK["Workers descartáveis (N)"]
+        N_WK["C11: sem rede, tempo e<br/>memória máximos"]:::nota
     end
 
     subgraph DADOS["Dados"]
-        DB[("Banco principal<br/>C02 UUID, C16 criptografia<br/>pool de conexões e<br/>conta de menor privilégio")]
+        DB[("Banco principal<br/>pool de conexões")]
+        N_DB["C02: UUID, C16: criptografia<br/>conta de menor privilégio"]:::nota
         DBR[("Réplicas de leitura<br/>consultas e relatórios")]
-        RED[("Estado compartilhado<br/>contadores do C07 e do C10<br/>tokens revogados do C08")]
-        S3[("Armazenamento de objetos<br/>privado, C03, C16")]
-        BKP[("Backup<br/>C20")]
+        RED[("Estado compartilhado")]
+        N_RED["contadores do C07 e do C10<br/>tokens revogados do C08"]:::nota
+        S3[("Armazenamento de objetos")]
+        N_S3["privado<br/>C03: URL pré-assinada<br/>C16: criptografia"]:::nota
+        BKP[("Backup")]
+        N_BKP["C20: cópia diária e<br/>restauração testada"]:::nota
     end
 
     subgraph OPS["Segurança e operação"]
-        AUD[("Log central e de auditoria<br/>C18 só inclusões")]
-        MON["Monitoramento<br/>C19 alertas e resposta"]
-        IMG["Imagem endurecida<br/>C12 análise de dependências"]
+        AUD[("Log central e de auditoria")]
+        N_AUD["C18: só inclusões"]:::nota
+        MON["Monitoramento"]
+        N_MON["C19: alertas e resposta"]:::nota
+        IMG["Imagem endurecida"]
+        N_IMG["C12: análise de dependências"]:::nota
     end
 
     subgraph EXT["Serviços externos"]
-        GW["Gateway de pagamento<br/>C17 tokenização"]
+        GW["Gateway de pagamento"]
+        N_GW["C17: tokenização"]:::nota
         TR["Transportadoras"]
         NOT["E-mail e SMS"]
     end
@@ -116,6 +139,32 @@ flowchart LR
     IMG -.->|"mesma imagem"| API
     IMG -.->|"mesma imagem"| WK
     DB & S3 & AUD -.-> BKP
+
+    PAINEL -.- N_PAINEL
+    IDP -.- N_IDP
+    SSO -.- N_SSO
+    LB -.- N_LB
+    PUB -.- N_PUB
+    PRIV -.- N_PRIV
+    AZ -.- N_AZ
+    PED -.- N_PED
+    ARQ -.- N_ARQ
+    PAG -.- N_PAG
+    LOGI -.- N_LOGI
+    REV -.- N_REV
+    FILA -.- N_FILA
+    ASC -.- N_ASC
+    WK -.- N_WK
+    DB -.- N_DB
+    RED -.- N_RED
+    S3 -.- N_S3
+    BKP -.- N_BKP
+    AUD -.- N_AUD
+    MON -.- N_MON
+    IMG -.- N_IMG
+    GW -.- N_GW
+
+    classDef nota fill:#fff9c4,stroke:#c9b800,stroke-dasharray:4 3,color:#333,font-size:11px
 ```
 
 ### 3.1 Fronteiras de confiança
@@ -132,7 +181,7 @@ Todo dado que cruza uma fronteira de confiança é tratado como não confiável 
 
 ### 3.2 Visão em blocos de construção
 
-Esta visão deixa os fluxos de lado e mostra como o sistema se divide em blocos, cada um com uma responsabilidade. As setas indicam só quem depende de quem. A fonte está em [blocos-de-construcao.mmd](../diagramas/etapa-3/blocos-de-construcao.mmd), com uma versão editável no draw.io em [blocos-de-construcao.drawio](../diagramas/etapa-3/blocos-de-construcao.drawio), e a imagem, em [blocos-de-construcao.png](../diagramas/etapa-3/blocos-de-construcao.png).
+Esta visão deixa os fluxos de lado e mostra como o sistema se divide em blocos, cada um com uma responsabilidade. As setas indicam só quem depende de quem, e as notas em amarelo trazem os controles de cada componente. A fonte está em [blocos-de-construcao.mmd](../diagramas/etapa-3/blocos-de-construcao.mmd), com uma versão editável no draw.io em [blocos-de-construcao.drawio](../diagramas/etapa-3/blocos-de-construcao.drawio), e a imagem, em [blocos-de-construcao.png](../diagramas/etapa-3/blocos-de-construcao.png).
 
 ```mermaid
 flowchart TB
@@ -145,53 +194,72 @@ flowchart TB
         subgraph ACESSO["Acesso"]
             direction LR
             A1["Aplicação web<br/>+ visualizador 3D"]
-            A2["Painel interno<br/>só pela VPN, C09"]
-            A3["Balanceador de carga<br/>TLS e limite de requisições"]
+            A2["Painel interno"]
+            N_A2["só pela VPN<br/>C09: codificação de saída e CSP"]:::nota
+            A3["Balanceador de carga"]
+            N_A3["TLS e limite de requisições"]:::nota
         end
 
         subgraph IDENT["Identidade"]
             direction LR
-            I1["IdP dos clientes<br/>C07, C08"]
-            I2["SSO da equipe<br/>C05 MFA"]
+            I1["IdP dos clientes"]
+            N_I1["C07: limite de tentativas<br/>C08: sessão e cookies"]:::nota
+            I2["SSO da equipe"]
+            N_I2["C05: MFA obrigatório"]:::nota
         end
 
         subgraph APP["Aplicação: API back-end, N réplicas sem estado"]
             direction LR
-            P0{{"Autorização central<br/>C01, C04"}}
-            P1["Pedidos e orçamento<br/>C13"]
-            P2["Arquivos<br/>C03, C10"]
-            P3["Pagamentos<br/>C14"]
-            P4["Logística<br/>C15"]
+            P0{{"Autorização central"}}
+            N_P0["C01: dono do objeto<br/>C04: perfil por rota"]:::nota
+            P1["Pedidos e orçamento"]
+            N_P1["C13: recálculo no servidor"]:::nota
+            P2["Arquivos"]
+            N_P2["C03: URL pré-assinada<br/>C10: limites de upload"]:::nota
+            P3["Pagamentos"]
+            N_P3["C14: confirmação no gateway"]:::nota
+            P4["Logística"]
+            N_P4["C15: retorno com HMAC"]:::nota
             P5["Revisão técnica<br/>e administração"]
         end
 
         subgraph PROC["Processamento isolado"]
             direction LR
-            W1[["Fila<br/>C10 cota por conta"]]
-            W2["Autoscaler<br/>C10 teto de custo"]
-            W3["Workers descartáveis (N)<br/>C11"]
+            W1[["Fila"]]
+            N_W1["C10: cota por conta"]:::nota
+            W2["Autoscaler"]
+            N_W2["C10: teto de custo"]:::nota
+            W3["Workers descartáveis (N)"]
+            N_W3["C11: sem rede, tempo e<br/>memória máximos"]:::nota
         end
 
         subgraph DADOS["Dados"]
             direction LR
-            D1[("Banco principal<br/>C02, C16")]
+            D1[("Banco principal")]
+            N_D1["C02: UUID<br/>C16: criptografia"]:::nota
             D2[("Réplicas de leitura")]
             D3[("Estado compartilhado<br/>contadores e revogação")]
-            D4[("Armazenamento de objetos<br/>C03, C16")]
+            D4[("Armazenamento de objetos")]
+            N_D4["C03: URL pré-assinada<br/>C16: criptografia"]:::nota
         end
 
         subgraph OPS["Segurança e operação"]
             direction LR
-            O1[("Log central e de auditoria<br/>C18")]
-            O2["Monitoramento e resposta<br/>C19"]
-            O3[("Backup<br/>C20")]
-            O4["Imagem endurecida<br/>C12"]
+            O1[("Log central e de auditoria")]
+            N_O1["C18: só inclusões"]:::nota
+            O2["Monitoramento"]
+            N_O2["C19: alertas e resposta"]:::nota
+            O3[("Backup")]
+            N_O3["C20: cópia diária e<br/>restauração testada"]:::nota
+            O4["Imagem endurecida"]
+            N_O4["C12: análise de dependências"]:::nota
         end
     end
 
     subgraph EXT["Serviços externos"]
         direction LR
-        E1["Gateway de pagamento<br/>C17"]
+        E1["Gateway de pagamento"]
+        N_E1["C17: tokenização"]:::nota
         E2["Transportadoras"]
         E3["E-mail e SMS"]
     end
@@ -206,6 +274,28 @@ flowchart TB
     APP <--> EXT
     APP -.-> OPS
     PROC -.-> OPS
+
+    A2 -.- N_A2
+    A3 -.- N_A3
+    I1 -.- N_I1
+    I2 -.- N_I2
+    P0 -.- N_P0
+    P1 -.- N_P1
+    P2 -.- N_P2
+    P3 -.- N_P3
+    P4 -.- N_P4
+    W1 -.- N_W1
+    W2 -.- N_W2
+    W3 -.- N_W3
+    D1 -.- N_D1
+    D4 -.- N_D4
+    O1 -.- N_O1
+    O2 -.- N_O2
+    O3 -.- N_O3
+    O4 -.- N_O4
+    E1 -.- N_E1
+
+    classDef nota fill:#fff9c4,stroke:#c9b800,stroke-dasharray:4 3,color:#333,font-size:11px
 ```
 
 |Bloco|Responsabilidade|Controles|Como escala|
