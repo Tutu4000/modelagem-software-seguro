@@ -25,7 +25,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 |-|-|-|-|
 |1|Casos de abuso e modelagem de ameaças com STRIDE|[docs/etapa-1-ameacas-stride.md](docs/etapa-1-ameacas-stride.md)|Concluída|
 |2|Análise, priorização e tratamento de riscos com o NIST CSF 2.0|[docs/etapa-2-riscos-nist.md](docs/etapa-2-riscos-nist.md)|Concluída|
-|3|Projeto de uma arquitetura segura|[docs/etapa-3-arquitetura-segura.md](docs/etapa-3-arquitetura-segura.md) e [diagramas/etapa-3/](diagramas/etapa-3/)|Concluída (falta exportar o PNG do diagrama)|
+|3|Projeto de uma arquitetura segura|[docs/etapa-3-arquitetura-segura.md](docs/etapa-3-arquitetura-segura.md) e [diagramas/etapa-3/](diagramas/etapa-3/)|Concluída (falta exportar os PNGs dos diagramas)|
 |4|Código seguro e testes de segurança|[docs/etapa-4-codigo-seguro.md](docs/etapa-4-codigo-seguro.md) e [codigo/etapa-4/](codigo/etapa-4/)|Pendente|
 |5|Verificação de vulnerabilidades|[docs/etapa-5-verificacao-vulnerabilidades.md](docs/etapa-5-verificacao-vulnerabilidades.md) e [evidencias/etapa-5/](evidencias/etapa-5/)|Pendente|
 |6|Monitoramento e detecção de intrusões|[roteiros/etapa-6-deteccao-de-intrusoes.md](roteiros/etapa-6-deteccao-de-intrusoes.md)|Pendente|
@@ -39,7 +39,8 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 * **Etapa 3:**
   * 3 requisitos de segurança verificáveis, derivados dos riscos críticos R14, R22 e R20;
   * as vulnerabilidades correspondentes mapeadas na CWE e na OWASP (Top 10:2025, API Security Top 10:2023 e ASVS 5.0.0);
-  * um diagrama da arquitetura segura em Mermaid, com cinco fronteiras de confiança;
+  * dois diagramas em Mermaid: o dos fluxos, com cinco fronteiras de confiança, e a visão em blocos de construção;
+  * notas sobre a escala horizontal e o efeito dela nos controles;
   * 3 decisões de arquitetura justificadas.
 
 ## Estrutura do repositório

@@ -222,6 +222,23 @@ flowchart TB
 
 **Log de auditoria.** Cada registro do log ([C18]) tem os campos que permitem reconstruir a ação: quem executou, o alvo, a operação, a justificativa (obrigatória nas exceções, como uma aprovação fora do fluxo normal), o horário em UTC, o estado anterior, o novo estado e o resultado.
 
+### 3.3 Escala horizontal e seus efeitos na segurança
+
+A plataforma escala adicionando cópias dos componentes, e não trocando as máquinas por outras maiores. Isso funciona porque nenhuma instância guarda estado próprio:
+
+* os arquivos ficam no armazenamento de objetos, e não no disco de um servidor, então qualquer réplica da API ou qualquer worker acessa o mesmo STL;
+* a URL pré-assinada ([C03]) entrega o download direto do armazenamento, e o tráfego pesado dos STL nem passa pela API;
+* a identidade vem do token ([RS01]), então qualquer réplica pode atender qualquer requisição.
+
+O principal ponto de escala é o processamento. Cada tarefa é independente, e o autoscaler sobe mais workers para consumir a mesma fila. O critério é o tamanho da fila ou o tempo de espera, e não a CPU da API. A exceção é o banco principal: as gravações continuam nele, que cresce na vertical. Como os arquivos ficam no armazenamento de objetos e o banco guarda só os registros, isso deve aguentar bastante tempo antes de ser preciso dividir o banco.
+
+Com várias instâncias, alguns controles da Etapa 2 só funcionam se o estado deles for compartilhado:
+
+* **Contadores centrais:** o limite de tentativas de login ([C07]) e a cota por conta ([C10]) ficam no estado compartilhado. Se cada réplica contasse sozinha, um atacante distribuiria as tentativas entre as réplicas, e cada uma veria só uma fração delas.
+* **Revogação em todas as réplicas:** um token revogado no logout ou depois de um incidente ([C08]) entra em uma lista no estado compartilhado, consultada por todas as réplicas. Os tokens também têm validade curta, para limitar o tempo de uso de um token roubado.
+* **Teto de custo:** o autoscaler tem um limite de workers e de gasto ([C10]). Sem esse teto, um ataque de carga ([R20]) não derrubaria o sistema, mas viraria uma conta de nuvem enorme, a chamada *denial of wallet*. Quando o teto é atingido, vale a falha segura da [D03](#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura): os orçamentos ficam "em processamento" e nada é liberado sem DFM.
+* **Instâncias temporárias:** réplicas e workers são criados e destruídos o tempo todo. Por isso os logs vão para o log central ([C18]) e para o monitoramento ([C19]), já que os logs locais somem junto com a instância. Todas as instâncias nascem da mesma imagem endurecida, analisada a cada build ([C12]), para que nenhuma cópia comece com uma configuração diferente.
+
 ## 4. Decisões de arquitetura
 
 |Decisão|Riscos tratados|Requisito|Justificativa resumida|
@@ -294,6 +311,7 @@ flowchart TB
 
 * O upload só é aceito depois de a API conferir o formato real, o tamanho e o número de triângulos. O arquivo aceito vira uma tarefa em uma fila com cota por conta.
 * As tarefas rodam em workers descartáveis: contêineres sem rede, sem root, com tempo e memória máximos e uma credencial que só lê o arquivo daquela tarefa. Os PDFs do RF22 são convertidos em imagem no mesmo ambiente.
+* Os workers escalam na horizontal: o autoscaler cria e remove contêineres conforme o tamanho da fila, até o teto de custo do [C10] ([seção 3.3](#33-escala-horizontal-e-seus-efeitos-na-segurança)).
 * O orçamento passa a ter o estado "em processamento". Se a fila lotar ou os workers caírem, o pedido espera nesse estado e nada é aprovado sem o resultado do DFM. Quando o serviço volta, as tarefas são reprocessadas na ordem de chegada.
 
 **Motivo:**
@@ -303,7 +321,7 @@ flowchart TB
 * **Limites antes da fila:** conferir o arquivo antes de gravar e de enfileirar evita gastar armazenamento e CPU com arquivos que seriam recusados depois.
 * Trocar o processamento imediato pela fila muda o contrato da API e a interface, que passa a mostrar o estado "em processamento". Por isso, a decisão precisa ser tomada agora, antes do código.
 
-**Componente afetado:** API (módulos de arquivos e de orçamento), fila, workers, armazenamento e aplicação web (exibição do estado "em processamento").
+**Componente afetado:** API (módulos de arquivos e de orçamento), fila, autoscaler, workers, armazenamento e aplicação web (exibição do estado "em processamento").
 
 **Resultado esperado:** sob carga, o sistema fica mais lento, mas continua aceitando pedidos e orçamentos. Nenhum orçamento é liberado sem DFM, e uma falha no fatiador não alcança os arquivos dos outros clientes.
 
