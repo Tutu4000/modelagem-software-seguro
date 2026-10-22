@@ -310,11 +310,16 @@ flowchart TB
 
 **Monólito modular.** A API é um único sistema dividido em módulos (pedidos e orçamento, arquivos, pagamentos, logística, revisão técnica). Cada módulo só acessa os dados pela própria interface, e todos passam pelo mesmo ponto de autorização. Essa separação não exige microsserviços. Os workers são a exceção: rodam fora da API porque processam arquivos não confiáveis e precisam de isolamento próprio (FC3).
 
-**Log de auditoria.** Cada registro do log ([C18]) tem os campos que permitem reconstruir a ação: quem executou, o alvo, a operação, a justificativa (obrigatória nas exceções, como uma aprovação fora do fluxo normal), o horário em UTC, o estado anterior, o novo estado e o resultado.
+**Log de auditoria.** Cada registro do log ([C18]) tem os campos que permitem reconstruir a ação: quem executou, o alvo, a operação, a justificativa (obrigatória nas exceções, como uma aprovação fora do fluxo normal), o horário em UTC, a origem (IP e dispositivo), o estado anterior, o novo estado e o resultado. O próprio log é protegido:
+
+* fica fora das permissões da aplicação, e nem o administrador apaga registros;
+* só a segurança consulta o log, e cada consulta também é registrada;
+* os registros são guardados por 2 anos, e os servidores sincronizam o relógio por NTP;
+* nenhum registro traz senha, token, dados de cartão ou conteúdo de arquivo ([C17]).
 
 ### 3.3 Escala horizontal e seus efeitos na segurança
 
-A plataforma escala adicionando cópias dos componentes, e não trocando as máquinas por outras maiores. Isso funciona porque nenhuma instância guarda estado próprio:
+Esta seção segue a aula *Seu sistema sobreviveria a um pico de acessos?*. A plataforma escala adicionando cópias dos componentes, e não trocando as máquinas por outras maiores. Isso funciona porque nenhuma instância guarda estado próprio:
 
 * os arquivos ficam no armazenamento de objetos, e não no disco de um servidor, então qualquer réplica da API ou qualquer worker acessa o mesmo STL;
 * a URL pré-assinada ([C03]) entrega o download direto do armazenamento, e o tráfego pesado dos STL nem passa pela API;
@@ -329,6 +334,24 @@ Com várias instâncias, alguns controles da Etapa 2 só funcionam se o estado d
 * **Teto de custo:** o autoscaler tem um limite de workers e de gasto ([C10]). Sem esse teto, um ataque de carga ([R20]) não derrubaria o sistema, mas viraria uma conta de nuvem enorme, a chamada *denial of wallet*. Quando o teto é atingido, vale a falha segura da [D03](#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura): os orçamentos ficam "em processamento" e nada é liberado sem DFM.
 * **Instâncias temporárias:** réplicas e workers são criados e destruídos o tempo todo. Por isso os logs vão para o log central ([C18]) e para o monitoramento ([C19]), já que os logs locais somem junto com a instância. Todas as instâncias nascem da mesma imagem endurecida, analisada a cada build ([C12]), para que nenhuma cópia comece com uma configuração diferente.
 
+### 3.4 Cuidados transversais
+
+Estes cuidados valem para todos os componentes e completam as três decisões da seção 4.
+
+|Cuidado|Como se aplica na plataforma|
+|-|-|
+|Design aberto|Nenhuma proteção depende de esconder rotas ou regras no front-end. As rotas podem ser descobertas, e quem as protege são a autenticação e a autorização no servidor (D01, D02)|
+|Gestão de segredos|As chaves do gateway, as chaves HMAC das transportadoras ([C15]), a chave de assinatura dos tokens e a senha do banco ficam em um cofre de segredos, fora do código, do git, dos arquivos de configuração e dos logs. Cada componente lê só os próprios segredos. A troca é feita a cada 90 dias e, depois de um incidente, imediatamente ([C20])|
+|Ambientes separados|Desenvolvimento, homologação e produção têm contas, bancos e credenciais próprios. Nenhuma credencial de produção é usada fora dela|
+|Dados de teste|A homologação usa só clientes e modelos fictícios. Nenhum STL de cliente sai da produção, nem anonimizado, porque o próprio modelo é o segredo industrial|
+|Dados em trânsito e em repouso|TLS em todos os fluxos, inclusive os internos (API, banco, armazenamento e fila). Criptografia no banco, nas réplicas de leitura, no armazenamento e nos backups ([C16], [C20]). As exportações seguem as regras da tabela de operações críticas da D02|
+|Retenção|STL e PDF são apagados 90 dias depois da entrega, e o cliente pode pedir a exclusão antes (LGPD). Os backups expiram em 30 dias, então uma exclusão chega a eles em até 30 dias. Os dados do pedido e a nota fiscal ficam pelo prazo fiscal de 5 anos, sem os arquivos|
+|Falha das integrações|Com o gateway fora do ar, o pedido fica "aguardando pagamento" e só é marcado como pago depois da confirmação do [C14]. Com a transportadora fora, o status de entrega não muda. Como na D03, uma falha nunca libera nada|
+|Cache|Só guarda dados públicos, como o catálogo de materiais, cores e prazos. O preço do pedido é sempre recalculado ([C13]), e nenhum arquivo de cliente fica em cache|
+|Idempotência|Pagamento, criação de pedido e aprovação levam uma chave única. Uma repetição (clique duplo ou notificação reenviada pelo gateway) devolve o resultado da primeira, sem novo efeito. O banco garante isso com restrições únicas: uma transação do gateway por pagamento ([C14]) e uma aprovação por pedido|
+|Versionamento de regras|A tabela de preços e os parâmetros do DFM têm versões. Cada orçamento e cada laudo guardam a versão usada. Se uma versão errada for publicada, dá para encontrar e reprocessar só os pedidos afetados|
+|Menor privilégio entre módulos|O módulo de notificações recebe só o destinatário e o texto da mensagem, sem acesso ao banco. Cada módulo usa uma conta de banco limitada às próprias tabelas (FC4)|
+
 ## 4. Decisões de arquitetura
 
 |Decisão|Riscos tratados|Requisito|Justificativa resumida|
@@ -336,6 +359,17 @@ Com várias instâncias, alguns controles da Etapa 2 só funcionam se o estado d
 |[D01](#d01--o-servidor-decide-autorização-por-objeto-em-um-ponto-único)|[R06], [R14], [R16], [R17]|[RS01]|Esconder dados na interface não impede que o cliente peça o recurso de outro. Só o servidor pode decidir quem acessa cada objeto|
 |[D02](#d02--painel-interno-separado-com-defesa-em-profundidade)|[R03], [R22], [R24]|[RS02]|Ocultar opções na interface não impede o acesso direto às funções. As rotas administrativas saem da API pública e passam a exigir várias camadas|
 |[D03](#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura)|[R19], [R20], [R21], [R26]|[RS03]|Sem fila nem isolamento, um único cliente derruba ou compromete o processamento de todos|
+
+As três decisões, com os controles da Etapa 2 e os cuidados da [seção 3.4](#34-cuidados-transversais), cobrem as seis categorias do STRIDE das [ameaças da Etapa 1][e1-5]. A tabela segue a aula *Você fez o STRIDE… e agora?*, que percorre as seis categorias, uma a uma, até as decisões:
+
+|Categoria|Ameaças|Decisões e controles|
+|-|-|-|
+|Spoofing|T01 a T04|SSO com MFA para a equipe (D02, [C05]), limite de tentativas e sessão ([C07], [C08]), HMAC das transportadoras ([C15]) e confirmação pelo canal cadastrado ([C21])|
+|Tampering|T05 a T09|O servidor decide e recalcula (D01, [C13]), o hash do STL é conferido ([C16]) e o perfil é conferido por rota para status e laudo (D02, [C04])|
+|Repudiation|T10 a T13|Log de auditoria só de inclusões, com autor e justificativa ([C18]), contas pessoais ([C06]) e conciliação com o gateway ([C14])|
+|Information Disclosure|T14 a T17|Autorização por objeto e URL pré-assinada (D01, [C01] a [C03]), dados mascarados nos logs ([C17]) e dados de teste fictícios|
+|Denial of Service|T18 a T20|Fila, cota, autoscaler com teto e falha segura (D03, [C10]), limite de requisições no balanceador e limite de tentativas no login ([C07])|
+|Elevation of Privilege|T21 e T22|Workers isolados (D03, [C11]) e painel separado, com negação por padrão (D02, [C04], [C05])|
 
 #### D01 — O servidor decide: autorização por objeto em um ponto único
 
@@ -389,6 +423,19 @@ Com várias instâncias, alguns controles da Etapa 2 só funcionam se o estado d
 |Administrador|Gerenciar preços, descontos, materiais, estoque e contas internas, com aprovação da segurança para novos perfis ([C06])|Aprovar projetos ou editar laudos|
 |Infraestrutura/DevOps|Manter servidores, banco, fila e workers e consultar métricas|Aprovar projetos, editar laudos ou alterar pedidos, mesmo com acesso técnico ao banco|
 
+**Operações críticas**
+
+Estas ações pedem o MFA de novo no momento da ação, mesmo com a sessão ativa ([C08]), exigem justificativa e disparam alerta ([C19]):
+
+|Operação|Por que é crítica|Proteção extra|
+|-|-|-|
+|Alterar preços, descontos ou materiais|Muda o valor de todos os pedidos seguintes|Cria uma nova versão da tabela, que só vale depois da aprovação de um segundo administrador|
+|Aprovar projeto sem laudo DFM ou não atribuído ao técnico|Libera uma peça inviável para produção ([R22])|Só o líder de produção pode fazer|
+|Mudar a ordem da fila de impressão ou o prazo de um pedido|Passa um cliente na frente dos outros sem deixar rastro|Só o líder de produção pode fazer|
+|Criar conta interna ou mudar perfil|Abre caminho para elevação de privilégio|Aprovação da segurança ([C06])|
+|Baixar STL ou PDF de cliente|Expõe segredo industrial ([R14], [R17])|Só o técnico atribuído ao pedido. Cada download fica no log|
+|Exportar pedidos ou clientes em massa|É o caminho mais curto para um vazamento|Limite de linhas e arquivo criptografado, com validade de 24 horas|
+
 **Componente afetado:** painel interno, serviço de autenticação (SSO), rotas do painel na API e log de auditoria.
 
 **Resultado esperado:** as funções administrativas deixam de ser alcançáveis pela internet. Uma credencial vazada, sozinha, não dá acesso ao painel. Toda aprovação tem um autor identificado no log.
@@ -415,6 +462,27 @@ Com várias instâncias, alguns controles da Etapa 2 só funcionam se o estado d
 
 **Resultado esperado:** sob carga, o sistema fica mais lento, mas continua aceitando pedidos e orçamentos. Nenhum orçamento é liberado sem DFM, e uma falha no fatiador não alcança os arquivos dos outros clientes.
 
+## 5. Relação com as aulas
+
+**As 7 decisões da aula *Seu sistema é SEGURO ou apenas FUNCIONA?***
+
+|#|Decisão|Onde está neste documento|
+|-|-|-|
+|1|Idempotência: a mesma solicitação tem um efeito só|[Seção 3.4](#34-cuidados-transversais), linha "Idempotência"|
+|2|Simplicidade com proteção: cada regra fica em um ponto só|Autorização central (D01). Preço e DFM são calculados só no módulo de pedidos e orçamento ([C13])|
+|3|Design aberto: nada depende de esconder rotas ou regras|[Seção 3.4](#34-cuidados-transversais), linha "Design aberto"|
+|4|Segregação e contenção contra o movimento lateral|Painel separado (D02), workers isolados (D03) e conta de banco por módulo (FC4)|
+|5|Painel administrativo com proteção reforçada|D02: quatro camadas, matriz de menor privilégio e operações críticas|
+|6|Gestão de segredos e ambientes separados|[Seção 3.4](#34-cuidados-transversais), linhas "Gestão de segredos", "Ambientes separados" e "Dados de teste"|
+|7|Proteção dos dados: onde ficam, por onde passam, por quanto tempo, em trânsito e em repouso|[Seção 3.4](#34-cuidados-transversais), linhas "Dados em trânsito e em repouso", "Retenção" e "Cache", e o log sem dados sensíveis ([seção 3.2](#32-visão-em-blocos-de-construção))|
+
+**As outras aulas**
+
+* *Seu sistema sobreviveria a um pico de acessos?*: [seção 3.3](#33-escala-horizontal-e-seus-efeitos-na-segurança), a D03 e os campos do log de auditoria na [seção 3.2](#32-visão-em-blocos-de-construção).
+* *Você fez o STRIDE… e agora?*: a tabela das seis categorias do STRIDE na seção 4, e o monólito modular com módulos de responsabilidade definida ([seção 3.2](#32-visão-em-blocos-de-construção)).
+* *Por que uma arquitetura segura ainda pode resultar em software vulnerável?*: é o ponto de partida da Etapa 4, que vai mostrar no código que as decisões D01 a D03 foram preservadas.
+
+[e1-5]: etapa-1-ameacas-stride.md#5-modelagem-de-ameaças-com-stride
 [e2-31]: etapa-2-riscos-nist.md#31-riscos-críticos-12-a-16
 [e2-46]: etapa-2-riscos-nist.md#46-ordem-inicial-de-implementação
 
