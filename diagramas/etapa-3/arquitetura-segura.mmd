@@ -1,0 +1,134 @@
+flowchart LR
+    subgraph INTERNET["Internet (não confiável)"]
+        CLI([Cliente])
+        WEB["Aplicação web<br/>+ visualizador 3D"]
+    end
+
+    subgraph INTERNA["Rede interna / VPN"]
+        EQ(["Técnico, suporte<br/>e administrador"])
+        PAINEL["Painel interno"]
+        N_PAINEL["C09: codificação de saída e CSP"]:::nota
+    end
+
+    subgraph AUTH["Autenticação"]
+        IDP["IdP dos clientes"]
+        N_IDP["C07: limite de tentativas<br/>C08: sessão e cookies"]:::nota
+        SSO["SSO da equipe"]
+        N_SSO["C05: MFA obrigatório"]:::nota
+    end
+
+    LB["Balanceador de carga"]
+    N_LB["TLS e limite de requisições"]:::nota
+
+    subgraph API["API back-end (monólito modular, N réplicas sem estado)"]
+        PUB["Rotas do cliente"]
+        N_PUB["identidade só do token"]:::nota
+        PRIV["Rotas do painel"]
+        N_PRIV["aceitas só da VPN"]:::nota
+        AZ{{"Autorização central"}}
+        N_AZ["C01: dono do objeto<br/>C04: perfil por rota<br/>nega por padrão"]:::nota
+        PED["Pedidos e orçamento"]
+        N_PED["C13: recálculo no servidor"]:::nota
+        ARQ["Arquivos"]
+        N_ARQ["C10: limites de upload<br/>C03: URL pré-assinada"]:::nota
+        PAG["Pagamentos"]
+        N_PAG["C14: confirmação no gateway"]:::nota
+        LOGI["Logística"]
+        N_LOGI["C15: retorno com HMAC"]:::nota
+        REV["Revisão técnica e admin"]
+        N_REV["só pelas rotas do painel"]:::nota
+    end
+
+    subgraph PROC["Processamento isolado"]
+        FILA[["Fila"]]
+        N_FILA["C10: cota por conta"]:::nota
+        ASC["Autoscaler<br/>escala pelo tamanho da fila"]
+        N_ASC["C10: teto de custo"]:::nota
+        WK["Workers descartáveis (N)"]
+        N_WK["C11: sem rede, tempo e<br/>memória máximos"]:::nota
+    end
+
+    subgraph DADOS["Dados"]
+        DB[("Banco principal<br/>pool de conexões")]
+        N_DB["C02: UUID, C16: criptografia<br/>conta de menor privilégio"]:::nota
+        DBR[("Réplicas de leitura<br/>consultas e relatórios")]
+        RED[("Estado compartilhado")]
+        N_RED["contadores do C07 e do C10<br/>tokens revogados do C08"]:::nota
+        S3[("Armazenamento de objetos")]
+        N_S3["privado<br/>C03: URL pré-assinada<br/>C16: criptografia"]:::nota
+        BKP[("Backup")]
+        N_BKP["C20: cópia diária e<br/>restauração testada"]:::nota
+    end
+
+    subgraph OPS["Segurança e operação"]
+        AUD[("Log central e de auditoria")]
+        N_AUD["C18: só inclusões"]:::nota
+        MON["Monitoramento"]
+        N_MON["C19: alertas e resposta"]:::nota
+        IMG["Imagem endurecida"]
+        N_IMG["C12: análise de dependências"]:::nota
+    end
+
+    subgraph EXT["Serviços externos"]
+        GW["Gateway de pagamento"]
+        N_GW["C17: tokenização"]:::nota
+        TR["Transportadoras"]
+        NOT["E-mail e SMS"]
+    end
+
+    CLI --> WEB
+    WEB -->|"FC1: HTTPS + token"| LB
+    LB --> PUB
+    WEB -.->|login| IDP
+    EQ --> PAINEL
+    PAINEL -->|"FC2: VPN"| PRIV
+    PAINEL -.->|login| SSO
+    IDP -.->|"tentativas de login"| RED
+    PUB --> AZ
+    PRIV --> AZ
+    AZ -.->|"cotas e revogação"| RED
+    AZ --> PED & ARQ & PAG & LOGI & REV
+    ARQ -->|"FC3: tarefa"| FILA
+    FILA --> WK
+    FILA -.->|"tamanho da fila"| ASC
+    ASC -.->|"cria e remove"| WK
+    WK -->|"lê só o arquivo da tarefa"| S3
+    PED -->|FC4| DB
+    REV --> DB
+    DB -.->|replicação| DBR
+    ARQ -->|FC4| S3
+    PAG <-->|"FC5: assinatura"| GW
+    LOGI <-->|"FC5: HMAC"| TR
+    PED -.-> NOT
+    AZ -.->|"decisões e ações sensíveis"| AUD
+    WK -.->|logs| AUD
+    AUD --> MON
+    IMG -.->|"mesma imagem"| API
+    IMG -.->|"mesma imagem"| WK
+    DB & S3 & AUD -.-> BKP
+
+    PAINEL -.- N_PAINEL
+    IDP -.- N_IDP
+    SSO -.- N_SSO
+    LB -.- N_LB
+    PUB -.- N_PUB
+    PRIV -.- N_PRIV
+    AZ -.- N_AZ
+    PED -.- N_PED
+    ARQ -.- N_ARQ
+    PAG -.- N_PAG
+    LOGI -.- N_LOGI
+    REV -.- N_REV
+    FILA -.- N_FILA
+    ASC -.- N_ASC
+    WK -.- N_WK
+    DB -.- N_DB
+    RED -.- N_RED
+    S3 -.- N_S3
+    BKP -.- N_BKP
+    AUD -.- N_AUD
+    MON -.- N_MON
+    IMG -.- N_IMG
+    GW -.- N_GW
+
+    classDef nota fill:#fff9c4,stroke:#c9b800,stroke-dasharray:4 3,color:#333,font-size:11px
