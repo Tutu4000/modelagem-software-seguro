@@ -11,6 +11,7 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/stl"
 )
 
 var errNotImplemented = errors.New("não implementado")
@@ -37,16 +38,25 @@ type ObjectStore interface {
 	Put(ctx context.Context, key string, data []byte) error
 }
 
+type Enqueuer interface {
+	Enqueue(ctx context.Context, f File, model stl.Validated) error
+}
+
 type MemoryRepo struct{}
 
 func NewMemoryRepo() *MemoryRepo { return &MemoryRepo{} }
 
 func (r *MemoryRepo) Save(ctx context.Context, f File) error { return errNotImplemented }
 
+func (r *MemoryRepo) Count() int { return 0 }
+
 type Handler struct {
 	Repo  Repo
 	Store ObjectStore
+	Queue Enqueuer
 	Audit *audit.Logger
 }
 
 func (h *Handler) Download(c *gin.Context) { c.AbortWithStatus(http.StatusNotImplemented) }
+
+func (h *Handler) Upload(c *gin.Context) { c.AbortWithStatus(http.StatusNotImplemented) }

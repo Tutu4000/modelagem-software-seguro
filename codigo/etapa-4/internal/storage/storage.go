@@ -25,3 +25,5 @@ func (m *Memory) Put(ctx context.Context, key string, data []byte) error { retur
 func (m *Memory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "não implementado", http.StatusNotImplemented)
 }
+
+func (m *Memory) Count() int { return 0 }

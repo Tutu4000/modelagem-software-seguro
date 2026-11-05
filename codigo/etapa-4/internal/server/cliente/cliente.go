@@ -14,14 +14,16 @@ type Deps struct {
 	Verifier *auth.Verifier
 	Files    files.Repo
 	Store    files.ObjectStore
+	Queue    files.Enqueuer
 	Audit    *audit.Logger
 }
 
 func New(d Deps) *gin.Engine {
 	r := gin.New()
-	h := &files.Handler{Repo: d.Files, Store: d.Store, Audit: d.Audit}
+	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Audit: d.Audit}
 
 	api := r.Group("/api/v1", auth.RequireUser(d.Verifier))
 	api.GET("/arquivos/:id/download", h.Download)
+	api.POST("/arquivos", h.Upload)
 	return r
 }

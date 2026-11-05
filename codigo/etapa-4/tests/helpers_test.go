@@ -9,7 +9,9 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,6 +26,7 @@ import (
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/cliente"
 	"nuggetmachine/internal/storage"
 )
@@ -52,6 +55,7 @@ type env struct {
 	router http.Handler
 	store  *storage.Memory
 	repo   *files.MemoryRepo
+	queue  *queue.Memory
 	logs   *bytes.Buffer
 	key    ed25519.PrivateKey
 	clock  *clock
@@ -68,6 +72,7 @@ func newEnv(t *testing.T) *env {
 		t:     t,
 		store: storage.NewMemory([]byte("segredo-de-teste-do-armazenamento"), "https://armazenamento.local", clk.Now),
 		repo:  files.NewMemoryRepo(),
+		queue: queue.NewMemory(),
 		logs:  &bytes.Buffer{},
 		key:   priv,
 		clock: clk,
@@ -76,6 +81,7 @@ func newEnv(t *testing.T) *env {
 		Verifier: auth.NewVerifier(pub, clk.Now),
 		Files:    e.repo,
 		Store:    e.store,
+		Queue:    e.queue,
 		Audit:    audit.New(e.logs),
 	})
 	return e
@@ -179,6 +185,52 @@ func (e *env) downloadURL(owner auth.UserID, f files.File) string {
 	return body.URL
 }
 
+// size negativo simula um envio sem Content-Length.
+func (e *env) upload(token string, body io.Reader, size int64) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/arquivos", body)
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "model/stl")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	return e.do(req)
+}
+
+func (e *env) nothingStored() {
+	e.t.Helper()
+	if n := e.repo.Count(); n != 0 {
+		e.t.Errorf("%d arquivos gravados no repositório, esperado 0", n)
+	}
+	if n := e.store.Count(); n != 0 {
+		e.t.Errorf("%d objetos gravados no armazenamento, esperado 0", n)
+	}
+	if n := len(e.queue.Tasks()); n != 0 {
+		e.t.Errorf("%d tarefas na fila, esperado 0", n)
+	}
+}
+
+// zeros gera arquivos grandes sem alocar memória.
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
+func binarySTL(n uint32) []byte {
+	b := make([]byte, 84+50*int(n))
+	copy(b, "STL gerado pelo teste")
+	binary.LittleEndian.PutUint32(b[80:84], n)
+	return b
+}
+
+func binarySTLStream(n uint32) (io.Reader, int64) {
+	header := make([]byte, 84)
+	binary.LittleEndian.PutUint32(header[80:84], n)
+	body := 50 * int64(n)
+	return io.MultiReader(bytes.NewReader(header), io.LimitReader(zeros{}, body)), 84 + body
+}
+
 func (e *env) fetch(rawURL string) *httptest.ResponseRecorder {
 	rec := httptest.NewRecorder()
 	e.store.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, rawURL, nil))
@@ -215,4 +267,13 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	if err := json.Unmarshal(rec.Body.Bytes(), v); err != nil {
 		t.Fatalf("a resposta não é JSON: %q", rec.Body.String())
 	}
+}
+
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body struct {
+		Error string `json:"error"`
+	}
+	decode(t, rec, &body)
+	return body.Error
 }
