@@ -9,6 +9,25 @@ cd codigo/etapa-4
 go test ./...
 ```
 
+## Respostas de erro
+
+Todo erro da API segue o formato Problem Details ([RFC 9457]), com `Content-Type: application/problem+json`:
+
+```json
+{"type": "/erros/invalid_stl", "title": "STL inválido", "status": 422, "code": "invalid_stl"}
+```
+
+|Código|Status|Quando|
+|-|-|-|
+|`unauthenticated`|401|Token ausente ou inválido|
+|`forbidden`|403|Arquivo de outro cliente ou inexistente|
+|`file_too_large`|413|Upload acima de 100 MiB|
+|`invalid_stl`|422|Arquivo que não é um STL binário íntegro|
+|`too_many_triangles`|422|STL com mais de 2 milhões de triângulos|
+|`internal`|500|Qualquer erro não previsto|
+
+A resposta traz só o código e um título fixo. A causa interna vai para o log e nunca para o cliente, como pedem a [D03] e o [Error Handling Cheat Sheet][cs-errors] da OWASP. Os testes do formato ficam em [problem_test.go](../codigo/etapa-4/internal/problem/problem_test.go).
+
 ## Prática 1 — Controle de autorização por objeto
 
 ### Risco e requisito
@@ -70,3 +89,5 @@ A implementação, o resultado esperado e a referência da OWASP das duas práti
 [RS03]: etapa-3-arquitetura-segura.md#1-requisitos-de-segurança
 [D03]: etapa-3-arquitetura-segura.md#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura
 [C10]: etapa-2-riscos-nist.md#c10
+[RFC 9457]: https://www.rfc-editor.org/rfc/rfc9457
+[cs-errors]: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html

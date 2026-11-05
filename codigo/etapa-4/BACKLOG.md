@@ -35,6 +35,7 @@ Os IDs RS, D, FC e os números de seção vêm da [Etapa 3](../../docs/etapa-3-a
 |-|-|-|
 |Dois binários do mesmo código: `api`, com as rotas do cliente, e `painel`, com as rotas internas|Contenção: uma falha na API exposta à internet não alcança o código, os segredos nem a rede do painel. O binário `api` não importa os pacotes do painel, então as rotas internas nem existem nele. Cada binário tem réplicas, papel no banco e segredos próprios|Refina o monólito modular da seção 3.2: o código, os módulos e a autorização central continuam únicos, e só a execução se divide. Reforça a D02 (defesa em profundidade) e a decisão de segregação e contenção da aula *Seu sistema é SEGURO ou apenas FUNCIONA?*|
 |Cloudflare na frente do nginx (E2.7), com o tráfego de STL passando pelo proxy|Access no lugar da VPN do painel, WAF, mitigação de DDoS e Tunnel, sem porta aberta na origem. Consequência aceita: o Cloudflare termina o TLS e vê os STL em claro, o que exige contrato de tratamento de dados (LGPD)|**Não estava planejado na arquitetura da Etapa 3.** Fica como evolução futura, sem alterar os documentos de arquitetura|
+|Erros no formato Problem Details (RFC 9457), com um código estável por tipo de erro|O cliente recebe só o código e um título fixo, e a causa vai para o log. Só o pacote `problem` monta respostas de erro|Segue a D03, segundo a qual mostrar o erro técnico ao cliente exporia detalhes internos (A10:2025)|
 
 ## 2. Organização do projeto
 
@@ -64,6 +65,7 @@ codigo/etapa-4/
 │   ├── processing/           # lógica do worker
 │   ├── review/               # revisão técnica, só no painel
 │   ├── audit/                # eventos de auditoria
+│   ├── problem/              # respostas de erro no formato RFC 9457
 │   └── db/                   # pools do primário e da réplica
 ├── migrations/               # SQL versionado: tabelas, papéis e GRANTs
 ├── tests/                    # testes de segurança (TS) e de integração

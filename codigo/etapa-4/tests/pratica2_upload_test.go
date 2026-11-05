@@ -60,8 +60,8 @@ func TestTS07_ArquivoAcimaDe100MBRecebe413(t *testing.T) {
 			e := newEnv(t)
 			rec := e.upload(e.token(newUser()), io.LimitReader(zeros{}, size), tc.declared)
 			wantStatus(t, rec, http.StatusRequestEntityTooLarge)
-			if code := errorCode(t, rec); code != "file_too_large" {
-				t.Errorf("erro %q, esperado \"file_too_large\"", code)
+			if code := problemCode(t, rec); code != "file_too_large" {
+				t.Errorf("code %q, esperado \"file_too_large\"", code)
 			}
 			e.nothingStored()
 		})
@@ -85,8 +85,8 @@ func TestTS08_ArquivoQueNaoEhSTLBinarioRecebe422(t *testing.T) {
 			e := newEnv(t)
 			rec := e.upload(e.token(newUser()), bytes.NewReader(tc.body), int64(len(tc.body)))
 			wantStatus(t, rec, http.StatusUnprocessableEntity)
-			if code := errorCode(t, rec); code != "invalid_stl" {
-				t.Errorf("erro %q, esperado \"invalid_stl\"", code)
+			if code := problemCode(t, rec); code != "invalid_stl" {
+				t.Errorf("code %q, esperado \"invalid_stl\"", code)
 			}
 			e.nothingStored()
 		})
@@ -103,8 +103,8 @@ func TestTS09_STLComMaisDe2MilhoesDeTriangulosRecebe422(t *testing.T) {
 	rec := e.upload(e.token(newUser()), body, size)
 
 	wantStatus(t, rec, http.StatusUnprocessableEntity)
-	if code := errorCode(t, rec); code != "too_many_triangles" {
-		t.Errorf("erro %q, esperado \"too_many_triangles\"", code)
+	if code := problemCode(t, rec); code != "too_many_triangles" {
+		t.Errorf("code %q, esperado \"too_many_triangles\"", code)
 	}
 	e.nothingStored()
 }

@@ -269,11 +269,20 @@ func decode(t *testing.T, rec *httptest.ResponseRecorder, v any) {
 	}
 }
 
-func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+func problemCode(t *testing.T, rec *httptest.ResponseRecorder) string {
 	t.Helper()
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
+		t.Fatalf("Content-Type %q, esperado application/problem+json (RFC 9457)", ct)
+	}
 	var body struct {
-		Error string `json:"error"`
+		Type   string `json:"type"`
+		Title  string `json:"title"`
+		Status int    `json:"status"`
+		Code   string `json:"code"`
 	}
 	decode(t, rec, &body)
-	return body.Error
+	if body.Type == "" || body.Title == "" || body.Status != rec.Code {
+		t.Errorf("Problem Details incompleto: %s", rec.Body.String())
+	}
+	return body.Code
 }

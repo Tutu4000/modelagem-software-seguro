@@ -53,6 +53,9 @@ func TestTS02_ClienteNaoBaixaOSTLDeOutroCliente(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := e.get(tc.path, tokenA)
 			wantStatus(t, rec, http.StatusForbidden)
+			if code := problemCode(t, rec); code != "forbidden" {
+				t.Errorf("code %q, esperado \"forbidden\"", code)
+			}
 			var body map[string]any
 			decode(t, rec, &body)
 			if _, ok := body["url"]; ok {
@@ -107,7 +110,11 @@ func TestTS03_RequisicaoSemTokenValidoRecebe401(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wantStatus(t, e.get(downloadPath(fileB.ID), tc.token), http.StatusUnauthorized)
+			rec := e.get(downloadPath(fileB.ID), tc.token)
+			wantStatus(t, rec, http.StatusUnauthorized)
+			if code := problemCode(t, rec); code != "unauthenticated" {
+				t.Errorf("code %q, esperado \"unauthenticated\"", code)
+			}
 		})
 	}
 }
