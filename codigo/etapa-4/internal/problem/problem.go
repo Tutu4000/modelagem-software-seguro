@@ -2,19 +2,80 @@
 // causa interna vai para o log, nunca para o cliente.
 package problem
 
-import "github.com/gin-gonic/gin"
+import (
+	"errors"
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
 
 type Code string
 
 const (
-	FileTooLarge Code = "file_too_large"
-	InvalidSTL   Code = "invalid_stl"
+	Unauthenticated  Code = "unauthenticated"
+	Forbidden        Code = "forbidden"
+	FileTooLarge     Code = "file_too_large"
+	InvalidSTL       Code = "invalid_stl"
+	TooManyTriangles Code = "too_many_triangles"
+	Internal         Code = "internal"
 )
 
-type Error struct{}
+var catalog = map[Code]struct {
+	status int
+	title  string
+}{
+	Unauthenticated:  {http.StatusUnauthorized, "Autenticação necessária"},
+	Forbidden:        {http.StatusForbidden, "Acesso negado"},
+	FileTooLarge:     {http.StatusRequestEntityTooLarge, "Arquivo grande demais"},
+	InvalidSTL:       {http.StatusUnprocessableEntity, "STL inválido"},
+	TooManyTriangles: {http.StatusUnprocessableEntity, "STL com triângulos demais"},
+	Internal:         {http.StatusInternalServerError, "Erro interno"},
+}
 
-func New(code Code, cause error) *Error { return nil }
+type Error struct {
+	Code  Code
+	Cause error
+}
 
-func (e *Error) Error() string { return "" }
+func New(code Code, cause error) *Error {
+	return &Error{Code: code, Cause: cause}
+}
 
-func Abort(c *gin.Context, err error) {}
+func (e *Error) Error() string {
+	if e.Cause == nil {
+		return string(e.Code)
+	}
+	return string(e.Code) + ": " + e.Cause.Error()
+}
+
+func (e *Error) Unwrap() error { return e.Cause }
+
+type details struct {
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Code   Code   `json:"code"`
+}
+
+// Abort guarda o erro completo em c.Errors, para o log, e responde só o
+// código. Um erro sem Code conhecido vira 500.
+func Abort(c *gin.Context, err error) {
+	if err != nil {
+		_ = c.Error(err)
+	}
+	code := Internal
+	var pe *Error
+	if errors.As(err, &pe) {
+		if _, ok := catalog[pe.Code]; ok {
+			code = pe.Code
+		}
+	}
+	entry := catalog[code]
+	c.Header("Content-Type", "application/problem+json")
+	c.AbortWithStatusJSON(entry.status, details{
+		Type:   "/erros/" + string(code),
+		Title:  entry.title,
+		Status: entry.status,
+		Code:   code,
+	})
+}
