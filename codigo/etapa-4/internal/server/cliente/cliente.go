@@ -3,11 +3,14 @@
 package cliente
 
 import (
+	"fmt"
+
 	"github.com/gin-gonic/gin"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/problem"
 )
 
 type Deps struct {
@@ -20,8 +23,14 @@ type Deps struct {
 
 func New(d Deps) *gin.Engine {
 	r := gin.New()
-	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Audit: d.Audit}
+	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+		problem.Abort(c, fmt.Errorf("panic: %v", recovered))
+	}))
+	// Nenhum proxy é confiável até o nginx (E2.3): a origem dos eventos de
+	// auditoria vem da conexão, e não de um X-Forwarded-For forjado.
+	_ = r.SetTrustedProxies(nil)
 
+	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Audit: d.Audit}
 	api := r.Group("/api/v1", auth.RequireUser(d.Verifier))
 	api.GET("/arquivos/:id/download", h.Download)
 	api.POST("/arquivos", h.Upload)
