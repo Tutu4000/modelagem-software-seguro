@@ -50,6 +50,52 @@ O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo 
 
 O TS01 é o caso válido, e os demais são casos maliciosos, inválidos ou não autorizados. O código está em [pratica1_autorizacao_test.go](../codigo/etapa-4/tests/pratica1_autorizacao_test.go).
 
+### Implementação
+
+A identidade, a autorização e a entrega do arquivo ficam em pontos separados, e cada um nega por padrão:
+
+|Peça|Arquivo|O que garante|
+|-|-|-|
+|Autenticação|[auth.go]|O `RequireUser` lê o token Bearer. O `Verify` aceita só EdDSA, exige `exp` e confere `sub` e `role`. O `User` só nasce de um token válido, e nenhum handler lê a identidade da requisição|
+|Autorização central|[authz.go]|O `CanReadFile` libera só o dono e nega todo o resto|
+|Repositório|[files.go]|O `FindForUser` é a única leitura de arquivo e sempre passa pelo `authz`|
+|Download|[files.go]|Gera a URL pré-assinada de 5 minutos ou responde 403 e grava o evento `authz.denied`|
+|Armazenamento|[storage.go]|Assina a URL com HMAC-SHA256 da chave e da validade, e confere a assinatura em tempo constante (`hmac.Equal`)|
+|Auditoria|[audit.go]|Grava uma linha JSON por evento, com horário UTC e origem, sem o token|
+
+O centro da D01 é a única forma de ler um arquivo:
+
+```go
+func (r *MemoryRepo) FindForUser(_ context.Context, u auth.User, id FileID) (File, error) {
+	r.mu.RLock()
+	f, ok := r.files[id]
+	r.mu.RUnlock()
+	if !ok || authz.CanReadFile(u, f.Owner) != nil {
+		return File{}, ErrNotFound
+	}
+	return f, nil
+}
+```
+
+Como não existe busca só por ID, uma rota nova não tem como esquecer a autorização. O arquivo inexistente e o alheio devolvem o mesmo `ErrNotFound`, o que impede descobrir quais IDs existem.
+
+### Resultado esperado
+
+Os testes TS01 a TS05 passam:
+
+* o dono recebe a URL, que entrega o arquivo por 5 minutos e depois expira;
+* o cliente que pede o arquivo de outro recebe 403, mesmo com `?user_id=`, e a resposta é igual à de um arquivo inexistente. A tentativa fica no log, sem o token;
+* sem token válido, a resposta é 401, inclusive com `alg: none`, com outra chave ou com o `sub` trocado;
+* a URL alterada recebe 403 do armazenamento, sem nenhum conteúdo.
+
+### Referência da OWASP
+
+* [Authorization Cheat Sheet][cs-authz]: negar por padrão e conferir a permissão em toda requisição.
+* [IDOR Prevention Cheat Sheet][cs-idor]: conferir o dono de cada objeto, com IDs aleatórios só como camada extra.
+* [ASVS 5.0.0, requisito 8.2.2][asvs-v8]: acesso a cada objeto só com permissão explícita.
+* [ASVS 5.0.0, requisitos 9.1.1 e 9.1.2][asvs-v9]: conferir a assinatura do token antes de usar o conteúdo e aceitar só algoritmos de uma lista, sem o `none`.
+* [Logging Cheat Sheet][cs-logging]: não gravar tokens de acesso no log.
+
 ## Prática 2 — Validação do upload de STL
 
 ### Risco e requisito
@@ -74,7 +120,7 @@ Duas definições completam o requisito:
 
 O TS06 é o caso válido, e os demais são casos maliciosos ou inválidos. O código está em [pratica2_upload_test.go](../codigo/etapa-4/tests/pratica2_upload_test.go).
 
-A implementação, o resultado esperado e a referência da OWASP das duas práticas entram depois, no commit da implementação.
+A implementação, o resultado esperado e a referência da OWASP desta prática entram depois, no commit da implementação.
 
 [e3]: etapa-3-arquitetura-segura.md
 [R14]: etapa-2-riscos-nist.md#22-registro-de-riscos
@@ -89,5 +135,15 @@ A implementação, o resultado esperado e a referência da OWASP das duas práti
 [RS03]: etapa-3-arquitetura-segura.md#1-requisitos-de-segurança
 [D03]: etapa-3-arquitetura-segura.md#d03--processamento-assíncrono-com-workers-isolados-e-falha-segura
 [C10]: etapa-2-riscos-nist.md#c10
+[auth.go]: ../codigo/etapa-4/internal/auth/auth.go
+[authz.go]: ../codigo/etapa-4/internal/authz/authz.go
+[files.go]: ../codigo/etapa-4/internal/files/files.go
+[storage.go]: ../codigo/etapa-4/internal/storage/storage.go
+[audit.go]: ../codigo/etapa-4/internal/audit/audit.go
+[cs-authz]: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
+[cs-idor]: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
+[cs-logging]: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+[asvs-v8]: https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x17-V8-Authorization.md
+[asvs-v9]: https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x18-V9-Self-contained-Tokens.md
 [RFC 9457]: https://www.rfc-editor.org/rfc/rfc9457
 [cs-errors]: https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html
