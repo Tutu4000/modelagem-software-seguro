@@ -107,7 +107,7 @@ Se o M2 atrasar, a Etapa 5 usa o OWASP Juice Shop, como o enunciado permite.
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E0.1|Módulo Go, Makefile e pastas. Os placeholders vazios desta pasta são apagados|`make test` roda|—|P0|
+|E0.1|Módulo Go e pastas. Os placeholders vazios desta pasta são apagados. O Makefile fica para o E2, porque o Windows não tem `make`|`go test ./...` roda|—|P0|
 |E0.2|`config` lê os segredos de arquivos (`*_FILE`), nunca de variáveis com o valor|A API não sobe se faltar um segredo|3.4|P1|
 |E0.3|`make lint` com `go vet`, `gosec`, `govulncheck` e `gitleaks`|Passa sem achados no código do E1|C12|P1|
 
