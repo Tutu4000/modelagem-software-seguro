@@ -120,7 +120,52 @@ Duas definições completam o requisito:
 
 O TS06 é o caso válido, e os demais são casos maliciosos ou inválidos. O código está em [pratica2_upload_test.go](../codigo/etapa-4/tests/pratica2_upload_test.go).
 
-A implementação, o resultado esperado e a referência da OWASP desta prática entram depois, no commit da implementação.
+### Implementação
+
+A validação acontece inteira antes de qualquer gravação:
+
+|Peça|Arquivo|O que garante|
+|-|-|-|
+|Limite de tamanho|[files.go]|Um `Content-Length` acima de 100 MiB é recusado sem ler o corpo. Sem `Content-Length`, o `http.MaxBytesReader` corta a leitura no limite|
+|Estrutura do STL|[stl.go]|O `Parse` confere `84 + 50 * n` e só depois o limite de triângulos. Os erros são tipados (`FormatError` e `TooManyTrianglesError`) e levam o tamanho e o número de triângulos para o log|
+|Gravação|[files.go]|O arquivo só é gravado depois da validação, com o hash SHA-256 ([C16])|
+|Tarefa|[queue.go]|A fila só aceita um `stl.Validated`, e só o `Parse` cria um. Um arquivo que não passou pela validação nem compila como tarefa|
+
+A ordem das conferências é o que separa os dois erros de conteúdo:
+
+```go
+func Parse(data []byte) (Validated, error) {
+	if len(data) < headerSize {
+		return Validated{}, &FormatError{Size: len(data)}
+	}
+	n := binary.LittleEndian.Uint32(data[80:headerSize])
+	if int64(len(data)) != expectedSize(n) {
+		return Validated{}, &FormatError{Size: len(data), Triangles: n}
+	}
+	if n > MaxTriangles {
+		return Validated{}, &TooManyTrianglesError{Triangles: n}
+	}
+	return Validated{triangles: n}, nil
+}
+```
+
+Um PDF ou um STL em texto tem um número qualquer no lugar dos triângulos, então é barrado pelo tamanho (`invalid_stl`). Só um STL íntegro chega à regra dos triângulos (`too_many_triangles`).
+
+### Resultado esperado
+
+Os testes TS06 a TS09 passam:
+
+* o STL íntegro é gravado e vira uma tarefa com o dono, o hash e o número de triângulos, e a resposta é 202 com o estado `processing`;
+* um arquivo acima de 100 MiB recebe 413 antes de qualquer gravação, declare ou não o tamanho;
+* PDF, STL em texto, truncado ou com bytes sobrando recebem 422 `invalid_stl`;
+* um STL íntegro com 2.000.001 triângulos recebe 422 `too_many_triangles`;
+* em todos os casos recusados, nada vai para o armazenamento, para o repositório nem para a fila.
+
+### Referência da OWASP
+
+* [File Upload Cheat Sheet][cs-upload]: validar o conteúdo, e não a extensão nem o `Content-Type`, e limitar o tamanho do upload.
+* [ASVS 5.0.0, requisitos 5.2.1 e 5.2.2][asvs-v5]: aceitar só arquivos que possam ser processados sem negação de serviço e conferir se o conteúdo corresponde à extensão.
+* [API4:2023 Unrestricted Resource Consumption][API4:2023]: tamanho máximo de upload antes do processamento caro.
 
 [e3]: etapa-3-arquitetura-segura.md
 [R14]: etapa-2-riscos-nist.md#22-registro-de-riscos
@@ -140,6 +185,12 @@ A implementação, o resultado esperado e a referência da OWASP desta prática 
 [files.go]: ../codigo/etapa-4/internal/files/files.go
 [storage.go]: ../codigo/etapa-4/internal/storage/storage.go
 [audit.go]: ../codigo/etapa-4/internal/audit/audit.go
+[stl.go]: ../codigo/etapa-4/internal/stl/stl.go
+[queue.go]: ../codigo/etapa-4/internal/queue/queue.go
+[C16]: etapa-2-riscos-nist.md#c16
+[cs-upload]: https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+[asvs-v5]: https://github.com/OWASP/ASVS/blob/v5.0.0/5.0/en/0x14-V5-File-Handling.md
+[API4:2023]: https://api-security.owasp.org/editions/2023/en/0xa4-unrestricted-resource-consumption/
 [cs-authz]: https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html
 [cs-idor]: https://cheatsheetseries.owasp.org/cheatsheets/Insecure_Direct_Object_Reference_Prevention_Cheat_Sheet.html
 [cs-logging]: https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
