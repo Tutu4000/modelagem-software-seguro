@@ -3,7 +3,10 @@ package files
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -119,7 +122,65 @@ func (h *Handler) Download(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
-func (h *Handler) Upload(c *gin.Context) { c.AbortWithStatus(http.StatusNotImplemented) }
+// Upload só grava o arquivo e cria a tarefa depois do limite de tamanho e do
+// stl.Parse (RS03).
+func (h *Handler) Upload(c *gin.Context) {
+	user := auth.MustUser(c)
+
+	data, err := readBody(c)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	model, err := stl.Parse(data)
+	if err != nil {
+		problem.Abort(c, stlProblem(err))
+		return
+	}
+
+	f := File{ID: NewFileID(), Owner: user.ID(), Size: int64(len(data)), SHA256: sha256.Sum256(data)}
+	ctx := c.Request.Context()
+	if err := h.Store.Put(ctx, f.ID.String(), data); err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	if err := h.Repo.Save(ctx, f); err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	if err := h.Queue.Enqueue(ctx, f, model); err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusAccepted, gin.H{"id": f.ID.String(), "status": "processing"})
+}
+
+// readBody recusa um Content-Length acima do limite sem ler o corpo, e corta a
+// leitura no limite quando o tamanho não é declarado.
+func readBody(c *gin.Context) ([]byte, error) {
+	tooLarge := problem.New(problem.FileTooLarge, fmt.Errorf("upload acima de %d bytes", stl.MaxSize))
+	if c.Request.ContentLength > stl.MaxSize {
+		return nil, tooLarge
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, stl.MaxSize))
+	var maxErr *http.MaxBytesError
+	if errors.As(err, &maxErr) {
+		return nil, tooLarge
+	}
+	return data, err
+}
+
+func stlProblem(err error) error {
+	var tooMany *stl.TooManyTrianglesError
+	if errors.As(err, &tooMany) {
+		return problem.New(problem.TooManyTriangles, err)
+	}
+	var format *stl.FormatError
+	if errors.As(err, &format) {
+		return problem.New(problem.InvalidSTL, err)
+	}
+	return err
+}
 
 func (h *Handler) findForUser(c *gin.Context, u auth.User, rawID string) (File, error) {
 	id, err := ParseFileID(rawID)

@@ -3,14 +3,13 @@ package queue
 
 import (
 	"context"
-	"errors"
+	"slices"
+	"sync"
 
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/stl"
 )
-
-var errNotImplemented = errors.New("não implementado")
 
 type Task struct {
 	FileID    files.FileID
@@ -19,12 +18,27 @@ type Task struct {
 	Triangles uint32
 }
 
-type Memory struct{}
+type Memory struct {
+	mu    sync.Mutex
+	tasks []Task
+}
 
 func NewMemory() *Memory { return &Memory{} }
 
-func (q *Memory) Enqueue(ctx context.Context, f files.File, model stl.Validated) error {
-	return errNotImplemented
+func (q *Memory) Enqueue(_ context.Context, f files.File, model stl.Validated) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.tasks = append(q.tasks, Task{
+		FileID:    f.ID,
+		Owner:     f.Owner,
+		SHA256:    f.SHA256,
+		Triangles: model.Triangles(),
+	})
+	return nil
 }
 
-func (q *Memory) Tasks() []Task { return nil }
+func (q *Memory) Tasks() []Task {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return slices.Clone(q.tasks)
+}
