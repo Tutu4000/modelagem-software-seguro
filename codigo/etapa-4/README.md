@@ -70,7 +70,7 @@ O `just test-e2e` cobre:
 * os papéis do banco;
 * o 429.
 
-O `just zap` gera um token do cliente A válido por 2 horas e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/](../../evidencias/etapa-5/).
+O `just zap` gera um token do cliente A válido por 2 horas e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
 
 ## Outros comandos
 

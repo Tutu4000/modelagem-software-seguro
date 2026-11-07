@@ -198,7 +198,7 @@ services:
 
   # Verificação da Etapa 5 (`just zap`): só sobe com o profile, e fica na rede
   # pública, como um cliente. O token é de um cliente de teste, com validade
-  # curta, e os relatórios vão para evidencias/etapa-5.
+  # curta, e os relatórios vão para evidencias/etapa-5/relatorios-zap.
   zap:
     image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
     profiles: [zap]
@@ -207,7 +207,7 @@ services:
     volumes:
       - ../openapi.yaml:/zap/api/openapi.yaml:ro
       - ../secrets/zap_token:/zap/token:ro
-      - ../../../evidencias/etapa-5:/zap/wrk
+      - ../../../evidencias/etapa-5/relatorios-zap:/zap/wrk
     entrypoint: ["bash", "-c"]
     command:
       - >-
