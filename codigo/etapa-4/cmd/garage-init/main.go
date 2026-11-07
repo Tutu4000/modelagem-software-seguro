@@ -1,6 +1,7 @@
-// Comando garage-init prepara o Garage pela Admin API v2: layout do nó, bucket
-// privado e a chave da API, só com leitura e escrita (E3.3). Pode rodar de novo
-// sem efeito. Existe porque a imagem do Garage não tem shell para um script.
+// Command garage-init prepares Garage through the Admin API v2: node layout,
+// private bucket and the API key, with read and write only (E3.3). Running it
+// again has no effect. It exists because the Garage image has no shell for a
+// script.
 package main
 
 import (
@@ -24,7 +25,7 @@ type admin struct {
 	http  *http.Client
 }
 
-var errNotFound = errors.New("não encontrado")
+var errNotFound = errors.New("not found")
 
 func main() {
 	var env config.Env
@@ -33,7 +34,7 @@ func main() {
 		token: string(env.Secret("GARAGE_ADMIN_TOKEN")),
 		http:  &http.Client{Timeout: 10 * time.Second},
 	}
-	bucket := env.String("S3_BUCKET", "arquivos")
+	bucket := env.String("S3_BUCKET", "files")
 	keyID := string(env.Secret("S3_ACCESS_KEY_ID"))
 	secret := string(env.Secret("S3_SECRET_ACCESS_KEY"))
 	if err := env.Err(); err != nil {
@@ -52,18 +53,18 @@ func main() {
 		log.Fatalf("bucket: %v", err)
 	}
 	if err := a.ensureKey(ctx, keyID, secret); err != nil {
-		log.Fatalf("chave: %v", err)
+		log.Fatalf("key: %v", err)
 	}
-	// Sem owner: a chave da API não muda as permissões nem apaga o bucket.
+	// No owner: the API key cannot change permissions or delete the bucket.
 	err = a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
 		"bucketId":    bucketID,
 		"accessKeyId": keyID,
 		"permissions": map[string]bool{"read": true, "write": true, "owner": false},
 	}, nil)
 	if err != nil {
-		log.Fatalf("permissão da chave: %v", err)
+		log.Fatalf("key permission: %v", err)
 	}
-	log.Printf("Garage pronto: bucket %q com a chave %s (leitura e escrita)", bucket, keyID)
+	log.Printf("Garage ready: bucket %q with key %s (read and write)", bucket, keyID)
 }
 
 func (a admin) waitUp(ctx context.Context) error {
@@ -74,11 +75,11 @@ func (a admin) waitUp(ctx context.Context) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("o Garage não respondeu: %w", last)
+	return fmt.Errorf("Garage did not respond: %w", last)
 }
 
-// ensureLayout dá ao único nó uma capacidade, sem a qual o Garage não aceita
-// gravações.
+// ensureLayout gives the single node a capacity, without which Garage does not
+// accept writes.
 func (a admin) ensureLayout(ctx context.Context) error {
 	var layout struct {
 		Version int64 `json:"version"`
@@ -101,7 +102,7 @@ func (a admin) ensureLayout(ctx context.Context) error {
 		return err
 	}
 	if len(status.Nodes) != 1 {
-		return fmt.Errorf("%d nós no cluster, esperado 1", len(status.Nodes))
+		return fmt.Errorf("%d nodes in the cluster, want 1", len(status.Nodes))
 	}
 	err := a.call(ctx, http.MethodPost, "/v2/UpdateClusterLayout", map[string]any{
 		"roles": []map[string]any{{

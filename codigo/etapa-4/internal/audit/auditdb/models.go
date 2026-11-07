@@ -10,14 +10,14 @@ import (
 	"github.com/google/uuid"
 )
 
-type Evento struct {
-	ID        uuid.UUID
-	Horario   time.Time
-	Evento    string
-	Autor     string
-	Operacao  string
-	Alvo      string
-	Resultado string
-	Motivo    string
-	Origem    string
+type Event struct {
+	ID         uuid.UUID
+	OccurredAt time.Time
+	Name       string
+	Actor      string
+	Action     string
+	Target     string
+	Result     string
+	Reason     string
+	Origin     string
 }

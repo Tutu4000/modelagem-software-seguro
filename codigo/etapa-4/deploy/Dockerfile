@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-# Build: binários estáticos, sem caminhos da máquina de build (C12, E2.1).
+# Build: static binaries, with no paths from the build machine (C12, E2.1).
 FROM golang:1.27.3-trixie@sha256:af1bfc2614ebb1dbd31af514b78740fd678850e76498762b425ecee4c5c6ea80 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -10,8 +10,8 @@ COPY internal ./internal
 ENV CGO_ENABLED=0
 RUN go build -trimpath -ldflags="-s -w" -o /out/ ./cmd/...
 
-# Execução: distroless, sem shell nem gerenciador de pacotes, como não root.
-# Cada estágio leva só o próprio binário.
+# Runtime: distroless, with no shell or package manager, as non-root. Each
+# stage carries only its own binary.
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS base
 USER nonroot:nonroot
 

@@ -1,11 +1,11 @@
-# Código de acesso ao banco gerado a partir das migrações e das queries de cada
-# módulo. Para regerar: `just sqlc`. Cada módulo tem o próprio pacote, como tem o
-# próprio papel no banco (E3.1).
+# Database access generated from the migrations and from each module's queries.
+# Regenerate with `just sqlc`. Each module gets its own package, just as it has
+# its own database role (E3.1).
 version: "2"
 
 sql:
   - engine: postgresql
-    schema: migrations/principal
+    schema: migrations/main
     queries: internal/files/queries.sql
     gen:
       go: &go
@@ -20,7 +20,7 @@ sql:
             go_type: time.Time
 
   - engine: postgresql
-    schema: migrations/principal
+    schema: migrations/main
     queries: internal/queue/queries.sql
     gen:
       go:
@@ -29,7 +29,7 @@ sql:
         out: internal/queue/queuedb
 
   - engine: postgresql
-    schema: migrations/auditoria
+    schema: migrations/audit
     queries: internal/audit/queries.sql
     gen:
       go:

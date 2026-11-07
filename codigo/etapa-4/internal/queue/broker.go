@@ -13,45 +13,45 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-// Nomes declarados em deploy/rabbitmq/topologia.json. Os usuários não podem
-// declarar nada (E4.1).
+// Names declared in deploy/rabbitmq/topology.json. The users cannot declare
+// anything (E4.1).
 const (
-	ExchangeTasks   = "tarefas"
-	QueueTasks      = "tarefas"
-	ExchangeResults = "resultados"
-	QueueResults    = "resultados"
+	ExchangeTasks   = "tasks"
+	QueueTasks      = "tasks"
+	ExchangeResults = "results"
+	QueueResults    = "results"
 )
 
-// TaskMessage é tudo o que o worker recebe: só um arquivo já validado, o hash
-// para conferir e uma URL de leitura só dele (E4.2, C16).
+// TaskMessage is all the worker receives: only an already validated file, the
+// hash to check and a URL that reads only that file (E4.2, C16).
 type TaskMessage struct {
-	TaskID uuid.UUID `json:"tarefa_id"`
-	FileID uuid.UUID `json:"arquivo_id"`
+	TaskID uuid.UUID `json:"task_id"`
+	FileID uuid.UUID `json:"file_id"`
 	SHA256 string    `json:"sha256"`
 	URL    string    `json:"url"`
 }
 
 type ResultMessage struct {
-	TaskID    uuid.UUID  `json:"tarefa_id"`
-	Status    string     `json:"status"` // StatusDone ou StatusFailed
+	TaskID    uuid.UUID  `json:"task_id"`
+	Status    string     `json:"status"` // StatusDone or StatusFailed
 	VolumeMM3 float64    `json:"volume_mm3,omitempty"`
-	BoxMM     [3]float64 `json:"caixa_mm"`
+	BBoxMM    [3]float64 `json:"bbox_mm"`
 }
 
 const (
-	StatusWaiting    = "aguardando"
-	StatusProcessing = "processando"
-	StatusDone       = "concluida"
-	StatusFailed     = "falhou"
+	StatusWaiting    = "waiting"
+	StatusProcessing = "processing"
+	StatusDone       = "done"
+	StatusFailed     = "failed"
 )
 
-// Broker é uma conexão com o RabbitMQ. Quando ela cai, o processo deve sair e
-// o Docker o reinicia: é mais simples e previsível que reconectar.
+// Broker is a connection to RabbitMQ. When it drops, the process should exit
+// and Docker restarts it: simpler and more predictable than reconnecting.
 type Broker struct {
 	conn *amqp.Connection
 
 	mu sync.Mutex
-	ch *amqp.Channel // em modo de confirmação, só para publicar
+	ch *amqp.Channel // in confirm mode, used only for publishing
 }
 
 func Dial(ctx context.Context, host, user string, password []byte) (*Broker, error) {
@@ -71,7 +71,7 @@ func Dial(ctx context.Context, host, user string, password []byte) (*Broker, err
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("RabbitMQ em %s como %s: %w", host, user, err)
+		return nil, fmt.Errorf("RabbitMQ at %s as %s: %w", host, user, err)
 	}
 	ch, err := conn.Channel()
 	if err != nil {
@@ -85,8 +85,8 @@ func Dial(ctx context.Context, host, user string, password []byte) (*Broker, err
 	return &Broker{conn: conn, ch: ch}, nil
 }
 
-// Publish só retorna depois da confirmação do RabbitMQ: a mensagem persistente
-// já está na fila quorum.
+// Publish only returns after RabbitMQ confirms: the persistent message is
+// already in the quorum queue.
 func (b *Broker) Publish(ctx context.Context, exchange string, msg any) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
@@ -107,12 +107,12 @@ func (b *Broker) Publish(ctx context.Context, exchange string, msg any) error {
 		return err
 	}
 	if !ok {
-		return errors.New("o RabbitMQ recusou a mensagem")
+		return errors.New("RabbitMQ rejected the message")
 	}
 	return nil
 }
 
-// Consume abre um canal próprio, com no máximo prefetch mensagens sem ack.
+// Consume opens a dedicated channel with at most prefetch unacked messages.
 func (b *Broker) Consume(queue string, prefetch int) (<-chan amqp.Delivery, error) {
 	ch, err := b.conn.Channel()
 	if err != nil {
@@ -124,7 +124,7 @@ func (b *Broker) Consume(queue string, prefetch int) (<-chan amqp.Delivery, erro
 	return ch.Consume(queue, "", false, false, false, false, nil)
 }
 
-// Closed recebe um valor quando a conexão cai.
+// Closed receives a value when the connection drops.
 func (b *Broker) Closed() <-chan *amqp.Error {
 	return b.conn.NotifyClose(make(chan *amqp.Error, 1))
 }

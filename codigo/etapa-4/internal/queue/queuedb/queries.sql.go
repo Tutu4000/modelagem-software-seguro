@@ -13,37 +13,37 @@ import (
 
 const countProcessing = `-- name: CountProcessing :one
 SELECT count(*)
-FROM tarefas
-WHERE dono = $1 AND status = 'processando'
+FROM tasks
+WHERE owner_id = $1 AND status = 'processing'
 `
 
-func (q *Queries) CountProcessing(ctx context.Context, dono uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countProcessing, dono)
+func (q *Queries) CountProcessing(ctx context.Context, ownerID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countProcessing, ownerID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
 }
 
 const finishTask = `-- name: FinishTask :execrows
-UPDATE tarefas
-SET status = $1, volume_mm3 = $2, caixa_mm = $3, atualizado_em = now()
-WHERE id = $4 AND status = 'processando'
+UPDATE tasks
+SET status = $1, volume_mm3 = $2, bbox_mm = $3, updated_at = now()
+WHERE id = $4 AND status = 'processing'
 `
 
 type FinishTaskParams struct {
 	Status    string
 	VolumeMm3 *float64
-	CaixaMm   []float64
+	BboxMm    []float64
 	ID        uuid.UUID
 }
 
-// Só uma tarefa em processamento muda de estado: um resultado repetido não
-// afeta nenhuma linha (E4.6).
+// Only a task that is processing changes state: a repeated result affects no
+// rows (E4.6).
 func (q *Queries) FinishTask(ctx context.Context, arg FinishTaskParams) (int64, error) {
 	result, err := q.db.Exec(ctx, finishTask,
 		arg.Status,
 		arg.VolumeMm3,
-		arg.CaixaMm,
+		arg.BboxMm,
 		arg.ID,
 	)
 	if err != nil {
@@ -53,26 +53,26 @@ func (q *Queries) FinishTask(ctx context.Context, arg FinishTaskParams) (int64, 
 }
 
 const insertTask = `-- name: InsertTask :exec
-INSERT INTO tarefas (id, arquivo_id, dono, sha256, triangulos, status)
+INSERT INTO tasks (id, file_id, owner_id, sha256, triangles, status)
 VALUES ($1, $2, $3, $4, $5, $6)
 `
 
 type InsertTaskParams struct {
-	ID         uuid.UUID
-	ArquivoID  uuid.UUID
-	Dono       uuid.UUID
-	Sha256     []byte
-	Triangulos int64
-	Status     string
+	ID        uuid.UUID
+	FileID    uuid.UUID
+	OwnerID   uuid.UUID
+	Sha256    []byte
+	Triangles int64
+	Status    string
 }
 
 func (q *Queries) InsertTask(ctx context.Context, arg InsertTaskParams) error {
 	_, err := q.db.Exec(ctx, insertTask,
 		arg.ID,
-		arg.ArquivoID,
-		arg.Dono,
+		arg.FileID,
+		arg.OwnerID,
 		arg.Sha256,
-		arg.Triangulos,
+		arg.Triangles,
 		arg.Status,
 	)
 	return err
@@ -82,37 +82,37 @@ const lockOwner = `-- name: LockOwner :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
 `
 
-// Serializa as decisões de cota de uma conta entre as réplicas da API, até o
-// fim da transação.
-func (q *Queries) LockOwner(ctx context.Context, dono string) error {
-	_, err := q.db.Exec(ctx, lockOwner, dono)
+// Serializes the quota decisions of one account across all API replicas,
+// until the end of the transaction.
+func (q *Queries) LockOwner(ctx context.Context, ownerID string) error {
+	_, err := q.db.Exec(ctx, lockOwner, ownerID)
 	return err
 }
 
 const oldestWaiting = `-- name: OldestWaiting :one
-SELECT id, arquivo_id, sha256
-FROM tarefas
-WHERE dono = $1 AND status = 'aguardando'
-ORDER BY criado_em
+SELECT id, file_id, sha256
+FROM tasks
+WHERE owner_id = $1 AND status = 'waiting'
+ORDER BY created_at
 LIMIT 1
 `
 
 type OldestWaitingRow struct {
-	ID        uuid.UUID
-	ArquivoID uuid.UUID
-	Sha256    []byte
+	ID     uuid.UUID
+	FileID uuid.UUID
+	Sha256 []byte
 }
 
-func (q *Queries) OldestWaiting(ctx context.Context, dono uuid.UUID) (OldestWaitingRow, error) {
-	row := q.db.QueryRow(ctx, oldestWaiting, dono)
+func (q *Queries) OldestWaiting(ctx context.Context, ownerID uuid.UUID) (OldestWaitingRow, error) {
+	row := q.db.QueryRow(ctx, oldestWaiting, ownerID)
 	var i OldestWaitingRow
-	err := row.Scan(&i.ID, &i.ArquivoID, &i.Sha256)
+	err := row.Scan(&i.ID, &i.FileID, &i.Sha256)
 	return i, err
 }
 
 const startTask = `-- name: StartTask :exec
-UPDATE tarefas
-SET status = 'processando', atualizado_em = now()
+UPDATE tasks
+SET status = 'processing', updated_at = now()
 WHERE id = $1
 `
 
@@ -122,31 +122,31 @@ func (q *Queries) StartTask(ctx context.Context, id uuid.UUID) error {
 }
 
 const taskOwner = `-- name: TaskOwner :one
-SELECT dono FROM tarefas WHERE id = $1
+SELECT owner_id FROM tasks WHERE id = $1
 `
 
 func (q *Queries) TaskOwner(ctx context.Context, id uuid.UUID) (uuid.UUID, error) {
 	row := q.db.QueryRow(ctx, taskOwner, id)
-	var dono uuid.UUID
-	err := row.Scan(&dono)
-	return dono, err
+	var owner_id uuid.UUID
+	err := row.Scan(&owner_id)
+	return owner_id, err
 }
 
 const taskStatusByFile = `-- name: TaskStatusByFile :one
-SELECT status, volume_mm3, caixa_mm
-FROM tarefas
-WHERE arquivo_id = $1
+SELECT status, volume_mm3, bbox_mm
+FROM tasks
+WHERE file_id = $1
 `
 
 type TaskStatusByFileRow struct {
 	Status    string
 	VolumeMm3 *float64
-	CaixaMm   []float64
+	BboxMm    []float64
 }
 
-func (q *Queries) TaskStatusByFile(ctx context.Context, arquivoID uuid.UUID) (TaskStatusByFileRow, error) {
-	row := q.db.QueryRow(ctx, taskStatusByFile, arquivoID)
+func (q *Queries) TaskStatusByFile(ctx context.Context, fileID uuid.UUID) (TaskStatusByFileRow, error) {
+	row := q.db.QueryRow(ctx, taskStatusByFile, fileID)
 	var i TaskStatusByFileRow
-	err := row.Scan(&i.Status, &i.VolumeMm3, &i.CaixaMm)
+	err := row.Scan(&i.Status, &i.VolumeMm3, &i.BboxMm)
 	return i, err
 }

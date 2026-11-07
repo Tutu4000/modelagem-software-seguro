@@ -1,5 +1,5 @@
-// Package storage guarda os arquivos e gera as URLs pré-assinadas. O S3 fala
-// com o Garage. O Memory simula o mesmo comportamento nos testes.
+// Package storage stores the files and generates the presigned URLs. S3 talks
+// to Garage. Memory simulates the same behavior in the tests.
 package storage
 
 import (
@@ -36,28 +36,28 @@ func (m *Memory) Put(_ context.Context, key string, data []byte) error {
 	return nil
 }
 
-// PresignGet gera {baseURL}/objetos/{key}?exp={unix}&sig={HMAC-SHA256 de key e exp}.
+// PresignGet generates {baseURL}/objects/{key}?exp={unix}&sig={HMAC-SHA256 of key and exp}.
 func (m *Memory) PresignGet(key string, ttl time.Duration) (string, error) {
 	exp := m.now().Add(ttl).Unix()
 	q := url.Values{}
 	q.Set("exp", strconv.FormatInt(exp, 10))
 	q.Set("sig", hex.EncodeToString(m.mac(key, exp)))
-	return m.baseURL + "/objetos/" + url.PathEscape(key) + "?" + q.Encode(), nil
+	return m.baseURL + "/objects/" + url.PathEscape(key) + "?" + q.Encode(), nil
 }
 
-// ServeHTTP só entrega com assinatura válida e dentro da validade. Não há
-// objeto público (C03).
+// ServeHTTP only delivers with a valid, unexpired signature. There are no
+// public objects (C03).
 func (m *Memory) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	key, ok := strings.CutPrefix(r.URL.Path, "/objetos/")
+	key, ok := strings.CutPrefix(r.URL.Path, "/objects/")
 	if !ok || !m.validSignature(key, r.URL.Query()) {
-		http.Error(w, "acesso negado", http.StatusForbidden)
+		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 	m.mu.RLock()
 	data, found := m.objects[key]
 	m.mu.RUnlock()
 	if !found {
-		http.Error(w, "acesso negado", http.StatusForbidden)
+		http.Error(w, "access denied", http.StatusForbidden)
 		return
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")

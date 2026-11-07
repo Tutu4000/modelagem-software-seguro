@@ -1,6 +1,6 @@
-// Package cliente é o roteador da API pública. As rotas do painel não existem
-// aqui.
-package cliente
+// Package customer is the public API router. The panel routes do not exist
+// here.
+package customer
 
 import (
 	"fmt"
@@ -22,17 +22,17 @@ type Deps struct {
 	Queue    files.Enqueuer
 	Tasks    files.TaskReader
 	Audit    *audit.Logger
-	Log      *slog.Logger // nil desliga o log de requisições
-	// TrustedProxies são os IPs de quem pode informar a origem por
-	// X-Forwarded-For. Vazio, a origem dos eventos de auditoria vem da conexão,
-	// e não de um cabeçalho forjado. No compose, só o nginx (E2.3).
+	Log      *slog.Logger // nil turns off the request log
+	// TrustedProxies are the IPs allowed to report the origin through
+	// X-Forwarded-For. When empty, the origin of audit events comes from the
+	// connection, not from a forged header. In the compose, only nginx (E2.3).
 	TrustedProxies []string
 }
 
 func New(d Deps) (*gin.Engine, error) {
 	r := gin.New()
 	if err := r.SetTrustedProxies(d.TrustedProxies); err != nil {
-		return nil, fmt.Errorf("proxies confiáveis: %w", err)
+		return nil, fmt.Errorf("trusted proxies: %w", err)
 	}
 	if d.Log != nil {
 		r.Use(server.RequestLog(d.Log))
@@ -43,8 +43,8 @@ func New(d Deps) (*gin.Engine, error) {
 
 	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Tasks: d.Tasks, Audit: d.Audit}
 	api := r.Group("/api/v1", auth.RequireUser(d.Verifier))
-	api.GET("/arquivos/:id", h.Status)
-	api.GET("/arquivos/:id/download", h.Download)
-	api.POST("/arquivos", h.Upload)
+	api.GET("/files/:id", h.Status)
+	api.GET("/files/:id/download", h.Download)
+	api.POST("/files", h.Upload)
 	return r, nil
 }

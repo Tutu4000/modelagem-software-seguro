@@ -12,47 +12,47 @@ import (
 )
 
 const findFileForOwner = `-- name: FindFileForOwner :one
-SELECT dono, tamanho, sha256
-FROM arquivos
-WHERE id = $1 AND dono = $2
+SELECT owner_id, size_bytes, sha256
+FROM files
+WHERE id = $1 AND owner_id = $2
 `
 
 type FindFileForOwnerParams struct {
-	ID   uuid.UUID
-	Dono uuid.UUID
+	ID      uuid.UUID
+	OwnerID uuid.UUID
 }
 
 type FindFileForOwnerRow struct {
-	Dono    uuid.UUID
-	Tamanho int64
-	Sha256  []byte
+	OwnerID   uuid.UUID
+	SizeBytes int64
+	Sha256    []byte
 }
 
-// Não existe busca só por ID: o dono faz parte da consulta (D01).
+// There is no lookup by ID alone: the owner is part of the query (D01).
 func (q *Queries) FindFileForOwner(ctx context.Context, arg FindFileForOwnerParams) (FindFileForOwnerRow, error) {
-	row := q.db.QueryRow(ctx, findFileForOwner, arg.ID, arg.Dono)
+	row := q.db.QueryRow(ctx, findFileForOwner, arg.ID, arg.OwnerID)
 	var i FindFileForOwnerRow
-	err := row.Scan(&i.Dono, &i.Tamanho, &i.Sha256)
+	err := row.Scan(&i.OwnerID, &i.SizeBytes, &i.Sha256)
 	return i, err
 }
 
 const insertFile = `-- name: InsertFile :exec
-INSERT INTO arquivos (id, dono, tamanho, sha256)
+INSERT INTO files (id, owner_id, size_bytes, sha256)
 VALUES ($1, $2, $3, $4)
 `
 
 type InsertFileParams struct {
-	ID      uuid.UUID
-	Dono    uuid.UUID
-	Tamanho int64
-	Sha256  []byte
+	ID        uuid.UUID
+	OwnerID   uuid.UUID
+	SizeBytes int64
+	Sha256    []byte
 }
 
 func (q *Queries) InsertFile(ctx context.Context, arg InsertFileParams) error {
 	_, err := q.db.Exec(ctx, insertFile,
 		arg.ID,
-		arg.Dono,
-		arg.Tamanho,
+		arg.OwnerID,
+		arg.SizeBytes,
 		arg.Sha256,
 	)
 	return err

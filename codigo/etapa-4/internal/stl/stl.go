@@ -1,4 +1,4 @@
-// Package stl valida STL binários antes da gravação (RS03).
+// Package stl validates binary STLs before they are stored (RS03).
 package stl
 
 import (
@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	MaxSize      = 100 << 20 // 100 MiB: cabe um STL com MaxTriangles triângulos
+	MaxSize      = 100 << 20 // 100 MiB: fits an STL with MaxTriangles triangles
 	MaxTriangles = 2_000_000
 
 	headerSize   = 84
@@ -16,14 +16,14 @@ const (
 
 type FormatError struct {
 	Size      int
-	Triangles uint32 // declarados no cabeçalho
+	Triangles uint32 // declared in the header
 }
 
 func (e *FormatError) Error() string {
 	if e.Size < headerSize {
-		return fmt.Sprintf("arquivo de %d bytes, menor que o cabeçalho de um STL binário", e.Size)
+		return fmt.Sprintf("file of %d bytes, smaller than a binary STL header", e.Size)
 	}
-	return fmt.Sprintf("arquivo de %d bytes, mas o cabeçalho declara %d triângulos (%d bytes)",
+	return fmt.Sprintf("file of %d bytes, but the header declares %d triangles (%d bytes)",
 		e.Size, e.Triangles, expectedSize(e.Triangles))
 }
 
@@ -32,18 +32,18 @@ type TooManyTrianglesError struct {
 }
 
 func (e *TooManyTrianglesError) Error() string {
-	return fmt.Sprintf("STL com %d triângulos, acima do limite de %d", e.Triangles, MaxTriangles)
+	return fmt.Sprintf("STL with %d triangles, above the limit of %d", e.Triangles, MaxTriangles)
 }
 
-// Validated só sai do Parse, e só ele vira tarefa.
+// Validated only comes out of Parse, and only it becomes a task.
 type Validated struct {
 	triangles uint32
 }
 
 func (v Validated) Triangles() uint32 { return v.triangles }
 
-// Parse confere o tamanho antes do limite de triângulos: um arquivo que não é
-// STL declara um número qualquer no cabeçalho.
+// Parse checks the size before the triangle limit: a file that is not an STL
+// declares an arbitrary number in the header.
 func Parse(data []byte) (Validated, error) {
 	if len(data) < headerSize {
 		return Validated{}, &FormatError{Size: len(data)}

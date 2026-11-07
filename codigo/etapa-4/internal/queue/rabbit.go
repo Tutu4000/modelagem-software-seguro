@@ -20,11 +20,11 @@ import (
 )
 
 const (
-	// MaxActive é a cota de tarefas em processamento por conta. As outras
-	// esperam a vez (E4.3, C10).
+	// MaxActive is the per-account quota of tasks being processed. The others
+	// wait their turn (E4.3, C10).
 	MaxActive = 3
-	// workerURLTTL cobre o tempo na fila. Uma URL vencida faz a tarefa falhar,
-	// e não abre o arquivo para mais ninguém.
+	// workerURLTTL covers the time spent in the queue. An expired URL makes the
+	// task fail, and does not open the file to anyone else.
 	workerURLTTL = 30 * time.Minute
 )
 
@@ -32,8 +32,9 @@ type Presigner interface {
 	PresignInternal(key string, ttl time.Duration) (string, error)
 }
 
-// Rabbit é o módulo fila: guarda o estado das tarefas no Postgres, com o papel
-// "fila", e as publica no RabbitMQ. As queries ficam em queries.sql.
+// Rabbit is the queue module: it keeps task state in Postgres, with the
+// "queue" role, and publishes the tasks to RabbitMQ. The queries live in
+// queries.sql.
 type Rabbit struct {
 	db     *pgxpool.Pool
 	q      *queuedb.Queries
@@ -53,15 +54,15 @@ type task struct {
 	sha256 []byte
 }
 
-// Enqueue cria a tarefa. Dentro da cota ela é publicada antes do commit: se o
-// commit falhar, o worker processa uma tarefa que não existe e o resultado é
-// descartado, mas nenhuma tarefa gravada fica sem mensagem.
+// Enqueue creates the task. Within the quota it is published before the
+// commit: if the commit fails, the worker processes a task that does not exist
+// and its result is discarded, but no stored task is left without a message.
 func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated) error {
 	tx, err := q.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // sem efeito depois do commit
+	defer tx.Rollback(ctx) //nolint:errcheck // no effect after the commit
 	qtx := q.q.WithTx(tx)
 
 	owner := uuid.UUID(f.Owner)
@@ -78,12 +79,12 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 		status = StatusWaiting
 	}
 	err = qtx.InsertTask(ctx, queuedb.InsertTaskParams{
-		ID:         t.id,
-		ArquivoID:  t.file,
-		Dono:       owner,
-		Sha256:     t.sha256,
-		Triangulos: int64(model.Triangles()),
-		Status:     status,
+		ID:        t.id,
+		FileID:    t.file,
+		OwnerID:   owner,
+		Sha256:    t.sha256,
+		Triangles: int64(model.Triangles()),
+		Status:    status,
 	})
 	if err != nil {
 		return err
@@ -97,18 +98,18 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 		return err
 	}
 	if status == StatusWaiting {
-		// A tarefa já existe: uma falha da auditoria vai para o log, sem
-		// recusar o upload.
+		// The task already exists: an audit failure goes to the log without
+		// rejecting the upload.
 		err := q.audit.Record(audit.Event{
 			Name:   "quota.waiting",
 			Actor:  owner.String(),
 			Action: "file.process",
 			Target: t.file.String(),
 			Result: "waiting",
-			Reason: fmt.Sprintf("%d tarefas em processamento", active),
+			Reason: fmt.Sprintf("%d tasks processing", active),
 		})
 		if err != nil {
-			q.log.Error("falha ao auditar a espera", "error", err)
+			q.log.Error("failed to audit the wait", "error", err)
 		}
 	}
 	return nil
@@ -117,17 +118,17 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 func (q *Rabbit) StatusOf(ctx context.Context, id files.FileID) (files.TaskStatus, error) {
 	row, err := q.q.TaskStatusByFile(ctx, uuid.UUID(id))
 	if err != nil {
-		return files.TaskStatus{}, fmt.Errorf("tarefa do arquivo %s: %w", id, err)
+		return files.TaskStatus{}, fmt.Errorf("task of file %s: %w", id, err)
 	}
 	st := files.TaskStatus{State: row.Status}
-	if row.VolumeMm3 != nil && len(row.CaixaMm) == 3 {
+	if row.VolumeMm3 != nil && len(row.BboxMm) == 3 {
 		st.VolumeMM3 = row.VolumeMm3
-		st.BoxMM = &[3]float64{row.CaixaMm[0], row.CaixaMm[1], row.CaixaMm[2]}
+		st.BBoxMM = &[3]float64{row.BboxMm[0], row.BboxMm[1], row.BboxMm[2]}
 	}
 	return st, nil
 }
 
-// ConsumeResults roda até o contexto acabar ou a conexão cair.
+// ConsumeResults runs until the context ends or the connection drops.
 func (q *Rabbit) ConsumeResults(ctx context.Context) error {
 	deliveries, err := q.broker.Consume(QueueResults, 10)
 	if err != nil {
@@ -139,16 +140,16 @@ func (q *Rabbit) ConsumeResults(ctx context.Context) error {
 			return nil
 		case d, ok := <-deliveries:
 			if !ok {
-				return errors.New("o canal de resultados fechou")
+				return errors.New("the results channel closed")
 			}
 			var m ResultMessage
 			if err := json.Unmarshal(d.Body, &m); err != nil || (m.Status != StatusDone && m.Status != StatusFailed) {
-				q.log.Error("resultado inválido descartado", "error", err)
+				q.log.Error("invalid result discarded", "error", err)
 				_ = d.Reject(false)
 				continue
 			}
 			if err := q.handleResult(ctx, m); err != nil {
-				q.log.Error("falha ao gravar o resultado", "tarefa", m.TaskID, "error", err)
+				q.log.Error("failed to store the result", "task", m.TaskID, "error", err)
 				_ = d.Nack(false, true)
 				continue
 			}
@@ -157,20 +158,20 @@ func (q *Rabbit) ConsumeResults(ctx context.Context) error {
 	}
 }
 
-// handleResult é idempotente: só uma tarefa em processamento muda de estado, e
-// um resultado repetido não faz nada (E4.6). Depois libera a próxima tarefa da
-// mesma conta.
+// handleResult is idempotent: only a task that is processing changes state,
+// and a repeated result does nothing (E4.6). Then it releases the account's
+// next task.
 func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 	tx, err := q.db.Begin(ctx)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck // sem efeito depois do commit
+	defer tx.Rollback(ctx) //nolint:errcheck // no effect after the commit
 	qtx := q.q.WithTx(tx)
 
 	owner, err := qtx.TaskOwner(ctx, m.TaskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		q.log.Warn("resultado de tarefa desconhecida", "tarefa", m.TaskID)
+		q.log.Warn("result for an unknown task", "task", m.TaskID)
 		return nil
 	}
 	if err != nil {
@@ -182,7 +183,7 @@ func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 
 	finish := queuedb.FinishTaskParams{ID: m.TaskID, Status: m.Status}
 	if m.Status == StatusDone {
-		finish.VolumeMm3, finish.CaixaMm = &m.VolumeMM3, m.BoxMM[:]
+		finish.VolumeMm3, finish.BboxMm = &m.VolumeMM3, m.BBoxMM[:]
 	}
 	changed, err := qtx.FinishTask(ctx, finish)
 	if err != nil {
@@ -202,7 +203,7 @@ func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 	if err := qtx.StartTask(ctx, next.ID); err != nil {
 		return err
 	}
-	if err := q.publish(ctx, task{id: next.ID, file: next.ArquivoID, sha256: next.Sha256}); err != nil {
+	if err := q.publish(ctx, task{id: next.ID, file: next.FileID, sha256: next.Sha256}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)

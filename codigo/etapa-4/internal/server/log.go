@@ -1,4 +1,4 @@
-// Package server tem os middlewares compartilhados pelos roteadores.
+// Package server holds the middlewares shared by the routers.
 package server
 
 import (
@@ -8,9 +8,9 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequestLog grava uma linha por requisição, com a causa interna dos erros que
-// o problem.Abort escondeu do cliente. Nunca grava cabeçalhos, corpo nem query
-// string, onde ficam tokens e assinaturas (C17, E7.3).
+// RequestLog writes one line per request, with the internal cause of the
+// errors that problem.Abort hid from the client. It never logs headers, body
+// or query string, where tokens and signatures live (C17, E7.3).
 func RequestLog(l *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()

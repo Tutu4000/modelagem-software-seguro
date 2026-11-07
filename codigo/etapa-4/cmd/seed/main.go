@@ -1,5 +1,5 @@
-// Comando seed envia STLs fictícios dos clientes A e B pela API pública, como
-// um cliente faria (E2.5). Nenhum dado real entra no ambiente.
+// Command seed uploads fictitious STLs for customers A and B through the
+// public API, as a customer would (E2.5). No real data enters the environment.
 package main
 
 import (
@@ -21,9 +21,9 @@ import (
 )
 
 func main() {
-	base := flag.String("url", "https://localhost", "endereço da API")
-	caPath := flag.String("cacert", "secrets/tls_ca.pem", "CA do certificado local")
-	keyPath := flag.String("key", "secrets/devtoken_ed25519.pem", "chave do devtoken")
+	base := flag.String("url", "https://localhost", "API address")
+	caPath := flag.String("cacert", "secrets/tls_ca.pem", "CA of the local certificate")
+	keyPath := flag.String("key", "secrets/devtoken_ed25519.pem", "devtoken key")
 	flag.Parse()
 
 	client, err := newClient(*caPath)
@@ -40,16 +40,16 @@ func main() {
 		name    string
 		x, y, z float32
 	}{
-		{devtoken.ClienteA, "suporte", 10, 20, 30},
-		{devtoken.ClienteA, "placa", 50, 50, 5},
-		{devtoken.ClienteB, "carcaça", 80, 40, 20},
+		{devtoken.CustomerA, "bracket", 10, 20, 30},
+		{devtoken.CustomerA, "plate", 50, 50, 5},
+		{devtoken.CustomerB, "housing", 80, 40, 20},
 	}
 	for _, m := range models {
 		token, err := devtoken.Sign(key, m.owner, time.Minute)
 		if err != nil {
 			log.Fatal(err)
 		}
-		req, err := http.NewRequest(http.MethodPost, *base+"/api/v1/arquivos", bytes.NewReader(fakestl.Box(m.x, m.y, m.z)))
+		req, err := http.NewRequest(http.MethodPost, *base+"/api/v1/files", bytes.NewReader(fakestl.Box(m.x, m.y, m.z)))
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -68,21 +68,21 @@ func main() {
 			log.Fatalf("%s: status %s", m.name, resp.Status)
 		}
 		who := "A"
-		if m.owner == devtoken.ClienteB {
+		if m.owner == devtoken.CustomerB {
 			who = "B"
 		}
-		fmt.Printf("cliente %s  %-8s  %s\n", who, m.name, body.ID)
+		fmt.Printf("customer %s  %-8s  %s\n", who, m.name, body.ID)
 	}
 }
 
 func newClient(caPath string) (*http.Client, error) {
-	pem, err := os.ReadFile(caPath) // #nosec G304 -- caminho dado por quem roda a ferramenta
+	pem, err := os.ReadFile(caPath) // #nosec G304 -- path given by whoever runs the tool
 	if err != nil {
 		return nil, err
 	}
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(pem) {
-		return nil, fmt.Errorf("%s: nenhum certificado", caPath)
+		return nil, fmt.Errorf("%s: no certificate", caPath)
 	}
 	return &http.Client{
 		Timeout:   30 * time.Second,

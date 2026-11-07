@@ -1,3 +1,3 @@
 -- name: InsertEvent :exec
-INSERT INTO eventos (horario, evento, autor, operacao, alvo, resultado, motivo, origem)
-VALUES (@horario, @evento, @autor, @operacao, @alvo, @resultado, @motivo, @origem);
+INSERT INTO events (occurred_at, name, actor, action, target, result, reason, origin)
+VALUES (@occurred_at, @name, @actor, @action, @target, @result, @reason, @origin);

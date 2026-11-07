@@ -1,5 +1,5 @@
-// Package processing é a lógica do worker: confere o arquivo e simula o
-// fatiamento com o volume e a caixa envolvente (E4.4).
+// Package processing is the worker logic: it checks the file and simulates
+// slicing with the volume and the bounding box (E4.4).
 package processing
 
 import (
@@ -13,19 +13,19 @@ import (
 	"nuggetmachine/internal/stl"
 )
 
-// ErrHashMismatch indica que o arquivo baixado não é o que a API validou.
-var ErrHashMismatch = errors.New("o SHA-256 do arquivo não confere")
+// ErrHashMismatch means the downloaded file is not the one the API validated.
+var ErrHashMismatch = errors.New("the file's SHA-256 does not match")
 
 type Result struct {
 	VolumeMM3 float64
-	BoxMM     [3]float64
+	BBoxMM    [3]float64
 }
 
-// checkEvery é de quantos em quantos triângulos o prazo é conferido.
+// checkEvery is how many triangles pass between deadline checks.
 const checkEvery = 100_000
 
-// Analyze confere o hash antes de tudo e passa de novo pelo stl.Parse: o worker
-// não confia no que vem da fila.
+// Analyze checks the hash before anything else and runs stl.Parse again: the
+// worker does not trust what comes from the queue.
 func Analyze(ctx context.Context, data []byte, want [32]byte) (Result, error) {
 	got := sha256.Sum256(data)
 	if !bytes.Equal(got[:], want[:]) {
@@ -49,7 +49,8 @@ func Analyze(ctx context.Context, data []byte, want [32]byte) (Result, error) {
 				return Result{}, err
 			}
 		}
-		// Cada triângulo: normal (12 bytes), três vértices (36) e um atributo (2).
+		// Each triangle: normal (12 bytes), three vertices (36) and an
+		// attribute (2).
 		base := 84 + 50*i + 12
 		var v [3][3]float64
 		for j := range 3 {
@@ -61,12 +62,12 @@ func Analyze(ctx context.Context, data []byte, want [32]byte) (Result, error) {
 				hi[k] = math.Max(hi[k], c)
 			}
 		}
-		// Volume com sinal do tetraedro formado com a origem.
+		// Signed volume of the tetrahedron formed with the origin.
 		volume += dot(v[0], cross(v[1], v[2])) / 6
 	}
 	return Result{
 		VolumeMM3: math.Abs(volume),
-		BoxMM:     [3]float64{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]},
+		BBoxMM:    [3]float64{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]},
 	}, nil
 }
 

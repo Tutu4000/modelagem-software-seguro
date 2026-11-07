@@ -1,4 +1,4 @@
-// Comando api é a API pública: só as rotas do cliente (seção 1.1 do backlog).
+// Command api is the public API: customer routes only (backlog section 1.1).
 package main
 
 import (
@@ -22,14 +22,14 @@ import (
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/queue"
-	"nuggetmachine/internal/server/cliente"
+	"nuggetmachine/internal/server/customer"
 	"nuggetmachine/internal/storage"
 )
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
-		log.Error("a API parou", "error", err)
+		log.Error("the API stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -40,18 +40,18 @@ func run(log *slog.Logger) error {
 	trusted := env.List("TRUSTED_PROXIES")
 	pubPEM := env.Secret("AUTH_PUBLIC_KEY")
 	mainDB := dbConfig{host: env.Required("DB_HOST"), name: env.String("DB_NAME", "nugget")}
-	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "auditoria")}
+	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "audit")}
 	s3cfg := storage.S3Config{
-		Bucket:         env.String("S3_BUCKET", "arquivos"),
+		Bucket:         env.String("S3_BUCKET", "files"),
 		Region:         env.String("S3_REGION", "garage"),
 		Endpoint:       env.Required("S3_ENDPOINT"),
 		PublicEndpoint: env.Required("S3_PUBLIC_ENDPOINT"),
 		AccessKey:      string(env.Secret("S3_ACCESS_KEY_ID")),
 		SecretKey:      string(env.Secret("S3_SECRET_ACCESS_KEY")),
 	}
-	filesPassword := env.Secret("DB_ARQUIVOS_PASSWORD")
-	queuePassword := env.Secret("DB_FILA_PASSWORD")
-	auditPassword := env.Secret("DB_AUDITORIA_PASSWORD")
+	filesPassword := env.Secret("DB_FILES_PASSWORD")
+	queuePassword := env.Secret("DB_QUEUE_PASSWORD")
+	auditPassword := env.Secret("DB_AUDIT_PASSWORD")
 	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
 	amqpUser := env.String("AMQP_USER", "api")
 	amqpPassword := env.Secret("AMQP_PASSWORD")
@@ -67,17 +67,17 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	filesPool, err := mainDB.open(ctx, "arquivos", filesPassword)
+	filesPool, err := mainDB.open(ctx, "files", filesPassword)
 	if err != nil {
 		return err
 	}
 	defer filesPool.Close()
-	queuePool, err := mainDB.open(ctx, "fila", queuePassword)
+	queuePool, err := mainDB.open(ctx, "queue", queuePassword)
 	if err != nil {
 		return err
 	}
 	defer queuePool.Close()
-	auditPool, err := auditDB.open(ctx, "auditoria_app", auditPassword)
+	auditPool, err := auditDB.open(ctx, "audit_app", auditPassword)
 	if err != nil {
 		return err
 	}
@@ -95,7 +95,7 @@ func run(log *slog.Logger) error {
 	tasks := queue.NewRabbit(queuePool, broker, store, auditLog, log)
 
 	gin.SetMode(gin.ReleaseMode)
-	router, err := cliente.New(cliente.Deps{
+	router, err := customer.New(customer.Deps{
 		Verifier:       auth.NewVerifier(pub.(ed25519.PublicKey), time.Now),
 		Files:          files.NewPostgresRepo(filesPool),
 		Store:          store,
@@ -109,8 +109,8 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	// Os tempos cobrem um upload de 100 MB numa conexão lenta, sem deixar
-	// conexões presas para sempre.
+	// The timeouts cover a 100 MB upload over a slow connection without leaving
+	// connections stuck forever.
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           router,
@@ -123,14 +123,14 @@ func run(log *slog.Logger) error {
 	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
 	go func() { errc <- tasks.ConsumeResults(ctx) }()
-	log.Info("API no ar", "addr", addr)
+	log.Info("API up", "addr", addr)
 
-	// Sem o RabbitMQ a API sai, e o Docker a reinicia quando ele voltar.
+	// Without RabbitMQ the API exits, and Docker restarts it once it is back.
 	select {
 	case err := <-errc:
 		return err
 	case err := <-closed:
-		return fmt.Errorf("conexão com o RabbitMQ caiu: %v", err)
+		return fmt.Errorf("connection to RabbitMQ dropped: %v", err)
 	case <-ctx.Done():
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -145,8 +145,8 @@ type dbConfig struct {
 	host, name string
 }
 
-// open conecta com o papel do módulo. A rede interna não tem TLS no ambiente
-// local (seção 5 do backlog).
+// open connects with the module's role. The internal network has no TLS in
+// the local environment (backlog section 5).
 func (d dbConfig) open(ctx context.Context, user string, password []byte) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s dbname=%s user=%s sslmode=disable", d.host, d.name, user))
 	if err != nil {
@@ -156,13 +156,13 @@ func (d dbConfig) open(ctx context.Context, user string, password []byte) (*pgxp
 	cfg.MaxConns = 10
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("banco %s: %w", d.name, err)
+		return nil, fmt.Errorf("database %s: %w", d.name, err)
 	}
 	pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("banco %s com o papel %s: %w", d.name, user, err)
+		return nil, fmt.Errorf("database %s with role %s: %w", d.name, user, err)
 	}
 	return pool, nil
 }

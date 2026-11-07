@@ -13,8 +13,8 @@ import (
 	"nuggetmachine/internal/files/filesdb"
 )
 
-// PostgresRepo usa o papel "arquivos", que só tem SELECT e INSERT na tabela
-// arquivos (E3.1). As queries ficam em queries.sql.
+// PostgresRepo uses the "files" role, which only has SELECT and INSERT on the
+// files table (E3.1). The queries live in queries.sql.
 type PostgresRepo struct {
 	q *filesdb.Queries
 }
@@ -23,19 +23,19 @@ func NewPostgresRepo(db filesdb.DBTX) *PostgresRepo { return &PostgresRepo{q: fi
 
 func (r *PostgresRepo) Save(ctx context.Context, f File) error {
 	return r.q.InsertFile(ctx, filesdb.InsertFileParams{
-		ID:      uuid.UUID(f.ID),
-		Dono:    uuid.UUID(f.Owner),
-		Tamanho: f.Size,
-		Sha256:  f.SHA256[:],
+		ID:        uuid.UUID(f.ID),
+		OwnerID:   uuid.UUID(f.Owner),
+		SizeBytes: f.Size,
+		Sha256:    f.SHA256[:],
 	})
 }
 
-// FindForUser filtra pelo dono na própria consulta (D01) e ainda passa pela
-// autorização central, que também confere o perfil.
+// FindForUser filters by owner in the query itself (D01) and still goes
+// through the central authorization, which also checks the role.
 func (r *PostgresRepo) FindForUser(ctx context.Context, u auth.User, id FileID) (File, error) {
 	row, err := r.q.FindFileForOwner(ctx, filesdb.FindFileForOwnerParams{
-		ID:   uuid.UUID(id),
-		Dono: uuid.UUID(u.ID()),
+		ID:      uuid.UUID(id),
+		OwnerID: uuid.UUID(u.ID()),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return File{}, ErrNotFound
@@ -43,12 +43,12 @@ func (r *PostgresRepo) FindForUser(ctx context.Context, u auth.User, id FileID) 
 	if err != nil {
 		return File{}, err
 	}
-	f := File{ID: id, Owner: auth.UserID(row.Dono), Size: row.Tamanho}
+	f := File{ID: id, Owner: auth.UserID(row.OwnerID), Size: row.SizeBytes}
 	if authz.CanReadFile(u, f.Owner) != nil {
 		return File{}, ErrNotFound
 	}
 	if len(row.Sha256) != len(f.SHA256) {
-		return File{}, fmt.Errorf("arquivo %s com hash de %d bytes", id, len(row.Sha256))
+		return File{}, fmt.Errorf("file %s has a %d-byte hash", id, len(row.Sha256))
 	}
 	copy(f.SHA256[:], row.Sha256)
 	return f, nil

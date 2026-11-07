@@ -1,9 +1,9 @@
 -- name: InsertFile :exec
-INSERT INTO arquivos (id, dono, tamanho, sha256)
-VALUES (@id, @dono, @tamanho, @sha256);
+INSERT INTO files (id, owner_id, size_bytes, sha256)
+VALUES (@id, @owner_id, @size_bytes, @sha256);
 
--- Não existe busca só por ID: o dono faz parte da consulta (D01).
+-- There is no lookup by ID alone: the owner is part of the query (D01).
 -- name: FindFileForOwner :one
-SELECT dono, tamanho, sha256
-FROM arquivos
-WHERE id = @id AND dono = @dono;
+SELECT owner_id, size_bytes, sha256
+FROM files
+WHERE id = @id AND owner_id = @owner_id;

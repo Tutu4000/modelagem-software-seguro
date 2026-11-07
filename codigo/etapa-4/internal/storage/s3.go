@@ -15,17 +15,17 @@ type S3Config struct {
 	Region    string
 	AccessKey string
 	SecretKey string
-	// Endpoint é o endereço na rede interna, usado para gravar e para as URLs
-	// entregues ao worker.
+	// Endpoint is the address on the internal network, used for writes and for
+	// the URLs handed to the worker.
 	Endpoint string
-	// PublicEndpoint é o endereço que o cliente alcança, pelo nginx. A
-	// assinatura SigV4 cobre o host, então a URL do cliente precisa ser
-	// assinada com ele.
+	// PublicEndpoint is the address the client reaches, through nginx. The
+	// SigV4 signature covers the host, so the client's URL must be signed with
+	// it.
 	PublicEndpoint string
 }
 
-// S3 guarda os arquivos num bucket privado do Garage. Só se lê por URL
-// pré-assinada (C03, E3.3).
+// S3 keeps the files in a private Garage bucket. They can only be read through
+// a presigned URL (C03, E3.3).
 type S3 struct {
 	bucket   string
 	client   *s3.Client
@@ -40,8 +40,8 @@ func NewS3(c S3Config) *S3 {
 			BaseEndpoint: aws.String(endpoint),
 			UsePathStyle: true,
 			Credentials:  credentials.NewStaticCredentialsProvider(c.AccessKey, c.SecretKey, ""),
-			// O Garage não precisa das somas de verificação extras que o SDK
-			// envia por padrão.
+			// Garage does not need the extra checksums the SDK sends by
+			// default.
 			RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
 			ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
 		})
@@ -66,13 +66,13 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 	return err
 }
 
-// PresignGet gera a URL do cliente, pelo endpoint público.
+// PresignGet generates the client's URL, through the public endpoint.
 func (s *S3) PresignGet(key string, ttl time.Duration) (string, error) {
 	return presign(s.public, s.bucket, key, ttl)
 }
 
-// PresignInternal gera a URL do worker, que só alcança a rede de
-// processamento e não tem chave do bucket (E4.2).
+// PresignInternal generates the worker's URL. The worker only reaches the
+// processing network and has no bucket key (E4.2).
 func (s *S3) PresignInternal(key string, ttl time.Duration) (string, error) {
 	return presign(s.internal, s.bucket, key, ttl)
 }

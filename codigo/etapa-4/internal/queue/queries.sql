@@ -1,40 +1,40 @@
--- Serializa as decisões de cota de uma conta entre as réplicas da API, até o
--- fim da transação.
+-- Serializes the quota decisions of one account across all API replicas,
+-- until the end of the transaction.
 -- name: LockOwner :exec
-SELECT pg_advisory_xact_lock(hashtextextended(@dono::text, 0));
+SELECT pg_advisory_xact_lock(hashtextextended(@owner_id::text, 0));
 
 -- name: CountProcessing :one
 SELECT count(*)
-FROM tarefas
-WHERE dono = @dono AND status = 'processando';
+FROM tasks
+WHERE owner_id = @owner_id AND status = 'processing';
 
 -- name: InsertTask :exec
-INSERT INTO tarefas (id, arquivo_id, dono, sha256, triangulos, status)
-VALUES (@id, @arquivo_id, @dono, @sha256, @triangulos, @status);
+INSERT INTO tasks (id, file_id, owner_id, sha256, triangles, status)
+VALUES (@id, @file_id, @owner_id, @sha256, @triangles, @status);
 
 -- name: TaskStatusByFile :one
-SELECT status, volume_mm3, caixa_mm
-FROM tarefas
-WHERE arquivo_id = @arquivo_id;
+SELECT status, volume_mm3, bbox_mm
+FROM tasks
+WHERE file_id = @file_id;
 
 -- name: TaskOwner :one
-SELECT dono FROM tarefas WHERE id = @id;
+SELECT owner_id FROM tasks WHERE id = @id;
 
--- Só uma tarefa em processamento muda de estado: um resultado repetido não
--- afeta nenhuma linha (E4.6).
+-- Only a task that is processing changes state: a repeated result affects no
+-- rows (E4.6).
 -- name: FinishTask :execrows
-UPDATE tarefas
-SET status = @status, volume_mm3 = @volume_mm3, caixa_mm = @caixa_mm, atualizado_em = now()
-WHERE id = @id AND status = 'processando';
+UPDATE tasks
+SET status = @status, volume_mm3 = @volume_mm3, bbox_mm = @bbox_mm, updated_at = now()
+WHERE id = @id AND status = 'processing';
 
 -- name: OldestWaiting :one
-SELECT id, arquivo_id, sha256
-FROM tarefas
-WHERE dono = @dono AND status = 'aguardando'
-ORDER BY criado_em
+SELECT id, file_id, sha256
+FROM tasks
+WHERE owner_id = @owner_id AND status = 'waiting'
+ORDER BY created_at
 LIMIT 1;
 
 -- name: StartTask :exec
-UPDATE tarefas
-SET status = 'processando', atualizado_em = now()
+UPDATE tasks
+SET status = 'processing', updated_at = now()
 WHERE id = @id;

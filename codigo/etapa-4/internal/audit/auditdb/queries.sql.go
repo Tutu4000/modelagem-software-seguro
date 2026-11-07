@@ -11,31 +11,31 @@ import (
 )
 
 const insertEvent = `-- name: InsertEvent :exec
-INSERT INTO eventos (horario, evento, autor, operacao, alvo, resultado, motivo, origem)
+INSERT INTO events (occurred_at, name, actor, action, target, result, reason, origin)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 `
 
 type InsertEventParams struct {
-	Horario   time.Time
-	Evento    string
-	Autor     string
-	Operacao  string
-	Alvo      string
-	Resultado string
-	Motivo    string
-	Origem    string
+	OccurredAt time.Time
+	Name       string
+	Actor      string
+	Action     string
+	Target     string
+	Result     string
+	Reason     string
+	Origin     string
 }
 
 func (q *Queries) InsertEvent(ctx context.Context, arg InsertEventParams) error {
 	_, err := q.db.Exec(ctx, insertEvent,
-		arg.Horario,
-		arg.Evento,
-		arg.Autor,
-		arg.Operacao,
-		arg.Alvo,
-		arg.Resultado,
-		arg.Motivo,
-		arg.Origem,
+		arg.OccurredAt,
+		arg.Name,
+		arg.Actor,
+		arg.Action,
+		arg.Target,
+		arg.Result,
+		arg.Reason,
+		arg.Origin,
 	)
 	return err
 }

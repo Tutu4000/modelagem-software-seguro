@@ -1,5 +1,5 @@
-// Comando worker consome as tarefas e processa os STL. Roda na rede de
-// processamento, sem banco, sem internet e sem chave do armazenamento (FC3).
+// Command worker consumes the tasks and processes the STLs. It runs on the
+// processing network, with no database, no internet and no storage key (FC3).
 package main
 
 import (
@@ -24,9 +24,9 @@ import (
 	"nuggetmachine/internal/stl"
 )
 
-// errRetry marca falhas passageiras: a tarefa volta para a fila, até o limite
-// de entregas da fila quorum (E4.5).
-var errRetry = errors.New("falha passageira")
+// errRetry marks transient failures: the task goes back to the queue, up to
+// the quorum queue's delivery limit (E4.5).
+var errRetry = errors.New("transient failure")
 
 type worker struct {
 	broker  *queue.Broker
@@ -38,7 +38,7 @@ type worker struct {
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	if err := run(log); err != nil {
-		log.Error("o worker parou", "error", err)
+		log.Error("the worker stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -70,17 +70,17 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	w := worker{broker: broker, http: &http.Client{Timeout: timeout}, timeout: timeout, log: log}
-	log.Info("worker no ar")
+	log.Info("worker up")
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
 		case err := <-closed:
-			return fmt.Errorf("conexão com o RabbitMQ caiu: %v", err)
+			return fmt.Errorf("connection to RabbitMQ dropped: %v", err)
 		case d, ok := <-deliveries:
 			if !ok {
-				return errors.New("o canal de tarefas fechou")
+				return errors.New("the tasks channel closed")
 			}
 			w.handle(ctx, d)
 		}
@@ -90,11 +90,11 @@ func run(log *slog.Logger) error {
 func (w worker) handle(ctx context.Context, d amqp.Delivery) {
 	var m queue.TaskMessage
 	if err := json.Unmarshal(d.Body, &m); err != nil {
-		w.log.Error("tarefa ilegível enviada para a fila de falhas", "error", err)
+		w.log.Error("unreadable task sent to the failed queue", "error", err)
 		_ = d.Reject(false)
 		return
 	}
-	log := w.log.With("tarefa", m.TaskID, "arquivo", m.FileID)
+	log := w.log.With("task", m.TaskID, "file", m.FileID)
 
 	taskCtx, cancel := context.WithTimeout(ctx, w.timeout)
 	res, err := w.process(taskCtx, m)
@@ -103,25 +103,25 @@ func (w worker) handle(ctx context.Context, d amqp.Delivery) {
 	switch {
 	case err == nil:
 		err = w.broker.Publish(ctx, queue.ExchangeResults, queue.ResultMessage{
-			TaskID: m.TaskID, Status: queue.StatusDone, VolumeMM3: res.VolumeMM3, BoxMM: res.BoxMM,
+			TaskID: m.TaskID, Status: queue.StatusDone, VolumeMM3: res.VolumeMM3, BBoxMM: res.BBoxMM,
 		})
 		if err != nil {
-			log.Error("falha ao publicar o resultado", "error", err)
+			log.Error("failed to publish the result", "error", err)
 			_ = d.Nack(false, true)
 			return
 		}
-		log.Info("tarefa concluída", "volume_mm3", res.VolumeMM3)
+		log.Info("task done", "volume_mm3", res.VolumeMM3)
 		_ = d.Ack(false)
 	case errors.Is(err, errRetry):
-		log.Warn("tarefa devolvida à fila", "error", err)
+		log.Warn("task returned to the queue", "error", err)
 		_ = d.Nack(false, true)
 	default:
-		// Falha definitiva: a API fica sabendo, e a mensagem vai para a fila de
-		// falhas para análise.
-		log.Error("tarefa falhou", "error", err)
+		// Permanent failure: the API is told, and the message goes to the failed
+		// queue for analysis.
+		log.Error("task failed", "error", err)
 		err := w.broker.Publish(ctx, queue.ExchangeResults, queue.ResultMessage{TaskID: m.TaskID, Status: queue.StatusFailed})
 		if err != nil {
-			log.Error("falha ao publicar a falha", "error", err)
+			log.Error("failed to publish the failure", "error", err)
 			_ = d.Nack(false, true)
 			return
 		}
@@ -132,7 +132,7 @@ func (w worker) handle(ctx context.Context, d amqp.Delivery) {
 func (w worker) process(ctx context.Context, m queue.TaskMessage) (processing.Result, error) {
 	var want [32]byte
 	if n, err := hex.Decode(want[:], []byte(m.SHA256)); err != nil || n != len(want) {
-		return processing.Result{}, fmt.Errorf("sha256 inválido na mensagem")
+		return processing.Result{}, fmt.Errorf("invalid sha256 in the message")
 	}
 	data, err := w.download(ctx, m.URL)
 	if err != nil {
@@ -141,8 +141,8 @@ func (w worker) process(ctx context.Context, m queue.TaskMessage) (processing.Re
 	return processing.Analyze(ctx, data, want)
 }
 
-// download lê no máximo o limite do upload. Um 4xx, como uma URL vencida, é
-// definitivo. O prazo da tarefa vencido também: ela é encerrada (E4.4).
+// download reads at most the upload limit. A 4xx, such as an expired URL, is
+// permanent. So is an expired task deadline: the task is terminated (E4.4).
 func (w worker) download(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -158,9 +158,9 @@ func (w worker) download(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 500:
-		return nil, fmt.Errorf("%w: armazenamento respondeu %s", errRetry, resp.Status)
+		return nil, fmt.Errorf("%w: storage answered %s", errRetry, resp.Status)
 	case resp.StatusCode != http.StatusOK:
-		return nil, fmt.Errorf("armazenamento respondeu %s", resp.Status)
+		return nil, fmt.Errorf("storage answered %s", resp.Status)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, stl.MaxSize+1))
 	if err != nil {
@@ -170,7 +170,7 @@ func (w worker) download(ctx context.Context, url string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: %v", errRetry, err)
 	}
 	if len(data) > stl.MaxSize {
-		return nil, fmt.Errorf("arquivo acima de %d bytes", stl.MaxSize)
+		return nil, fmt.Errorf("file above %d bytes", stl.MaxSize)
 	}
 	return data, nil
 }

@@ -1,21 +1,21 @@
 openapi: 3.0.3
 info:
-  title: nugget-machine — API pública
-  version: 0.2.0
+  title: nugget-machine — public API
+  version: 0.3.0
   description: >
-    Rotas do cliente. As rotas do painel ficam em outro binário e não existem
-    aqui. Os erros seguem o Problem Details (RFC 9457), sem a causa interna.
+    Customer routes. The panel routes live in another binary and do not exist
+    here. Errors follow Problem Details (RFC 9457), without the internal cause.
 servers:
   - url: https://localhost
 security:
   - bearerAuth: []
 paths:
-  /api/v1/arquivos:
+  /api/v1/files:
     post:
-      summary: Envia um STL binário
+      summary: Upload a binary STL
       description: >
-        O arquivo é validado antes de ser gravado (RS03): até 100 MB, estrutura
-        de STL binário e até 2 milhões de triângulos.
+        The file is validated before it is stored (RS03): up to 100 MB, binary
+        STL structure and up to 2 million triangles.
       requestBody:
         required: true
         content:
@@ -25,11 +25,11 @@ paths:
               format: binary
       responses:
         "202":
-          description: Arquivo aceito e tarefa de processamento criada
+          description: File accepted and processing task created
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/UploadAceito"
+                $ref: "#/components/schemas/UploadAccepted"
         "401":
           $ref: "#/components/responses/Problem"
         "413":
@@ -37,34 +37,34 @@ paths:
         "422":
           $ref: "#/components/responses/Problem"
         "429":
-          description: Limite de requisições excedido
-  /api/v1/arquivos/{id}:
+          description: Rate limit exceeded
+  /api/v1/files/{id}:
     get:
-      summary: Estado do processamento de um arquivo do próprio cliente
+      summary: Processing status of one of the customer's own files
       parameters:
-        - $ref: "#/components/parameters/ArquivoID"
+        - $ref: "#/components/parameters/FileID"
       responses:
         "200":
-          description: Estado da tarefa e, quando concluída, o resultado
+          description: Task status and, once done, the result
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/EstadoArquivo"
+                $ref: "#/components/schemas/FileStatus"
         "401":
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
-  /api/v1/arquivos/{id}/download:
+  /api/v1/files/{id}/download:
     get:
-      summary: URL pré-assinada para baixar um arquivo do próprio cliente
+      summary: Presigned URL to download one of the customer's own files
       description: >
-        Só o dono recebe a URL (RS01). Arquivo alheio e arquivo inexistente
-        recebem a mesma resposta 403. A URL vale por 5 minutos.
+        Only the owner gets the URL (RS01). Someone else's file and a missing
+        file get the same 403 response. The URL is valid for 5 minutes.
       parameters:
-        - $ref: "#/components/parameters/ArquivoID"
+        - $ref: "#/components/parameters/FileID"
       responses:
         "200":
-          description: URL pré-assinada
+          description: Presigned URL
           content:
             application/json:
               schema:
@@ -85,7 +85,7 @@ components:
       scheme: bearer
       bearerFormat: JWT
   parameters:
-    ArquivoID:
+    FileID:
       name: id
       in: path
       required: true
@@ -94,13 +94,13 @@ components:
         format: uuid
   responses:
     Problem:
-      description: Erro no formato Problem Details
+      description: Error in the Problem Details format
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
-    UploadAceito:
+    UploadAccepted:
       type: object
       required: [id, status]
       properties:
@@ -109,7 +109,7 @@ components:
           format: uuid
         status:
           type: string
-    EstadoArquivo:
+    FileStatus:
       type: object
       required: [id, status]
       properties:
@@ -118,13 +118,13 @@ components:
           format: uuid
         status:
           type: string
-          enum: [aguardando, processando, concluida, falhou]
-        resultado:
+          enum: [waiting, processing, done, failed]
+        result:
           type: object
           properties:
             volume_mm3:
               type: number
-            caixa_mm:
+            bbox_mm:
               type: array
               items:
                 type: number

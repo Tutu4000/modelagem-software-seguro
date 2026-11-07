@@ -31,8 +31,8 @@ O certificado é de uma CA local. Para o `curl`, use `--cacert secrets/tls_ca.pe
 ```sh
 TOKEN=$(just token a)
 curl --cacert secrets/tls_ca.pem -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: model/stl" --data-binary @peca.stl https://localhost/api/v1/arquivos
-curl --cacert secrets/tls_ca.pem -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/arquivos/<id>
+     -H "Content-Type: model/stl" --data-binary @peca.stl https://localhost/api/v1/files
+curl --cacert secrets/tls_ca.pem -H "Authorization: Bearer $TOKEN" https://localhost/api/v1/files/<id>
 ```
 
 O contrato das rotas está no [openapi.yaml](openapi.yaml).
@@ -41,14 +41,16 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 
 |Serviço|Rede|Papel|
 |-|-|-|
-|`nginx`|`publica` e `interna`|Único com portas publicadas. Faz o TLS, limita requisições por IP (429) e o corpo a 100 MB (413), e distribui entre as réplicas da API|
-|`api`|`interna`|Rotas do cliente. Valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados|
-|`worker`|`processamento`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
-|`postgres`|`interna`|Banco principal. Os papéis `arquivos` e `fila` só alcançam as próprias tabelas|
-|`postgres-auditoria`|`interna`|Eventos de auditoria. O papel da aplicação só tem `INSERT`|
-|`rabbitmq`|`interna` e `processamento`|Filas quorum `tarefas` (até 3 entregas), `tarefas.falhas` e `resultados`. Os usuários `api` e `worker` não declaram nada|
-|`garage`|`interna` e `processamento`|Bucket privado `arquivos`. Só se lê com URL pré-assinada|
-|`garage-init`|`interna`|Executa uma vez e prepara o layout, o bucket e a chave da API|
+|`nginx`|`public` e `internal`|Único com portas publicadas. Faz o TLS, limita requisições por IP (429) e o corpo a 100 MB (413), e distribui entre as réplicas da API|
+|`api`|`internal`|Rotas do cliente. Valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados|
+|`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
+|`postgres`|`internal`|Banco principal (`nugget`). Os papéis `files` e `queue` só alcançam as próprias tabelas, `files` e `tasks`|
+|`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|
+|`rabbitmq`|`internal` e `processing`|Filas quorum `tasks` (até 3 entregas), `tasks.failed` e `results`. Os usuários `api` e `worker` não declaram nada|
+|`garage`|`internal` e `processing`|Bucket privado `files`. Só se lê com URL pré-assinada|
+|`garage-init`|`internal`|Executa uma vez e prepara o layout, o bucket e a chave da API|
+
+Os estados de uma tarefa são `waiting`, `processing`, `done` e `failed`.
 
 Os binários Go rodam em imagens distroless, como não root, com sistema de arquivos só de leitura, sem capabilities, com `no-new-privileges` e com limites de CPU, memória e processos.
 

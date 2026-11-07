@@ -1,5 +1,5 @@
-// Package queue é o módulo fila. O Rabbit usa o Postgres e o RabbitMQ. O
-// Memory guarda as tarefas em memória para os testes.
+// Package queue is the queue module. Rabbit uses Postgres and RabbitMQ. Memory
+// keeps the tasks in memory for the tests.
 package queue
 
 import (
@@ -44,13 +44,13 @@ func (q *Memory) Tasks() []Task {
 	return slices.Clone(q.tasks)
 }
 
-// StatusOf vê toda tarefa em memória como em processamento: não há worker.
+// StatusOf treats every in-memory task as processing: there is no worker.
 func (q *Memory) StatusOf(_ context.Context, id files.FileID) (files.TaskStatus, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	for _, t := range q.tasks {
 		if t.FileID == id {
-			return files.TaskStatus{State: "processando"}, nil
+			return files.TaskStatus{State: StatusProcessing}, nil
 		}
 	}
 	return files.TaskStatus{}, files.ErrNotFound

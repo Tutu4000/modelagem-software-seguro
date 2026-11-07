@@ -1,9 +1,10 @@
-// Comando gensecrets gera os segredos do ambiente local em secrets/, que fica
-// fora do git (seção 3.4, E2.4). Não sobrescreve o que já existe sem -force.
+// Command gensecrets generates the local environment's secrets in secrets/,
+// which stays out of git (section 3.4, E2.4). It does not overwrite existing
+// secrets without -force.
 //
-// Os arquivos ficam legíveis por todos (0644) dentro de um diretório 0700: o
-// diretório barra os outros usuários da máquina, e os contêineres, que rodam
-// com outros UIDs e recebem cada arquivo montado isoladamente, conseguem ler.
+// The files are world-readable (0644) inside a 0700 directory: the directory
+// keeps the machine's other users out, while the containers, which run with
+// other UIDs and get each file mounted on its own, can read them.
 package main
 
 import (
@@ -36,24 +37,24 @@ type generator struct {
 }
 
 func main() {
-	dir := flag.String("dir", "secrets", "diretório de saída")
-	force := flag.Bool("force", false, "regera os segredos que já existem")
+	dir := flag.String("dir", "secrets", "output directory")
+	force := flag.Bool("force", false, "regenerate secrets that already exist")
 	flag.Parse()
 
 	g := generator{dir: *dir, force: *force}
 	if err := os.MkdirAll(g.dir, 0o700); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(g.dir, 0o700); err != nil { // #nosec G302 -- um diretório precisa do x para ser aberto
+	if err := os.Chmod(g.dir, 0o700); err != nil { // #nosec G302 -- a directory needs x to be opened
 		log.Fatal(err)
 	}
 
 	for _, name := range []string{
 		"postgres_password",
-		"postgres_auditoria_password",
-		"db_arquivos_password",
-		"db_fila_password",
-		"db_auditoria_password",
+		"postgres_audit_password",
+		"db_files_password",
+		"db_queue_password",
+		"db_audit_password",
 		"rabbitmq_api_password",
 		"rabbitmq_worker_password",
 		"garage_admin_token",
@@ -65,8 +66,8 @@ func main() {
 	g.once([]string{"garage_rpc_secret"}, func() map[string][]byte {
 		return map[string][]byte{"garage_rpc_secret": randomHex(32)}
 	})
-	// O Garage só importa chaves no próprio formato: GK + 12 bytes em hex e um
-	// segredo de 32 bytes em hex.
+	// Garage only imports keys in its own format: GK + 12 bytes in hex and a
+	// 32-byte secret in hex.
 	g.once([]string{"s3_access_key_id", "s3_secret_access_key"}, func() map[string][]byte {
 		return map[string][]byte{
 			"s3_access_key_id":     append([]byte("GK"), randomHex(12)...),
@@ -76,19 +77,19 @@ func main() {
 	g.once([]string{"devtoken_ed25519.pem", "auth_ed25519.pub.pem"}, ed25519Pair)
 	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, tlsChain)
 
-	// Derivado das senhas: é sempre regerado, para nunca ficar defasado.
+	// Derived from the passwords: always regenerated, so it never goes stale.
 	users, err := rabbitUsers(g.read("rabbitmq_api_password"), g.read("rabbitmq_worker_password"))
 	if err != nil {
 		log.Fatal(err)
 	}
-	g.write("rabbitmq_usuarios.json", users)
+	g.write("rabbitmq_users.json", users)
 }
 
-// once gera um grupo de arquivos que dependem um do outro, como as duas metades
-// de uma chave, só se algum deles faltar.
+// once generates a group of files that depend on each other, such as the two
+// halves of a key pair, only when one of them is missing.
 func (g generator) once(names []string, gen func() map[string][]byte) {
 	if !g.force && g.allExist(names) {
-		fmt.Printf("mantido  %s\n", strings.Join(names, ", "))
+		fmt.Printf("kept     %s\n", strings.Join(names, ", "))
 		return
 	}
 	for name, data := range gen() {
@@ -107,18 +108,18 @@ func (g generator) allExist(names []string) bool {
 
 func (g generator) write(name string, data []byte) {
 	path := filepath.Join(g.dir, name)
-	// #nosec G306 G302 -- 0644 dentro de um diretório 0700: ver o comentário do pacote
+	// #nosec G306 G302 -- 0644 inside a 0700 directory: see the package comment
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(path, 0o644); err != nil { // #nosec G302 -- idem
+	if err := os.Chmod(path, 0o644); err != nil { // #nosec G302 -- same as above
 		log.Fatal(err)
 	}
-	fmt.Printf("gerado   %s\n", name)
+	fmt.Printf("created  %s\n", name)
 }
 
 func (g generator) read(name string) []byte {
-	data, err := os.ReadFile(filepath.Join(g.dir, name)) // #nosec G304 -- nomes fixos dentro do diretório de saída
+	data, err := os.ReadFile(filepath.Join(g.dir, name)) // #nosec G304 -- fixed names inside the output directory
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -133,8 +134,8 @@ func randomBytes(n int) []byte {
 	return b
 }
 
-// randomText usa base64 URL, sem caracteres que precisem de escape em URLs de
-// conexão ou em SQL.
+// randomText uses URL-safe base64, with no characters that need escaping in
+// connection URLs or in SQL.
 func randomText(n int) []byte {
 	return []byte(base64.RawURLEncoding.EncodeToString(randomBytes(n)))
 }
@@ -162,14 +163,14 @@ func ed25519Pair() map[string][]byte {
 	}
 }
 
-// tlsChain gera uma CA local e o certificado do nginx. A chave da CA é
-// descartada: para renovar, roda-se de novo com -force.
+// tlsChain generates a local CA and the nginx certificate. The CA key is
+// discarded: to renew, run again with -force.
 func tlsChain() map[string][]byte {
 	now := time.Now()
 	caKey := newECKey()
 	ca := &x509.Certificate{
 		SerialNumber:          serial(),
-		Subject:               pkix.Name{CommonName: "nugget-machine CA local"},
+		Subject:               pkix.Name{CommonName: "nugget-machine local CA"},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(1, 0, 0),
 		KeyUsage:              x509.KeyUsageCertSign,
@@ -224,13 +225,13 @@ func serial() *big.Int {
 	return n
 }
 
-// rabbitUsers monta a parte das definições do RabbitMQ que tem segredos. A
-// topologia fica em deploy/rabbitmq. Nenhum dos dois usuários pode declarar ou
-// apagar filas e exchanges (configure "^$"), e cada um só publica e consome o
-// que é dele (E4.1).
+// rabbitUsers builds the part of the RabbitMQ definitions that holds secrets.
+// The topology lives in deploy/rabbitmq. Neither user can declare or delete
+// queues and exchanges (configure "^$"), and each one only publishes and
+// consumes what belongs to it (E4.1).
 func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 	if len(apiPassword) == 0 || len(workerPassword) == 0 {
-		return nil, errors.New("senhas do RabbitMQ vazias")
+		return nil, errors.New("empty RabbitMQ passwords")
 	}
 	type user struct {
 		Name      string   `json:"name"`
@@ -253,14 +254,14 @@ func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 			{"worker", rabbitHash(workerPassword), algorithm, []string{}},
 		},
 		"permissions": []permission{
-			{"api", "/", "^$", "^tarefas$", "^resultados$"},
-			{"worker", "/", "^$", "^resultados$", "^tarefas$"},
+			{"api", "/", "^$", "^tasks$", "^results$"},
+			{"worker", "/", "^$", "^results$", "^tasks$"},
 		},
 	}, "", "  ")
 }
 
-// rabbitHash segue o formato do RabbitMQ: base64(salt + SHA-256(salt + senha)),
-// com um salt de 4 bytes.
+// rabbitHash follows the RabbitMQ format: base64(salt + SHA-256(salt +
+// password)), with a 4-byte salt.
 func rabbitHash(password []byte) string {
 	salt := randomBytes(4)
 	sum := sha256.Sum256(append(append([]byte{}, salt...), password...))

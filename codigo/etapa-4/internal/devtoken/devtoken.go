@@ -1,5 +1,5 @@
-// Package devtoken emite tokens de teste no lugar do IdP. Só é usado pelas
-// ferramentas de desenvolvimento, nunca pela API.
+// Package devtoken issues test tokens in place of the IdP. Only development
+// tools use it, never the API.
 package devtoken
 
 import (
@@ -12,26 +12,26 @@ import (
 	"github.com/google/uuid"
 )
 
-// Clientes fictícios com IDs fixos, para que o seed, os testes e o contexto do
-// ZAP falem dos mesmos usuários.
+// Fictitious customers with fixed IDs, so that the seed, the tests and the ZAP
+// context all refer to the same users.
 var (
-	ClienteA = uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01")
-	ClienteB = uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02")
+	CustomerA = uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01")
+	CustomerB = uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02")
 )
 
-// Resolve aceita "a", "b" ou um UUID.
+// Resolve accepts "a", "b" or a UUID.
 func Resolve(sub string) (uuid.UUID, error) {
 	switch sub {
 	case "a":
-		return ClienteA, nil
+		return CustomerA, nil
 	case "b":
-		return ClienteB, nil
+		return CustomerB, nil
 	}
 	return uuid.Parse(sub)
 }
 
 func LoadKey(path string) (ed25519.PrivateKey, error) {
-	data, err := os.ReadFile(path) // #nosec G304 -- caminho dado por quem roda a ferramenta
+	data, err := os.ReadFile(path) // #nosec G304 -- path given by whoever runs the tool
 	if err != nil {
 		return nil, err
 	}
@@ -42,12 +42,12 @@ func LoadKey(path string) (ed25519.PrivateKey, error) {
 	return key.(ed25519.PrivateKey), nil
 }
 
-// Sign tem as mesmas claims que o auth.Verifier exige.
+// Sign uses the same claims that auth.Verifier requires.
 func Sign(key ed25519.PrivateKey, sub uuid.UUID, ttl time.Duration) (string, error) {
 	now := time.Now()
 	return jwt.NewWithClaims(jwt.SigningMethodEdDSA, jwt.MapClaims{
 		"sub":  sub.String(),
-		"role": "cliente",
+		"role": "customer",
 		"iat":  now.Unix(),
 		"exp":  now.Add(ttl).Unix(),
 	}).SignedString(key)

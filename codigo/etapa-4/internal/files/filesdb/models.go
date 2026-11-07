@@ -10,23 +10,23 @@ import (
 	"github.com/google/uuid"
 )
 
-type Arquivo struct {
-	ID       uuid.UUID
-	Dono     uuid.UUID
-	Tamanho  int64
-	Sha256   []byte
-	CriadoEm time.Time
+type File struct {
+	ID        uuid.UUID
+	OwnerID   uuid.UUID
+	SizeBytes int64
+	Sha256    []byte
+	CreatedAt time.Time
 }
 
-type Tarefa struct {
-	ID           uuid.UUID
-	ArquivoID    uuid.UUID
-	Dono         uuid.UUID
-	Sha256       []byte
-	Triangulos   int64
-	Status       string
-	VolumeMm3    *float64
-	CaixaMm      []float64
-	CriadoEm     time.Time
-	AtualizadoEm time.Time
+type Task struct {
+	ID        uuid.UUID
+	FileID    uuid.UUID
+	OwnerID   uuid.UUID
+	Sha256    []byte
+	Triangles int64
+	Status    string
+	VolumeMm3 *float64
+	BboxMm    []float64
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }

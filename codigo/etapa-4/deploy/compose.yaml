@@ -1,23 +1,23 @@
-# Ambiente local da arquitetura da Etapa 3. As redes reproduzem as fronteiras
-# de confiança (seção 2 do backlog). Segredos: `just secrets` antes de subir.
+# Local environment for the Stage 3 architecture. The networks reproduce the
+# trust boundaries (backlog section 2). Secrets: run `just secrets` first.
 
 name: nuggetmachine
 
-# Todos os contêineres: sem ganho de privilégio e com limites de recurso (C11).
-x-limites: &limites
+# Every container: no privilege escalation and resource limits (C11).
+x-limits: &limits
   security_opt: ["no-new-privileges:true"]
   restart: unless-stopped
 
-# Binários Go: além disso, sistema de arquivos só de leitura e sem capabilities.
-x-endurecido: &endurecido
-  <<: *limites
+# Go binaries: also a read-only filesystem and no capabilities.
+x-hardened: &hardened
+  <<: *limits
   read_only: true
   cap_drop: [ALL]
   tmpfs: ["/tmp:size=16m"]
 
 services:
   nginx:
-    <<: *endurecido
+    <<: *hardened
     image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
     ports: ["443:8443", "8443:9443"]
     volumes:
@@ -25,8 +25,8 @@ services:
     tmpfs: ["/tmp:size=128m"]
     secrets: [tls_crt, tls_key]
     networks:
-      publica: {}
-      interna:
+      public: {}
+      internal:
         ipv4_address: 172.28.10.10
     depends_on: [api, garage]
     deploy:
@@ -34,7 +34,7 @@ services:
         limits: { cpus: "1", memory: 256m, pids: 128 }
 
   api:
-    <<: *endurecido
+    <<: *hardened
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -43,39 +43,40 @@ services:
       TRUSTED_PROXIES: 172.28.10.10
       AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       DB_HOST: postgres
-      DB_ARQUIVOS_PASSWORD_FILE: /run/secrets/db_arquivos_password
+      DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
+      DB_QUEUE_PASSWORD_FILE: /run/secrets/db_queue_password
+      AUDIT_DB_HOST: postgres-audit
+      DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
       S3_ENDPOINT: http://garage:3900
       S3_PUBLIC_ENDPOINT: https://localhost:8443
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
-      DB_FILA_PASSWORD_FILE: /run/secrets/db_fila_password
       AMQP_HOST: rabbitmq:5672
       AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_api_password
-      AUDIT_DB_HOST: postgres-auditoria
-      DB_AUDITORIA_PASSWORD_FILE: /run/secrets/db_auditoria_password
       GOMEMLIMIT: 400MiB
     secrets:
       - auth_public_key
-      - db_arquivos_password
-      - db_fila_password
-      - db_auditoria_password
+      - db_files_password
+      - db_queue_password
+      - db_audit_password
       - s3_access_key_id
       - s3_secret_access_key
       - rabbitmq_api_password
-    networks: [interna]
+    networks: [internal]
     depends_on:
       garage-init: { condition: service_completed_successfully }
       rabbitmq: { condition: service_healthy }
       postgres: { condition: service_healthy }
-      postgres-auditoria: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
 
-  # Só na rede de processamento: sem banco, Valkey nem internet, e sem chave do
-  # Garage. Lê os arquivos pela URL pré-assinada da mensagem (FC3, E4.2).
+  # Only on the processing network: no database, Valkey or internet, and no
+  # Garage key. It reads the files through the message's presigned URL (FC3,
+  # E4.2).
   worker:
-    <<: *endurecido
+    <<: *hardened
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -84,10 +85,10 @@ services:
       AMQP_HOST: rabbitmq:5672
       AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_worker_password
       TASK_TIMEOUT: 60s
-      # Abaixo do limite do contêiner: o Go devolve memória antes de ser morto.
+      # Below the container limit: Go gives memory back before being killed.
       GOMEMLIMIT: 400MiB
     secrets: [rabbitmq_worker_password]
-    networks: [processamento]
+    networks: [processing]
     depends_on:
       rabbitmq: { condition: service_healthy }
       garage-init: { condition: service_completed_successfully }
@@ -96,17 +97,17 @@ services:
         limits: { cpus: "1", memory: 512m, pids: 128 }
 
   rabbitmq:
-    <<: *limites
+    <<: *limits
     image: rabbitmq:4.3.6-alpine@sha256:6931816af1a943f471c038b278835d36692d55dec769232739296bb91b7de0f5
     hostname: rabbitmq
     volumes:
       - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-nuggetmachine.conf:ro
-      - ./rabbitmq/topologia.json:/etc/rabbitmq/definicoes/02-topologia.json:ro
+      - ./rabbitmq/topology.json:/etc/rabbitmq/definitions/02-topology.json:ro
       - rabbitmq:/var/lib/rabbitmq
     secrets:
-      - source: rabbitmq_usuarios
-        target: /etc/rabbitmq/definicoes/01-usuarios.json
-    networks: [interna, processamento]
+      - source: rabbitmq_users
+        target: /etc/rabbitmq/definitions/01-users.json
+    networks: [internal, processing]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
@@ -116,27 +117,27 @@ services:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 512 }
 
-  # Armazenamento de objetos: bucket privado, lido só por URL pré-assinada
-  # (C03). Está também na rede do worker, que baixa os arquivos por ela.
+  # Object storage: private bucket, read only through presigned URLs (C03). It
+  # is also on the worker's network, which downloads the files through it.
   garage:
-    <<: *limites
+    <<: *limits
     image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
     read_only: true
     cap_drop: [ALL]
     environment:
-      # Os secrets chegam como bind mount com as permissões do arquivo no host.
+      # Secrets arrive as bind mounts with the host file's permissions.
       GARAGE_ALLOW_WORLD_READABLE_SECRETS: "true"
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage:/var/lib/garage
     secrets: [garage_rpc_secret, garage_admin_token]
-    networks: [interna, processamento]
+    networks: [internal, processing]
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
 
   garage-init:
-    <<: *endurecido
+    <<: *hardened
     restart: "no"
     build:
       context: ..
@@ -148,23 +149,23 @@ services:
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
     secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key]
-    networks: [interna]
+    networks: [internal]
     depends_on: [garage]
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 64m, pids: 64 }
 
   postgres:
-    <<: *limites
+    <<: *limits
     image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     environment:
       POSTGRES_DB: nugget
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
     volumes:
-      - principal:/var/lib/postgresql
-      - ../migrations/principal:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_password, db_arquivos_password, db_fila_password]
-    networks: [interna]
+      - main:/var/lib/postgresql
+      - ../migrations/main:/docker-entrypoint-initdb.d:ro
+    secrets: [postgres_password, db_files_password, db_queue_password]
+    networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
       interval: 5s
@@ -174,21 +175,21 @@ services:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
 
-  # Instância separada: quem compromete o banco principal não alcança o
-  # rastro (C18).
-  postgres-auditoria:
-    <<: *limites
+  # Separate instance: whoever compromises the main database cannot reach the
+  # trail (C18).
+  postgres-audit:
+    <<: *limits
     image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
     environment:
-      POSTGRES_DB: auditoria
-      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_auditoria_password
+      POSTGRES_DB: audit
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_audit_password
     volumes:
-      - auditoria:/var/lib/postgresql
-      - ../migrations/auditoria:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_auditoria_password, db_auditoria_password]
-    networks: [interna]
+      - audit:/var/lib/postgresql
+      - ../migrations/audit:/docker-entrypoint-initdb.d:ro
+    secrets: [postgres_audit_password, db_audit_password]
+    networks: [internal]
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "auditoria"]
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -196,13 +197,14 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 256m, pids: 128 }
 
-  # Verificação da Etapa 5 (`just zap`): só sobe com o profile, e fica na rede
-  # pública, como um cliente. O token é de um cliente de teste, com validade
-  # curta, e os relatórios vão para evidencias/etapa-5/relatorios-zap.
+  # Stage 5 verification (`just zap`): only starts with the profile, and sits
+  # on the public network, like a customer. The token belongs to a test
+  # customer with a short validity, and the reports go to
+  # evidencias/etapa-5/relatorios-zap.
   zap:
     image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
     profiles: [zap]
-    networks: [publica]
+    networks: [public]
     depends_on: [nginx]
     volumes:
       - ../openapi.yaml:/zap/api/openapi.yaml:ro
@@ -216,21 +218,21 @@ services:
         -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
 
 networks:
-  # Única rede com portas publicadas, e só o nginx está nela.
-  publica: {}
-  # Sem saída para a internet.
-  interna:
+  # The only network with published ports, and only nginx is on it.
+  public: {}
+  # No way out to the internet.
+  internal:
     internal: true
     ipam:
       config:
         - subnet: 172.28.10.0/24
-  # Worker, fila e armazenamento. O worker não alcança banco nem internet (FC3).
-  processamento:
+  # Worker, queue and storage. The worker reaches no database or internet (FC3).
+  processing:
     internal: true
 
 volumes:
-  principal: {}
-  auditoria: {}
+  main: {}
+  audit: {}
   garage: {}
   rabbitmq: {}
 
@@ -239,14 +241,14 @@ secrets:
   tls_key: { file: ../secrets/tls.key }
   auth_public_key: { file: ../secrets/auth_ed25519.pub.pem }
   postgres_password: { file: ../secrets/postgres_password }
-  postgres_auditoria_password: { file: ../secrets/postgres_auditoria_password }
-  db_arquivos_password: { file: ../secrets/db_arquivos_password }
-  db_fila_password: { file: ../secrets/db_fila_password }
-  db_auditoria_password: { file: ../secrets/db_auditoria_password }
+  postgres_audit_password: { file: ../secrets/postgres_audit_password }
+  db_files_password: { file: ../secrets/db_files_password }
+  db_queue_password: { file: ../secrets/db_queue_password }
+  db_audit_password: { file: ../secrets/db_audit_password }
   garage_rpc_secret: { file: ../secrets/garage_rpc_secret }
   garage_admin_token: { file: ../secrets/garage_admin_token }
   s3_access_key_id: { file: ../secrets/s3_access_key_id }
   s3_secret_access_key: { file: ../secrets/s3_secret_access_key }
   rabbitmq_api_password: { file: ../secrets/rabbitmq_api_password }
   rabbitmq_worker_password: { file: ../secrets/rabbitmq_worker_password }
-  rabbitmq_usuarios: { file: ../secrets/rabbitmq_usuarios.json }
+  rabbitmq_users: { file: ../secrets/rabbitmq_users.json }

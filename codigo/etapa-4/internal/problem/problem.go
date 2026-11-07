@@ -1,5 +1,5 @@
-// Package problem responde erros no formato Problem Details (RFC 9457). A
-// causa interna vai para o log, nunca para o cliente.
+// Package problem answers errors in the Problem Details format (RFC 9457). The
+// internal cause goes to the log, never to the client.
 package problem
 
 import (
@@ -24,12 +24,12 @@ var catalog = map[Code]struct {
 	status int
 	title  string
 }{
-	Unauthenticated:  {http.StatusUnauthorized, "Autenticação necessária"},
-	Forbidden:        {http.StatusForbidden, "Acesso negado"},
-	FileTooLarge:     {http.StatusRequestEntityTooLarge, "Arquivo grande demais"},
-	InvalidSTL:       {http.StatusUnprocessableEntity, "STL inválido"},
-	TooManyTriangles: {http.StatusUnprocessableEntity, "STL com triângulos demais"},
-	Internal:         {http.StatusInternalServerError, "Erro interno"},
+	Unauthenticated:  {http.StatusUnauthorized, "Authentication required"},
+	Forbidden:        {http.StatusForbidden, "Access denied"},
+	FileTooLarge:     {http.StatusRequestEntityTooLarge, "File too large"},
+	InvalidSTL:       {http.StatusUnprocessableEntity, "Invalid STL"},
+	TooManyTriangles: {http.StatusUnprocessableEntity, "STL with too many triangles"},
+	Internal:         {http.StatusInternalServerError, "Internal error"},
 }
 
 type Error struct {
@@ -57,8 +57,8 @@ type details struct {
 	Code   Code   `json:"code"`
 }
 
-// Abort guarda o erro completo em c.Errors, para o log, e responde só o
-// código. Um erro sem Code conhecido vira 500.
+// Abort keeps the full error in c.Errors, for the log, and answers only the
+// code. An error without a known Code becomes a 500.
 func Abort(c *gin.Context, err error) {
 	if err != nil {
 		_ = c.Error(err)
@@ -73,7 +73,7 @@ func Abort(c *gin.Context, err error) {
 	entry := catalog[code]
 	c.Header("Content-Type", "application/problem+json")
 	c.AbortWithStatusJSON(entry.status, details{
-		Type:   "/erros/" + string(code),
+		Type:   "/errors/" + string(code),
 		Title:  entry.title,
 		Status: entry.status,
 		Code:   code,

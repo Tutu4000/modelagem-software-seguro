@@ -30,48 +30,48 @@ func respond(t *testing.T, err error) (*httptest.ResponseRecorder, details) {
 	problem.Abort(c, err)
 
 	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
-		t.Fatalf("Content-Type %q, esperado application/problem+json", ct)
+		t.Fatalf("Content-Type %q, want application/problem+json", ct)
 	}
 	var d details
 	if err := json.Unmarshal(rec.Body.Bytes(), &d); err != nil {
-		t.Fatalf("a resposta não é JSON: %q", rec.Body.String())
+		t.Fatalf("the response is not JSON: %q", rec.Body.String())
 	}
 	if d.Type == "" || d.Title == "" || d.Status != rec.Code {
-		t.Errorf("Problem Details incompleto: %s", rec.Body.String())
+		t.Errorf("incomplete Problem Details: %s", rec.Body.String())
 	}
 	return rec, d
 }
 
-func TestErroConhecidoViraProblemDetailsSemACausa(t *testing.T) {
-	cause := errors.New("tamanho 151 diferente de 84 + 50 * 2019914866")
+func TestKnownErrorBecomesProblemDetailsWithoutCause(t *testing.T) {
+	cause := errors.New("size 151 differs from 84 + 50 * 2019914866")
 
 	rec, d := respond(t, problem.New(problem.InvalidSTL, cause))
 
 	if rec.Code != http.StatusUnprocessableEntity || d.Code != "invalid_stl" {
-		t.Errorf("status %d e code %q, esperado 422 e \"invalid_stl\"", rec.Code, d.Code)
+		t.Errorf("status %d and code %q, want 422 and \"invalid_stl\"", rec.Code, d.Code)
 	}
 	if strings.Contains(rec.Body.String(), "2019914866") {
-		t.Error("a causa interna apareceu na resposta")
+		t.Error("the internal cause appeared in the response")
 	}
 }
 
-func TestErroEmbrulhadoMantemOCodigo(t *testing.T) {
-	err := fmt.Errorf("upload do arquivo: %w", problem.New(problem.FileTooLarge, nil))
+func TestWrappedErrorKeepsTheCode(t *testing.T) {
+	err := fmt.Errorf("file upload: %w", problem.New(problem.FileTooLarge, nil))
 
 	rec, d := respond(t, err)
 
 	if rec.Code != http.StatusRequestEntityTooLarge || d.Code != "file_too_large" {
-		t.Errorf("status %d e code %q, esperado 413 e \"file_too_large\"", rec.Code, d.Code)
+		t.Errorf("status %d and code %q, want 413 and \"file_too_large\"", rec.Code, d.Code)
 	}
 }
 
-func TestErroDesconhecidoViraErroInternoSemDetalhes(t *testing.T) {
-	rec, d := respond(t, errors.New("falha ao conectar em postgres://app:senha@db:5432"))
+func TestUnknownErrorBecomesInternalErrorWithoutDetails(t *testing.T) {
+	rec, d := respond(t, errors.New("failed to connect to postgres://app:password@db:5432"))
 
 	if rec.Code != http.StatusInternalServerError || d.Code != "internal" {
-		t.Errorf("status %d e code %q, esperado 500 e \"internal\"", rec.Code, d.Code)
+		t.Errorf("status %d and code %q, want 500 and \"internal\"", rec.Code, d.Code)
 	}
-	if strings.Contains(rec.Body.String(), "senha") {
-		t.Error("a causa interna apareceu na resposta")
+	if strings.Contains(rec.Body.String(), "password") {
+		t.Error("the internal cause appeared in the response")
 	}
 }

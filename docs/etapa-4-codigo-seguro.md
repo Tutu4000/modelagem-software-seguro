@@ -14,7 +14,7 @@ go test ./...
 Todo erro da API segue o formato Problem Details ([RFC 9457]), com `Content-Type: application/problem+json`:
 
 ```json
-{"type": "/erros/invalid_stl", "title": "STL inválido", "status": 422, "code": "invalid_stl"}
+{"type": "/errors/invalid_stl", "title": "Invalid STL", "status": 422, "code": "invalid_stl"}
 ```
 
 |Código|Status|Quando|
@@ -36,7 +36,7 @@ A resposta traz só o código e um título fixo. A causa interna vai para o log 
 * **Requisito:** [RS01]. A identidade vem só do token. Antes de gerar a URL pré-assinada, a API confere se o arquivo pertence ao usuário. A URL vale 5 minutos, e o armazenamento não tem nenhum objeto público.
 * **Decisão e controles:** [D01], com [C01] (dono do objeto), [C02] (UUID) e [C03] (URL pré-assinada).
 
-O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo binário `painel` e entra com o épico E6 do backlog.
+O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo binário `panel` e entra com o épico E6 do backlog.
 
 ### Testes definidos antes da implementação
 
@@ -48,7 +48,7 @@ O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo 
 |TS04|A URL é usada com 4min59s e com 5min01s|200 e depois 403|
 |TS05|A URL é usada sem assinatura, com a assinatura alterada, com a validade estendida e no lugar de outro arquivo|403, sem nenhum conteúdo|
 
-O TS01 é o caso válido, e os demais são casos maliciosos, inválidos ou não autorizados. O código está em [pratica1_autorizacao_test.go](../codigo/etapa-4/tests/pratica1_autorizacao_test.go).
+O TS01 é o caso válido, e os demais são casos maliciosos, inválidos ou não autorizados. O código está em [practice1_authorization_test.go](../codigo/etapa-4/tests/practice1_authorization_test.go).
 
 ### Implementação
 
@@ -118,7 +118,7 @@ Duas definições completam o requisito:
 |TS08|PDF enviado como STL, STL em texto (ASCII), STL truncado, STL com bytes sobrando e arquivo menor que o cabeçalho|422 e nada gravado nem enfileirado|
 |TS09|STL binário íntegro com 2.000.001 triângulos|422 e nada gravado nem enfileirado|
 
-O TS06 é o caso válido, e os demais são casos maliciosos ou inválidos. O código está em [pratica2_upload_test.go](../codigo/etapa-4/tests/pratica2_upload_test.go).
+O TS06 é o caso válido, e os demais são casos maliciosos ou inválidos. O código está em [practice2_upload_test.go](../codigo/etapa-4/tests/practice2_upload_test.go).
 
 ### Implementação
 
