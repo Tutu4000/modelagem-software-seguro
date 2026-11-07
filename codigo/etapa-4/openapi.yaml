@@ -1,0 +1,144 @@
+openapi: 3.0.3
+info:
+  title: nugget-machine — API pública
+  version: 0.2.0
+  description: >
+    Rotas do cliente. As rotas do painel ficam em outro binário e não existem
+    aqui. Os erros seguem o Problem Details (RFC 9457), sem a causa interna.
+servers:
+  - url: https://localhost
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/arquivos:
+    post:
+      summary: Envia um STL binário
+      description: >
+        O arquivo é validado antes de ser gravado (RS03): até 100 MB, estrutura
+        de STL binário e até 2 milhões de triângulos.
+      requestBody:
+        required: true
+        content:
+          model/stl:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: Arquivo aceito e tarefa de processamento criada
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAceito"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          description: Limite de requisições excedido
+  /api/v1/arquivos/{id}:
+    get:
+      summary: Estado do processamento de um arquivo do próprio cliente
+      parameters:
+        - $ref: "#/components/parameters/ArquivoID"
+      responses:
+        "200":
+          description: Estado da tarefa e, quando concluída, o resultado
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EstadoArquivo"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/arquivos/{id}/download:
+    get:
+      summary: URL pré-assinada para baixar um arquivo do próprio cliente
+      description: >
+        Só o dono recebe a URL (RS01). Arquivo alheio e arquivo inexistente
+        recebem a mesma resposta 403. A URL vale por 5 minutos.
+      parameters:
+        - $ref: "#/components/parameters/ArquivoID"
+      responses:
+        "200":
+          description: URL pré-assinada
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    ArquivoID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Problem:
+      description: Erro no formato Problem Details
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    UploadAceito:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+    EstadoArquivo:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [aguardando, processando, concluida, falhou]
+        resultado:
+          type: object
+          properties:
+            volume_mm3:
+              type: number
+            caixa_mm:
+              type: array
+              items:
+                type: number
+              minItems: 3
+              maxItems: 3
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string

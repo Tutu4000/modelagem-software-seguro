@@ -12,6 +12,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -56,7 +57,8 @@ type env struct {
 	store  *storage.Memory
 	repo   *files.MemoryRepo
 	queue  *queue.Memory
-	logs   *bytes.Buffer
+	logs   *bytes.Buffer // auditoria
+	app    *bytes.Buffer // log de requisições
 	key    ed25519.PrivateKey
 	clock  *clock
 }
@@ -74,16 +76,22 @@ func newEnv(t *testing.T) *env {
 		repo:  files.NewMemoryRepo(),
 		queue: queue.NewMemory(),
 		logs:  &bytes.Buffer{},
+		app:   &bytes.Buffer{},
 		key:   priv,
 		clock: clk,
 	}
-	e.router = cliente.New(cliente.Deps{
+	router, err := cliente.New(cliente.Deps{
 		Verifier: auth.NewVerifier(pub, clk.Now),
 		Files:    e.repo,
 		Store:    e.store,
 		Queue:    e.queue,
 		Audit:    audit.New(e.logs),
+		Log:      slog.New(slog.NewJSONHandler(e.app, nil)),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.router = router
 	return e
 }
 

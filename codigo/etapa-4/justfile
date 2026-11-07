@@ -1,0 +1,49 @@
+# Atalhos do ambiente local. Funciona no Linux, no macOS e no Windows: cada
+# receita usa só docker e go, um comando por linha.
+
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+
+compose := "docker compose -f deploy/compose.yaml"
+
+default:
+    @just --list
+
+# Gera os segredos em secrets/ (use `just secrets -force` para regerar)
+secrets *args:
+    go run ./cmd/gensecrets {{ args }}
+
+# Sobe o ambiente, reconstruindo as imagens
+up:
+    {{ compose }} up -d --build
+
+down:
+    {{ compose }} down
+
+# Apaga também os volumes: bancos, fila e arquivos
+reset:
+    {{ compose }} down -v
+
+# Muda o número de réplicas da API
+scale n="3":
+    {{ compose }} up -d --no-recreate --scale api={{ n }}
+
+ps:
+    {{ compose }} ps
+
+logs service="":
+    {{ compose }} logs -f {{ service }}
+
+# Imprime um token de teste: who é "a", "b" ou um UUID
+token who="a" ttl="15m":
+    go run ./cmd/devtoken -sub {{ who }} -ttl {{ ttl }}
+
+# Envia STLs fictícios dos clientes A e B pela API pública
+seed:
+    go run ./cmd/seed
+
+test:
+    go test ./...
+
+# Testes de ponta a ponta contra o ambiente do compose (precisa de `just up`)
+test-e2e:
+    go test -tags e2e -count=1 ./tests/e2e/...
