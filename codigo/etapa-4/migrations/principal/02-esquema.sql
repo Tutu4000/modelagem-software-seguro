@@ -23,7 +23,7 @@ CREATE TABLE tarefas (
 	arquivo_id    uuid NOT NULL UNIQUE REFERENCES arquivos (id),
 	dono          uuid NOT NULL,
 	sha256        bytea NOT NULL CHECK (length(sha256) = 32),
-	triangulos    integer NOT NULL CHECK (triangulos >= 0),
+	triangulos    bigint NOT NULL CHECK (triangulos >= 0),
 	status        text NOT NULL CHECK (status IN ('aguardando', 'processando', 'concluida', 'falhou')),
 	volume_mm3    double precision,
 	caixa_mm      double precision[],

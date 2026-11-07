@@ -15,6 +15,7 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/queue/queuedb"
 	"nuggetmachine/internal/stl"
 )
 
@@ -32,9 +33,10 @@ type Presigner interface {
 }
 
 // Rabbit é o módulo fila: guarda o estado das tarefas no Postgres, com o papel
-// "fila", e as publica no RabbitMQ.
+// "fila", e as publica no RabbitMQ. As queries ficam em queries.sql.
 type Rabbit struct {
 	db     *pgxpool.Pool
+	q      *queuedb.Queries
 	broker *Broker
 	urls   Presigner
 	audit  *audit.Logger
@@ -42,7 +44,7 @@ type Rabbit struct {
 }
 
 func NewRabbit(db *pgxpool.Pool, b *Broker, urls Presigner, a *audit.Logger, l *slog.Logger) *Rabbit {
-	return &Rabbit{db: db, broker: b, urls: urls, audit: a, log: l}
+	return &Rabbit{db: db, q: queuedb.New(db), broker: b, urls: urls, audit: a, log: l}
 }
 
 type task struct {
@@ -60,14 +62,13 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // sem efeito depois do commit
+	qtx := q.q.WithTx(tx)
 
 	owner := uuid.UUID(f.Owner)
-	if err := lockOwner(ctx, tx, owner); err != nil {
+	if err := qtx.LockOwner(ctx, owner.String()); err != nil {
 		return err
 	}
-	var active int
-	err = tx.QueryRow(ctx,
-		`SELECT count(*) FROM tarefas WHERE dono = $1 AND status = $2`, owner, StatusProcessing).Scan(&active)
+	active, err := qtx.CountProcessing(ctx, owner)
 	if err != nil {
 		return err
 	}
@@ -76,9 +77,14 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 	if active >= MaxActive {
 		status = StatusWaiting
 	}
-	_, err = tx.Exec(ctx,
-		`INSERT INTO tarefas (id, arquivo_id, dono, sha256, triangulos, status) VALUES ($1, $2, $3, $4, $5, $6)`,
-		t.id, t.file, owner, t.sha256, int64(model.Triangles()), status)
+	err = qtx.InsertTask(ctx, queuedb.InsertTaskParams{
+		ID:         t.id,
+		ArquivoID:  t.file,
+		Dono:       owner,
+		Sha256:     t.sha256,
+		Triangulos: int64(model.Triangles()),
+		Status:     status,
+	})
 	if err != nil {
 		return err
 	}
@@ -109,20 +115,14 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 }
 
 func (q *Rabbit) StatusOf(ctx context.Context, id files.FileID) (files.TaskStatus, error) {
-	var (
-		st     files.TaskStatus
-		volume *float64
-		box    []float64
-	)
-	err := q.db.QueryRow(ctx,
-		`SELECT status, volume_mm3, caixa_mm FROM tarefas WHERE arquivo_id = $1`, uuid.UUID(id)).
-		Scan(&st.State, &volume, &box)
+	row, err := q.q.TaskStatusByFile(ctx, uuid.UUID(id))
 	if err != nil {
 		return files.TaskStatus{}, fmt.Errorf("tarefa do arquivo %s: %w", id, err)
 	}
-	if volume != nil && len(box) == 3 {
-		st.VolumeMM3 = volume
-		st.BoxMM = &[3]float64{box[0], box[1], box[2]}
+	st := files.TaskStatus{State: row.Status}
+	if row.VolumeMm3 != nil && len(row.CaixaMm) == 3 {
+		st.VolumeMM3 = row.VolumeMm3
+		st.BoxMM = &[3]float64{row.CaixaMm[0], row.CaixaMm[1], row.CaixaMm[2]}
 	}
 	return st, nil
 }
@@ -166,9 +166,9 @@ func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck // sem efeito depois do commit
+	qtx := q.q.WithTx(tx)
 
-	var owner uuid.UUID
-	err = tx.QueryRow(ctx, `SELECT dono FROM tarefas WHERE id = $1`, m.TaskID).Scan(&owner)
+	owner, err := qtx.TaskOwner(ctx, m.TaskID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		q.log.Warn("resultado de tarefa desconhecida", "tarefa", m.TaskID)
 		return nil
@@ -176,42 +176,33 @@ func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 	if err != nil {
 		return err
 	}
-	if err := lockOwner(ctx, tx, owner); err != nil {
+	if err := qtx.LockOwner(ctx, owner.String()); err != nil {
 		return err
 	}
 
-	var volume *float64
-	var box []float64
+	finish := queuedb.FinishTaskParams{ID: m.TaskID, Status: m.Status}
 	if m.Status == StatusDone {
-		volume, box = &m.VolumeMM3, m.BoxMM[:]
+		finish.VolumeMm3, finish.CaixaMm = &m.VolumeMM3, m.BoxMM[:]
 	}
-	tag, err := tx.Exec(ctx,
-		`UPDATE tarefas SET status = $2, volume_mm3 = $3, caixa_mm = $4, atualizado_em = now()
-		 WHERE id = $1 AND status = $5`,
-		m.TaskID, m.Status, volume, box, StatusProcessing)
+	changed, err := qtx.FinishTask(ctx, finish)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if changed == 0 {
 		return tx.Commit(ctx)
 	}
 
-	var next task
-	err = tx.QueryRow(ctx,
-		`SELECT id, arquivo_id, sha256 FROM tarefas WHERE dono = $1 AND status = $2 ORDER BY criado_em LIMIT 1`,
-		owner, StatusWaiting).Scan(&next.id, &next.file, &next.sha256)
+	next, err := qtx.OldestWaiting(ctx, owner)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return tx.Commit(ctx)
 	}
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx,
-		`UPDATE tarefas SET status = $2, atualizado_em = now() WHERE id = $1`, next.id, StatusProcessing)
-	if err != nil {
+	if err := qtx.StartTask(ctx, next.ID); err != nil {
 		return err
 	}
-	if err := q.publish(ctx, next); err != nil {
+	if err := q.publish(ctx, task{id: next.ID, file: next.ArquivoID, sha256: next.Sha256}); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
@@ -228,11 +219,4 @@ func (q *Rabbit) publish(ctx context.Context, t task) error {
 		SHA256: hex.EncodeToString(t.sha256),
 		URL:    url,
 	})
-}
-
-// lockOwner serializa as decisões de cota de uma conta entre todas as
-// réplicas da API, até o fim da transação.
-func lockOwner(ctx context.Context, tx pgx.Tx, owner uuid.UUID) error {
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))`, owner.String())
-	return err
 }
