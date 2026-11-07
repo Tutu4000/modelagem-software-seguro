@@ -22,3 +22,7 @@ ENTRYPOINT ["/api"]
 FROM base AS garage-init
 COPY --from=build /out/garage-init /garage-init
 ENTRYPOINT ["/garage-init"]
+
+FROM base AS worker
+COPY --from=build /out/worker /worker
+ENTRYPOINT ["/worker"]

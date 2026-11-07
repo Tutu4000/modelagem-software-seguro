@@ -1,0 +1,21 @@
+{
+  "exchanges": [
+    {"name": "tarefas", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+    {"name": "resultados", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+    {"name": "tarefas.falhas", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {}}
+  ],
+  "queues": [
+    {"name": "tarefas", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {
+      "x-queue-type": "quorum",
+      "x-delivery-limit": 3,
+      "x-dead-letter-exchange": "tarefas.falhas"
+    }},
+    {"name": "tarefas.falhas", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}},
+    {"name": "resultados", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}}
+  ],
+  "bindings": [
+    {"source": "tarefas", "vhost": "/", "destination": "tarefas", "destination_type": "queue", "routing_key": "tarefas", "arguments": {}},
+    {"source": "resultados", "vhost": "/", "destination": "resultados", "destination_type": "queue", "routing_key": "resultados", "arguments": {}},
+    {"source": "tarefas.falhas", "vhost": "/", "destination": "tarefas.falhas", "destination_type": "queue", "routing_key": "", "arguments": {}}
+  ]
+}

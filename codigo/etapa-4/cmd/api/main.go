@@ -50,7 +50,11 @@ func run(log *slog.Logger) error {
 		SecretKey:      string(env.Secret("S3_SECRET_ACCESS_KEY")),
 	}
 	filesPassword := env.Secret("DB_ARQUIVOS_PASSWORD")
+	queuePassword := env.Secret("DB_FILA_PASSWORD")
 	auditPassword := env.Secret("DB_AUDITORIA_PASSWORD")
+	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
+	amqpUser := env.String("AMQP_USER", "api")
+	amqpPassword := env.Secret("AMQP_PASSWORD")
 	if err := env.Err(); err != nil {
 		return err
 	}
@@ -68,14 +72,27 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer filesPool.Close()
+	queuePool, err := mainDB.open(ctx, "fila", queuePassword)
+	if err != nil {
+		return err
+	}
+	defer queuePool.Close()
 	auditPool, err := auditDB.open(ctx, "auditoria_app", auditPassword)
 	if err != nil {
 		return err
 	}
 	defer auditPool.Close()
 
+	broker, err := queue.Dial(ctx, amqpHost, amqpUser, amqpPassword)
+	if err != nil {
+		return err
+	}
+	defer broker.Close()
+	closed := broker.Closed()
+
 	store := storage.NewS3(s3cfg)
-	tasks := queue.NewMemory()
+	auditLog := audit.NewWithStore(os.Stdout, audit.NewPostgres(auditPool))
+	tasks := queue.NewRabbit(queuePool, broker, store, auditLog, log)
 
 	gin.SetMode(gin.ReleaseMode)
 	router, err := cliente.New(cliente.Deps{
@@ -84,7 +101,7 @@ func run(log *slog.Logger) error {
 		Store:          store,
 		Queue:          tasks,
 		Tasks:          tasks,
-		Audit:          audit.NewWithStore(os.Stdout, audit.NewPostgres(auditPool)),
+		Audit:          auditLog,
 		Log:            log,
 		TrustedProxies: trusted,
 	})
@@ -103,13 +120,17 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       time.Minute,
 		MaxHeaderBytes:    16 << 10,
 	}
-	errc := make(chan error, 1)
+	errc := make(chan error, 2)
 	go func() { errc <- srv.ListenAndServe() }()
+	go func() { errc <- tasks.ConsumeResults(ctx) }()
 	log.Info("API no ar", "addr", addr)
 
+	// Sem o RabbitMQ a API sai, e o Docker a reinicia quando ele voltar.
 	select {
 	case err := <-errc:
 		return err
+	case err := <-closed:
+		return fmt.Errorf("conexão com o RabbitMQ caiu: %v", err)
 	case <-ctx.Done():
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)

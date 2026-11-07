@@ -1,4 +1,5 @@
-// Package queue fica em memória até o RabbitMQ (E4).
+// Package queue é o módulo fila. O Rabbit usa o Postgres e o RabbitMQ. O
+// Memory guarda as tarefas em memória para os testes.
 package queue
 
 import (

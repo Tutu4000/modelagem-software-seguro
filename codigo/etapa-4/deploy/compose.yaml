@@ -48,18 +48,73 @@ services:
       S3_PUBLIC_ENDPOINT: https://localhost:8443
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
+      DB_FILA_PASSWORD_FILE: /run/secrets/db_fila_password
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_api_password
       AUDIT_DB_HOST: postgres-auditoria
       DB_AUDITORIA_PASSWORD_FILE: /run/secrets/db_auditoria_password
       GOMEMLIMIT: 400MiB
-    secrets: [auth_public_key, db_arquivos_password, db_auditoria_password, s3_access_key_id, s3_secret_access_key]
+    secrets:
+      - auth_public_key
+      - db_arquivos_password
+      - db_fila_password
+      - db_auditoria_password
+      - s3_access_key_id
+      - s3_secret_access_key
+      - rabbitmq_api_password
     networks: [interna]
     depends_on:
       garage-init: { condition: service_completed_successfully }
+      rabbitmq: { condition: service_healthy }
       postgres: { condition: service_healthy }
       postgres-auditoria: { condition: service_healthy }
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # Só na rede de processamento: sem banco, Valkey nem internet, e sem chave do
+  # Garage. Lê os arquivos pela URL pré-assinada da mensagem (FC3, E4.2).
+  worker:
+    <<: *endurecido
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: worker
+    environment:
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_worker_password
+      TASK_TIMEOUT: 60s
+      # Abaixo do limite do contêiner: o Go devolve memória antes de ser morto.
+      GOMEMLIMIT: 400MiB
+    secrets: [rabbitmq_worker_password]
+    networks: [processamento]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      garage-init: { condition: service_completed_successfully }
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 128 }
+
+  rabbitmq:
+    <<: *limites
+    image: rabbitmq:4.3.6-alpine@sha256:6931816af1a943f471c038b278835d36692d55dec769232739296bb91b7de0f5
+    hostname: rabbitmq
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-nuggetmachine.conf:ro
+      - ./rabbitmq/topologia.json:/etc/rabbitmq/definicoes/02-topologia.json:ro
+      - rabbitmq:/var/lib/rabbitmq
+    secrets:
+      - source: rabbitmq_usuarios
+        target: /etc/rabbitmq/definicoes/01-usuarios.json
+    networks: [interna, processamento]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 512 }
 
   # Armazenamento de objetos: bucket privado, lido só por URL pré-assinada
   # (C03). Está também na rede do worker, que baixa os arquivos por ela.
@@ -158,6 +213,7 @@ volumes:
   principal: {}
   auditoria: {}
   garage: {}
+  rabbitmq: {}
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
@@ -172,3 +228,6 @@ secrets:
   garage_admin_token: { file: ../secrets/garage_admin_token }
   s3_access_key_id: { file: ../secrets/s3_access_key_id }
   s3_secret_access_key: { file: ../secrets/s3_secret_access_key }
+  rabbitmq_api_password: { file: ../secrets/rabbitmq_api_password }
+  rabbitmq_worker_password: { file: ../secrets/rabbitmq_worker_password }
+  rabbitmq_usuarios: { file: ../secrets/rabbitmq_usuarios.json }
