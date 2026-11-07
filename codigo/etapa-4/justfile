@@ -47,3 +47,15 @@ test:
 # Testes de ponta a ponta contra o ambiente do compose (precisa de `just up`)
 test-e2e:
     go test -tags e2e -count=1 ./tests/e2e/...
+
+# go vet, gosec, govulncheck e gitleaks (no histórico do git), com versões fixadas
+lint:
+    go vet ./...
+    go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+    docker run --rm -v "{{ justfile_directory() }}/../..:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner
+
+# Varredura do ZAP pelo openapi.yaml, autenticada como o cliente A (Etapa 5)
+zap:
+    go run ./cmd/devtoken -sub a -ttl 2h -out secrets/zap_token
+    {{ compose }} --profile zap run --rm zap

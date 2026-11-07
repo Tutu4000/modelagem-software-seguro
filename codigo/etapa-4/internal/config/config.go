@@ -27,7 +27,7 @@ func (e *Env) Secret(name string) []byte {
 		e.errs = append(e.errs, fmt.Errorf("%s_FILE não definida", name))
 		return nil
 	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 G703 -- o caminho vem da configuração do operador, não da requisição
 	if err != nil {
 		e.errs = append(e.errs, fmt.Errorf("%s_FILE: %w", name, err))
 		return nil

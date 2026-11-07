@@ -75,11 +75,11 @@ func Dial(ctx context.Context, host, user string, password []byte) (*Broker, err
 	}
 	ch, err := conn.Channel()
 	if err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	if err := ch.Confirm(false); err != nil {
-		conn.Close()
+		_ = conn.Close()
 		return nil, err
 	}
 	return &Broker{conn: conn, ch: ch}, nil

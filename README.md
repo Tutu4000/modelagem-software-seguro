@@ -49,6 +49,11 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
   * respostas de erro no formato Problem Details (RFC 9457), sem expor a causa interna;
   * dependências verificadas com o govulncheck;
   * um [backlog](codigo/etapa-4/BACKLOG.md) que leva o resto da arquitetura da Etapa 3 para o código.
+* **Ambiente para a Etapa 5 (marco M2 do backlog):**
+  * o sistema roda no Docker Compose: nginx com TLS, réplicas da API, worker isolado, PostgreSQL, banco de auditoria separado, RabbitMQ e Garage;
+  * testes de ponta a ponta para os aceites;
+  * lint de segurança com gosec, govulncheck e gitleaks;
+  * a varredura do ZAP com um único comando. Veja [codigo/etapa-4/README.md](codigo/etapa-4/README.md).
 
 ## Estrutura do repositório
 

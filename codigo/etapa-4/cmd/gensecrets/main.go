@@ -44,7 +44,7 @@ func main() {
 	if err := os.MkdirAll(g.dir, 0o700); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(g.dir, 0o700); err != nil {
+	if err := os.Chmod(g.dir, 0o700); err != nil { // #nosec G302 -- um diretório precisa do x para ser aberto
 		log.Fatal(err)
 	}
 
@@ -107,17 +107,18 @@ func (g generator) allExist(names []string) bool {
 
 func (g generator) write(name string, data []byte) {
 	path := filepath.Join(g.dir, name)
+	// #nosec G306 G302 -- 0644 dentro de um diretório 0700: ver o comentário do pacote
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		log.Fatal(err)
 	}
-	if err := os.Chmod(path, 0o644); err != nil {
+	if err := os.Chmod(path, 0o644); err != nil { // #nosec G302 -- idem
 		log.Fatal(err)
 	}
 	fmt.Printf("gerado   %s\n", name)
 }
 
 func (g generator) read(name string) []byte {
-	data, err := os.ReadFile(filepath.Join(g.dir, name))
+	data, err := os.ReadFile(filepath.Join(g.dir, name)) // #nosec G304 -- nomes fixos dentro do diretório de saída
 	if err != nil {
 		log.Fatal(err)
 	}

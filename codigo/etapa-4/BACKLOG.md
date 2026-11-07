@@ -43,7 +43,7 @@ Os IDs RS, D, FC e os números de seção vêm da [Etapa 3](../../docs/etapa-3-a
 codigo/etapa-4/
 ├── BACKLOG.md
 ├── README.md                 # como subir o ambiente e rodar os testes
-├── Makefile                  # test, test-integration, lint, up, down, backup, restore-test
+├── justfile                  # secrets, up, down, test, test-e2e, lint, zap (funciona no Windows)
 ├── go.mod
 ├── openapi.yaml              # contrato da API, importado pelo ZAP na Etapa 5
 ├── cmd/
@@ -109,9 +109,9 @@ Se o M2 atrasar, a Etapa 5 usa o OWASP Juice Shop, como o enunciado permite.
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E0.1|Módulo Go e pastas. Os placeholders vazios desta pasta são apagados. O Makefile fica para o E2, porque o Windows não tem `make`|`go test ./...` roda|—|P0|
+|E0.1|Módulo Go e pastas. Os placeholders vazios desta pasta são apagados. Os comandos ficam num `justfile`, que também roda no Windows|`go test ./...` roda|—|P0|
 |E0.2|`config` lê os segredos de arquivos (`*_FILE`), nunca de variáveis com o valor|A API não sobe se faltar um segredo|3.4|P1|
-|E0.3|`make lint` com `go vet`, `gosec`, `govulncheck` e `gitleaks`|Passa sem achados no código do E1|C12|P1|
+|E0.3|`just lint` com `go vet`, `gosec`, `govulncheck` e `gitleaks`|Passa sem achados no código do E1|C12|P1|
 
 ### E1 — Entregável da Etapa 4 (P0)
 
@@ -166,11 +166,11 @@ Os testes de cada prática entram num commit antes da implementação, junto com
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
 |E3.1|Migrações com UUID nas chaves e um papel do banco por módulo, com GRANT só nas próprias tabelas|Um módulo que lê a tabela de outro recebe permissão negada|C02, FC4|P1|
-|E3.2|Repositórios em PostgreSQL no lugar dos em memória. O `FindForUser` filtra pelo dono na própria consulta|`make test-integration` passa TS01 e TS02 com o banco real|D01|P1|
+|E3.2|Repositórios em PostgreSQL no lugar dos em memória. O `FindForUser` filtra pelo dono na própria consulta|`just test-e2e` passa TS01 e TS02 com o banco real|D01|P1|
 |E3.3|`storage` passa a usar o Garage: bucket privado e URL pré-assinada do S3|Um acesso direto sem assinatura recebe 403|C03, RS01|P1|
 |E3.4|Réplica de leitura por streaming, com um pool separado para listagens e relatórios|Uma escrita na réplica falha. As listagens leem da réplica|3.3|P2|
 |E3.5|Backup diário: `pg_dump` da réplica e cópia dos buckets, criptografados com `age`, num bucket separado e com chave própria. O backup expira em 30 dias|A chave da API recebe 403 no bucket de backup|C20, 3.4|P2|
-|E3.6|`make restore-test` restaura o último backup num banco temporário e confere as contagens|O teste passa|C20|P2|
+|E3.6|`just restore-test` restaura o último backup num banco temporário e confere as contagens|O teste passa|C20|P2|
 
 ### E4 — Fila e processamento isolado
 
@@ -246,6 +246,14 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |Banco criptografado em repouso|Não implementado localmente. Em produção, disco criptografado do provedor|
 |Backup em outra conta|Bucket separado, com uma chave que a API não tem|
 |Serviços externos (FC5)|Ficam para o E8|
+|Docker Hardened Images|`golang` e `gcr.io/distroless/static-debian13:nonroot`, fixadas por digest. Continuam sem shell e sem root, e não exigem login com Docker ID|
+|Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey entra com o E5|
+|Migrações versionadas|SQL em `migrations/`, executado pelo Postgres só na criação do volume. Para mudar o esquema, `just reset`|
+|Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/devtoken`, `cmd/seed`), que rodam no Windows|
+|TLS entre os serviços|Só na borda, no nginx. A rede interna fica sem TLS|
+|Admin API do Garage só para o init|Escuta também na rede de processamento. Exige o token, que o worker não tem|
+|Outbox transacional|A tarefa é publicada antes do commit, e o resultado só recebe ack depois dele. Se o commit falhar, nenhuma tarefa fica parada, mas o worker pode processar uma tarefa que não existe, ou a mesma duas vezes. A idempotência do E4.6 descarta o resultado extra|
+|Cabeçalhos de segurança no nginx|Ficam de fora de propósito, para a verificação da Etapa 5 encontrá-los. A correção é registrada lá|
 
 ## 6. Ligação com as próximas etapas
 
@@ -254,3 +262,11 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |5 — Verificação|O sistema rodando no compose (M2) e o `openapi.yaml` (E2.6), para o ZAP testar o nosso próprio sistema|
 |6 — Detecção|O catálogo de eventos (E7.1) como fonte de dados, e os alertas do E7.5 como evidência|
 |7 — DevSecOps|O pipeline do E9.1, com as condições que bloqueiam o merge|
+
+## 7. Estado
+
+|Marco|Estado|O que entrou|
+|-|-|-|
+|M1|Concluído|E0.1 e E1|
+|M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
+|M3|Pendente|E9.1 e os itens P2|

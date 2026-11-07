@@ -31,7 +31,7 @@ func Resolve(sub string) (uuid.UUID, error) {
 }
 
 func LoadKey(path string) (ed25519.PrivateKey, error) {
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) // #nosec G304 -- caminho dado por quem roda a ferramenta
 	if err != nil {
 		return nil, err
 	}

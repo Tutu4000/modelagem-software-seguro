@@ -196,6 +196,25 @@ services:
       resources:
         limits: { cpus: "0.5", memory: 256m, pids: 128 }
 
+  # Verificação da Etapa 5 (`just zap`): só sobe com o profile, e fica na rede
+  # pública, como um cliente. O token é de um cliente de teste, com validade
+  # curta, e os relatórios vão para evidencias/etapa-5.
+  zap:
+    image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
+    profiles: [zap]
+    networks: [publica]
+    depends_on: [nginx]
+    volumes:
+      - ../openapi.yaml:/zap/api/openapi.yaml:ro
+      - ../secrets/zap_token:/zap/token:ro
+      - ../../../evidencias/etapa-5:/zap/wrk
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        ZAP_AUTH_HEADER_VALUE="Bearer $$(cat /zap/token)"
+        exec zap-api-scan.py -t /zap/api/openapi.yaml -f openapi -O https://nginx:8443
+        -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
+
 networks:
   # Única rede com portas publicadas, e só o nginx está nela.
   publica: {}
