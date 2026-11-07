@@ -4,7 +4,6 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -38,11 +37,18 @@ func main() {
 func run(log *slog.Logger) error {
 	var env config.Env
 	addr := env.String("API_ADDR", ":8080")
-	publicURL := env.String("PUBLIC_URL", "https://localhost")
 	trusted := env.List("TRUSTED_PROXIES")
 	pubPEM := env.Secret("AUTH_PUBLIC_KEY")
 	mainDB := dbConfig{host: env.Required("DB_HOST"), name: env.String("DB_NAME", "nugget")}
 	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "auditoria")}
+	s3cfg := storage.S3Config{
+		Bucket:         env.String("S3_BUCKET", "arquivos"),
+		Region:         env.String("S3_REGION", "garage"),
+		Endpoint:       env.Required("S3_ENDPOINT"),
+		PublicEndpoint: env.Required("S3_PUBLIC_ENDPOINT"),
+		AccessKey:      string(env.Secret("S3_ACCESS_KEY_ID")),
+		SecretKey:      string(env.Secret("S3_SECRET_ACCESS_KEY")),
+	}
 	filesPassword := env.Secret("DB_ARQUIVOS_PASSWORD")
 	auditPassword := env.Secret("DB_AUDITORIA_PASSWORD")
 	if err := env.Err(); err != nil {
@@ -68,13 +74,7 @@ func run(log *slog.Logger) error {
 	}
 	defer auditPool.Close()
 
-	// Provisório até o Garage (E3.3): o armazenamento fica em memória, com um
-	// segredo de assinatura por processo, e por isso só funciona com uma réplica.
-	storeSecret := make([]byte, 32)
-	if _, err := rand.Read(storeSecret); err != nil {
-		return err
-	}
-	store := storage.NewMemory(storeSecret, publicURL, time.Now)
+	store := storage.NewS3(s3cfg)
 	tasks := queue.NewMemory()
 
 	gin.SetMode(gin.ReleaseMode)
@@ -91,15 +91,12 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	mux := http.NewServeMux()
-	mux.Handle("/objetos/", store)
-	mux.Handle("/", router)
 
 	// Os tempos cobrem um upload de 100 MB numa conexão lenta, sem deixar
 	// conexões presas para sempre.
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           mux,
+		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       2 * time.Minute,
 		WriteTimeout:      2 * time.Minute,

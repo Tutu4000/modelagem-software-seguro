@@ -1,4 +1,5 @@
-// Package storage simula o armazenamento de objetos até o Garage (E3.3).
+// Package storage guarda os arquivos e gera as URLs pré-assinadas. O S3 fala
+// com o Garage. O Memory simula o mesmo comportamento nos testes.
 package storage
 
 import (

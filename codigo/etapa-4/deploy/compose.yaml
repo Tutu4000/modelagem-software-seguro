@@ -19,7 +19,7 @@ services:
   nginx:
     <<: *endurecido
     image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
-    ports: ["443:8443"]
+    ports: ["443:8443", "8443:9443"]
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     tmpfs: ["/tmp:size=128m"]
@@ -28,7 +28,7 @@ services:
       publica: {}
       interna:
         ipv4_address: 172.28.10.10
-    depends_on: [api]
+    depends_on: [api, garage]
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m, pids: 128 }
@@ -40,22 +40,64 @@ services:
       dockerfile: deploy/Dockerfile
       target: api
     environment:
-      PUBLIC_URL: https://localhost
       TRUSTED_PROXIES: 172.28.10.10
       AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
       DB_HOST: postgres
       DB_ARQUIVOS_PASSWORD_FILE: /run/secrets/db_arquivos_password
+      S3_ENDPOINT: http://garage:3900
+      S3_PUBLIC_ENDPOINT: https://localhost:8443
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
       AUDIT_DB_HOST: postgres-auditoria
       DB_AUDITORIA_PASSWORD_FILE: /run/secrets/db_auditoria_password
       GOMEMLIMIT: 400MiB
-    secrets: [auth_public_key, db_arquivos_password, db_auditoria_password]
+    secrets: [auth_public_key, db_arquivos_password, db_auditoria_password, s3_access_key_id, s3_secret_access_key]
     networks: [interna]
     depends_on:
+      garage-init: { condition: service_completed_successfully }
       postgres: { condition: service_healthy }
       postgres-auditoria: { condition: service_healthy }
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # Armazenamento de objetos: bucket privado, lido só por URL pré-assinada
+  # (C03). Está também na rede do worker, que baixa os arquivos por ela.
+  garage:
+    <<: *limites
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    read_only: true
+    cap_drop: [ALL]
+    environment:
+      # Os secrets chegam como bind mount com as permissões do arquivo no host.
+      GARAGE_ALLOW_WORLD_READABLE_SECRETS: "true"
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage:/var/lib/garage
+    secrets: [garage_rpc_secret, garage_admin_token]
+    networks: [interna, processamento]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  garage-init:
+    <<: *endurecido
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: garage-init
+    environment:
+      GARAGE_ADMIN_URL: http://garage:3903
+      GARAGE_ADMIN_TOKEN_FILE: /run/secrets/garage_admin_token
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
+    secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key]
+    networks: [interna]
+    depends_on: [garage]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 64m, pids: 64 }
 
   postgres:
     <<: *limites
@@ -108,10 +150,14 @@ networks:
     ipam:
       config:
         - subnet: 172.28.10.0/24
+  # Worker, fila e armazenamento. O worker não alcança banco nem internet (FC3).
+  processamento:
+    internal: true
 
 volumes:
   principal: {}
   auditoria: {}
+  garage: {}
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
@@ -122,3 +168,7 @@ secrets:
   db_arquivos_password: { file: ../secrets/db_arquivos_password }
   db_fila_password: { file: ../secrets/db_fila_password }
   db_auditoria_password: { file: ../secrets/db_auditoria_password }
+  garage_rpc_secret: { file: ../secrets/garage_rpc_secret }
+  garage_admin_token: { file: ../secrets/garage_admin_token }
+  s3_access_key_id: { file: ../secrets/s3_access_key_id }
+  s3_secret_access_key: { file: ../secrets/s3_secret_access_key }
