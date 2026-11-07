@@ -62,6 +62,18 @@ type Enqueuer interface {
 	Enqueue(ctx context.Context, f File, model stl.Validated) error
 }
 
+// TaskStatus é o que o módulo fila conta sobre o processamento de um arquivo.
+// Arquivos não lê a tabela da fila (E3.1).
+type TaskStatus struct {
+	State     string      `json:"status"`
+	VolumeMM3 *float64    `json:"-"`
+	BoxMM     *[3]float64 `json:"-"`
+}
+
+type TaskReader interface {
+	StatusOf(ctx context.Context, id FileID) (TaskStatus, error)
+}
+
 type MemoryRepo struct {
 	mu    sync.RWMutex
 	files map[FileID]File
@@ -96,7 +108,36 @@ type Handler struct {
 	Repo  Repo
 	Store ObjectStore
 	Queue Enqueuer
+	Tasks TaskReader
 	Audit *audit.Logger
+}
+
+// Status mostra o andamento só ao dono, com a mesma negação do Download.
+func (h *Handler) Status(c *gin.Context) {
+	user := auth.MustUser(c)
+	target := c.Param("id")
+
+	f, err := h.findForUser(c, user, target)
+	if errors.Is(err, ErrNotFound) {
+		h.recordDenied(c, user, "file.status", target)
+		problem.Abort(c, problem.New(problem.Forbidden, err))
+		return
+	}
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+
+	st, err := h.Tasks.StatusOf(c.Request.Context(), f.ID)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	body := gin.H{"id": f.ID.String(), "status": st.State}
+	if st.VolumeMM3 != nil && st.BoxMM != nil {
+		body["resultado"] = gin.H{"volume_mm3": *st.VolumeMM3, "caixa_mm": st.BoxMM[:]}
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (h *Handler) Download(c *gin.Context) {
@@ -129,12 +170,15 @@ func (h *Handler) Upload(c *gin.Context) {
 
 	data, err := readBody(c)
 	if err != nil {
+		h.recordRejected(c, user, err)
 		problem.Abort(c, err)
 		return
 	}
 	model, err := stl.Parse(data)
 	if err != nil {
-		problem.Abort(c, stlProblem(err))
+		err = stlProblem(err)
+		h.recordRejected(c, user, err)
+		problem.Abort(c, err)
 		return
 	}
 
@@ -201,5 +245,25 @@ func (h *Handler) recordDenied(c *gin.Context, u auth.User, action, target strin
 	})
 	if err != nil {
 		_ = c.Error(err)
+	}
+}
+
+// recordRejected só registra recusas da validação (RS03), com o código do erro
+// como motivo. Falhas internas ficam no log de requisições.
+func (h *Handler) recordRejected(c *gin.Context, u auth.User, err error) {
+	var pe *problem.Error
+	if !errors.As(err, &pe) {
+		return
+	}
+	rerr := h.Audit.Record(audit.Event{
+		Name:   "upload.rejected",
+		Actor:  u.ID().String(),
+		Action: "file.upload",
+		Result: "rejected",
+		Reason: string(pe.Code),
+		Origin: c.ClientIP(),
+	})
+	if rerr != nil {
+		_ = c.Error(rerr)
 	}
 }

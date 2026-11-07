@@ -85,6 +85,7 @@ func newEnv(t *testing.T) *env {
 		Files:    e.repo,
 		Store:    e.store,
 		Queue:    e.queue,
+		Tasks:    e.queue,
 		Audit:    audit.New(e.logs),
 		Log:      slog.New(slog.NewJSONHandler(e.app, nil)),
 	})

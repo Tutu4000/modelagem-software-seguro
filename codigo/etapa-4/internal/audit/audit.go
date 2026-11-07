@@ -3,7 +3,9 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -16,15 +18,29 @@ type Event struct {
 	Action string    `json:"action"`
 	Target string    `json:"target"`
 	Result string    `json:"result"`
+	Reason string    `json:"reason,omitempty"`
 	Origin string    `json:"origin"`
 }
 
+// Store guarda os eventos fora do processo, como o banco de auditoria (C18).
+type Store interface {
+	Insert(ctx context.Context, e Event) error
+}
+
 type Logger struct {
-	mu sync.Mutex
-	w  io.Writer
+	mu    sync.Mutex
+	w     io.Writer
+	store Store
 }
 
 func New(w io.Writer) *Logger { return &Logger{w: w} }
+
+// NewWithStore também grava cada evento no store.
+func NewWithStore(w io.Writer, s Store) *Logger { return &Logger{w: w, store: s} }
+
+// storeTimeout não depende da requisição: um cliente que desconecta não
+// apaga o próprio rastro.
+const storeTimeout = 3 * time.Second
 
 // Record grava uma linha por evento, com o horário em UTC.
 func (l *Logger) Record(e Event) error {
@@ -34,7 +50,12 @@ func (l *Logger) Record(e Event) error {
 		return err
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	_, err = l.w.Write(append(line, '\n'))
+	l.mu.Unlock()
+	if l.store != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+		defer cancel()
+		err = errors.Join(err, l.store.Insert(ctx, e))
+	}
 	return err
 }

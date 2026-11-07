@@ -20,6 +20,7 @@ type Deps struct {
 	Files    files.Repo
 	Store    files.ObjectStore
 	Queue    files.Enqueuer
+	Tasks    files.TaskReader
 	Audit    *audit.Logger
 	Log      *slog.Logger // nil desliga o log de requisições
 	// TrustedProxies são os IPs de quem pode informar a origem por
@@ -40,8 +41,9 @@ func New(d Deps) (*gin.Engine, error) {
 		problem.Abort(c, fmt.Errorf("panic: %v", recovered))
 	}))
 
-	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Audit: d.Audit}
+	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Tasks: d.Tasks, Audit: d.Audit}
 	api := r.Group("/api/v1", auth.RequireUser(d.Verifier))
+	api.GET("/arquivos/:id", h.Status)
 	api.GET("/arquivos/:id/download", h.Download)
 	api.POST("/arquivos", h.Upload)
 	return r, nil

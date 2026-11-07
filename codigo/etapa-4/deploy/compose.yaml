@@ -1,0 +1,124 @@
+# Ambiente local da arquitetura da Etapa 3. As redes reproduzem as fronteiras
+# de confiança (seção 2 do backlog). Segredos: `just secrets` antes de subir.
+
+name: nuggetmachine
+
+# Todos os contêineres: sem ganho de privilégio e com limites de recurso (C11).
+x-limites: &limites
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+# Binários Go: além disso, sistema de arquivos só de leitura e sem capabilities.
+x-endurecido: &endurecido
+  <<: *limites
+  read_only: true
+  cap_drop: [ALL]
+  tmpfs: ["/tmp:size=16m"]
+
+services:
+  nginx:
+    <<: *endurecido
+    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    ports: ["443:8443"]
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    tmpfs: ["/tmp:size=128m"]
+    secrets: [tls_crt, tls_key]
+    networks:
+      publica: {}
+      interna:
+        ipv4_address: 172.28.10.10
+    depends_on: [api]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 256m, pids: 128 }
+
+  api:
+    <<: *endurecido
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: api
+    environment:
+      PUBLIC_URL: https://localhost
+      TRUSTED_PROXIES: 172.28.10.10
+      AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+      DB_HOST: postgres
+      DB_ARQUIVOS_PASSWORD_FILE: /run/secrets/db_arquivos_password
+      AUDIT_DB_HOST: postgres-auditoria
+      DB_AUDITORIA_PASSWORD_FILE: /run/secrets/db_auditoria_password
+      GOMEMLIMIT: 400MiB
+    secrets: [auth_public_key, db_arquivos_password, db_auditoria_password]
+    networks: [interna]
+    depends_on:
+      postgres: { condition: service_healthy }
+      postgres-auditoria: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  postgres:
+    <<: *limites
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    environment:
+      POSTGRES_DB: nugget
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    volumes:
+      - principal:/var/lib/postgresql
+      - ../migrations/principal:/docker-entrypoint-initdb.d:ro
+    secrets: [postgres_password, db_arquivos_password, db_fila_password]
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # Instância separada: quem compromete o banco principal não alcança o
+  # rastro (C18).
+  postgres-auditoria:
+    <<: *limites
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    environment:
+      POSTGRES_DB: auditoria
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_auditoria_password
+    volumes:
+      - auditoria:/var/lib/postgresql
+      - ../migrations/auditoria:/docker-entrypoint-initdb.d:ro
+    secrets: [postgres_auditoria_password, db_auditoria_password]
+    networks: [interna]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "auditoria"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 128 }
+
+networks:
+  # Única rede com portas publicadas, e só o nginx está nela.
+  publica: {}
+  # Sem saída para a internet.
+  interna:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.10.0/24
+
+volumes:
+  principal: {}
+  auditoria: {}
+
+secrets:
+  tls_crt: { file: ../secrets/tls.crt }
+  tls_key: { file: ../secrets/tls.key }
+  auth_public_key: { file: ../secrets/auth_ed25519.pub.pem }
+  postgres_password: { file: ../secrets/postgres_password }
+  postgres_auditoria_password: { file: ../secrets/postgres_auditoria_password }
+  db_arquivos_password: { file: ../secrets/db_arquivos_password }
+  db_fila_password: { file: ../secrets/db_fila_password }
+  db_auditoria_password: { file: ../secrets/db_auditoria_password }
