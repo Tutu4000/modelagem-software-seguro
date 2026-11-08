@@ -1,6 +1,8 @@
 // Command seed uploads fictitious STLs for customers A and B through the
 // public API, logged in through Keycloak as a customer would be (E2.5), and
-// leaves orders in different states for the demo. No real data enters the
+// leaves orders in different states for the demo. The orders past the review
+// go through the panel as the staff would, with the browser login and TOTP,
+// and are paid through the simulated gateway. No real data enters the
 // environment.
 package main
 
@@ -21,11 +23,17 @@ import (
 
 type seeder struct {
 	base  string
+	panel string
 	login *devlogin.Client
+	staff map[string]string // panel tokens by username
 }
+
+// steps is the order lifecycle the seed walks, up to each model's target.
+var steps = []string{"quoted", "awaiting_review", "awaiting_payment", "paid", "in_production"}
 
 func main() {
 	base := flag.String("url", "https://localhost", "API address")
+	panel := flag.String("panel", "https://localhost:9445", "panel address")
 	issuer := flag.String("issuer", "https://localhost:8444/realms/nugget", "Keycloak realm URL")
 	secrets := flag.String("secrets", "secrets", "secrets directory")
 	flag.Parse()
@@ -35,18 +43,20 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	s := seeder{base: *base, login: login}
+	s := seeder{base: *base, panel: *panel, login: login, staff: map[string]string{}}
 
 	models := []struct {
 		owner   devlogin.Account
 		name    string
 		x, y, z float32
-		// order: "" for none, "quoted" or "awaiting_review".
+		// order: "" for none, or one of steps.
 		order string
 	}{
 		{devlogin.CustomerA, "bracket", 10, 20, 30, "awaiting_review"},
 		{devlogin.CustomerA, "plate", 50, 50, 5, "quoted"},
-		{devlogin.CustomerB, "housing", 80, 40, 20, "awaiting_review"},
+		{devlogin.CustomerA, "gear", 30, 30, 10, "in_production"},
+		{devlogin.CustomerB, "housing", 80, 40, 20, "awaiting_payment"},
+		{devlogin.CustomerB, "clip", 15, 10, 5, "paid"},
 		{devlogin.CustomerB, "beam", 320, 20, 20, "awaiting_review"},
 	}
 	for _, m := range models {
@@ -68,13 +78,76 @@ func main() {
 		}
 		body, _ := json.Marshal(map[string]any{
 			"file_id": file.ID, "material": "pla", "color": "black", "quality": "standard", "finishing": "none", "quantity": 2,
+			"shipping": map[string]string{
+				"recipient": m.owner.Username, "street": "Avenida Paulista", "number": "1000",
+				"city": "São Paulo", "state": "SP", "postal_code": "01310-100",
+			},
 		})
 		s.call(ctx, http.MethodPost, "/api/v1/orders", token, "application/json", body, http.StatusCreated, &order)
-		if m.order == "awaiting_review" {
-			s.call(ctx, http.MethodPost, "/api/v1/orders/"+order.ID+"/submit", token, "", nil, http.StatusOK, nil)
-		}
+		s.advance(ctx, token, order.ID, m.order)
 		fmt.Printf("%-10s  %-8s  order %s (%s)\n", m.owner.Username, m.name, order.ID, m.order)
 	}
+}
+
+// advance walks the order from quoted up to the target step.
+func (s seeder) advance(ctx context.Context, token, id, target string) {
+	for _, step := range steps[1:] {
+		switch step {
+		case "awaiting_review":
+			s.call(ctx, http.MethodPost, "/api/v1/orders/"+id+"/submit", token, "", nil, http.StatusOK, nil)
+		case "awaiting_payment":
+			assign, _ := json.Marshal(map[string]string{"technician_id": devlogin.Technician.ID.String()})
+			s.panelCall(ctx, devlogin.Admin, "/panel/v1/orders/"+id+"/assign", assign, http.StatusOK)
+			review := []byte(`{"decision":"approved","report":"seed: walls thick enough, fits the printer"}`)
+			s.panelCall(ctx, devlogin.Technician, "/panel/v1/orders/"+id+"/review", review, http.StatusOK)
+		case "paid":
+			s.call(ctx, http.MethodPost, "/api/v1/orders/"+id+"/payment", token, "", nil, http.StatusAccepted, nil)
+			s.waitOrder(ctx, token, id, "paid")
+		case "in_production":
+			s.panelCall(ctx, devlogin.Technician, "/panel/v1/orders/"+id+"/production", nil, http.StatusOK)
+		}
+		if step == target {
+			return
+		}
+	}
+}
+
+// panelCall logs the staff account in through the browser flow once, since
+// Keycloak refuses a TOTP code that was already used.
+func (s seeder) panelCall(ctx context.Context, a devlogin.Account, path string, body []byte, want int) {
+	token, ok := s.staff[a.Username]
+	if !ok {
+		browser, err := s.login.NewBrowser()
+		if err != nil {
+			log.Fatal(err)
+		}
+		tokens, err := browser.Login(ctx, a, devlogin.PanelLogin)
+		if err != nil {
+			log.Fatal(err)
+		}
+		token = tokens.Access
+		s.staff[a.Username] = token
+	}
+	contentType := ""
+	if body != nil {
+		contentType = "application/json"
+	}
+	s.do(ctx, http.MethodPost, s.panel+path, token, contentType, body, want, nil)
+}
+
+// waitOrder waits for the gateway's signed notification.
+func (s seeder) waitOrder(ctx context.Context, token, id, want string) {
+	for range 60 {
+		var o struct {
+			Status string `json:"status"`
+		}
+		s.call(ctx, http.MethodGet, "/api/v1/orders/"+id, token, "", nil, http.StatusOK, &o)
+		if o.Status == want {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	log.Fatalf("order %s did not reach %s", id, want)
 }
 
 func (s seeder) waitProcessed(ctx context.Context, token, fileID string) {
@@ -92,7 +165,11 @@ func (s seeder) waitProcessed(ctx context.Context, token, fileID string) {
 }
 
 func (s seeder) call(ctx context.Context, method, path, token, contentType string, body []byte, want int, out any) {
-	req, err := http.NewRequestWithContext(ctx, method, s.base+path, bytes.NewReader(body))
+	s.do(ctx, method, s.base+path, token, contentType, body, want, out)
+}
+
+func (s seeder) do(ctx context.Context, method, url, token, contentType string, body []byte, want int, out any) {
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -107,11 +184,11 @@ func (s seeder) call(ctx context.Context, method, path, token, contentType strin
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != want {
-		log.Fatalf("%s %s: %s: %s", method, path, resp.Status, data)
+		log.Fatalf("%s %s: %s: %s", method, url, resp.Status, data)
 	}
 	if out != nil {
 		if err := json.Unmarshal(data, out); err != nil {
-			log.Fatalf("%s %s: %v", method, path, err)
+			log.Fatalf("%s %s: %v", method, url, err)
 		}
 	}
 }

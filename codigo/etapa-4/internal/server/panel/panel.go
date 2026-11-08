@@ -13,6 +13,7 @@ import (
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/orders"
+	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/server"
 	"nuggetmachine/internal/session"
 )
@@ -29,6 +30,11 @@ type Presigner interface {
 	PresignGet(key string, ttl time.Duration) (string, error)
 }
 
+// Carrier is the shipping partner, reached on the partners network.
+type Carrier interface {
+	CreateShipment(ctx context.Context, r partners.ShipmentRequest) (partners.Shipment, error)
+}
+
 type Deps struct {
 	Verifier      *auth.Verifier
 	Sessions      session.Store
@@ -38,6 +44,7 @@ type Deps struct {
 	IdP           IdP
 	Orders        *orders.Store
 	Files         Presigner
+	Carrier       Carrier
 	// StepUpMaxAge is how recent the login must be for a critical operation.
 	StepUpMaxAge   time.Duration
 	Now            func() time.Time
@@ -72,6 +79,8 @@ func New(d Deps) (*server.Router, error) {
 	v1.Handle(http.MethodPost, "/orders/:id/assign", admin, h.assign)
 	v1.Handle(http.MethodPost, "/orders/:id/file", technician, critical, h.file)
 	v1.Handle(http.MethodPost, "/orders/:id/review", technician, h.review)
+	v1.Handle(http.MethodPost, "/orders/:id/production", technician, h.startProduction)
+	v1.Handle(http.MethodPost, "/orders/:id/ship", technician, h.ship)
 
 	v1.Handle(http.MethodGet, "/price-tables", admin, h.priceTables)
 	v1.Handle(http.MethodPost, "/price-tables", admin, h.proposePriceTable)

@@ -117,8 +117,11 @@ func (s *Store) Create(ctx context.Context, o Order) error {
 		if err := q.InsertOrder(ctx, ordersdb.InsertOrderParams{
 			ID: o.ID, OwnerID: o.OwnerID, FileID: o.FileID,
 			Material: o.Material, Color: o.Color, Quality: o.Quality, Finishing: o.Finishing, Quantity: o.Quantity,
-			PriceTableVersion: o.PriceTableVersion, UnitCents: o.UnitCents, DiscountCents: o.DiscountCents, TotalCents: o.TotalCents,
+			PriceTableVersion: o.PriceTableVersion, UnitCents: o.UnitCents, DiscountCents: o.DiscountCents,
+			ShippingCents: o.ShippingCents, TotalCents: o.TotalCents,
 			VolumeMm3: o.VolumeMm3, BboxMm: o.BboxMm, DfmFlags: o.DfmFlags, Status: o.Status, QuoteExpiresAt: o.QuoteExpiresAt,
+			ShipRecipient: o.ShipRecipient, ShipStreet: o.ShipStreet, ShipNumber: o.ShipNumber,
+			ShipCity: o.ShipCity, ShipState: o.ShipState, ShipPostalCode: o.ShipPostalCode,
 		}); err != nil {
 			return err
 		}
@@ -158,6 +161,20 @@ func (s *Store) History(ctx context.Context, id uuid.UUID) ([]Change, error) {
 		out = append(out, Change{From: r.FromStatus, To: r.ToStatus, At: r.At})
 	}
 	return out, nil
+}
+
+// Details loads what the detail page of an order shows besides the order.
+func (s *Store) Details(ctx context.Context, id uuid.UUID) (Details, error) {
+	var d Details
+	var err error
+	if d.History, err = s.History(ctx, id); err != nil {
+		return d, err
+	}
+	if d.Review, err = s.ReviewOf(ctx, id); err != nil {
+		return d, err
+	}
+	d.Payment, err = s.LivePayment(ctx, id)
+	return d, err
 }
 
 // ReviewOf returns nil when the order was not reviewed yet.
@@ -259,6 +276,140 @@ func (s *Store) ApprovePriceTable(ctx context.Context, version int64, admin uuid
 		}
 		return nil
 	})
+}
+
+// SystemActor marks the changes made by a partner, not by a person, in the
+// status history.
+var SystemActor = uuid.Nil
+
+// ErrRejected is a partner event that does not match what the platform
+// knows: unknown charge, other order, wrong amount or wrong shipment.
+var ErrRejected = errors.New("partner event rejected")
+
+type Payment struct {
+	ChargeID    string    `json:"charge_id"`
+	AmountCents int64     `json:"amount_cents"`
+	Status      string    `json:"status"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// LivePayment returns the pending or succeeded charge of the order, or nil.
+func (s *Store) LivePayment(ctx context.Context, order uuid.UUID) (*Payment, error) {
+	p, err := s.q.LivePayment(ctx, order)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &Payment{ChargeID: p.ChargeID, AmountCents: p.AmountCents, Status: p.Status, CreatedAt: p.CreatedAt}, nil
+}
+
+func (s *Store) AddPayment(ctx context.Context, order uuid.UUID, charge string, amount int64) error {
+	return s.q.InsertPayment(ctx, ordersdb.InsertPaymentParams{ChargeID: charge, OrderID: order, AmountCents: amount})
+}
+
+// PaymentEvent is what the gateway reports, already authenticated by the
+// webhook signature.
+type PaymentEvent struct {
+	EventID     string
+	ChargeID    string
+	OrderID     uuid.UUID
+	AmountCents int64
+}
+
+// ApplyPayment marks the order paid when the event matches the charge and the
+// order total. A replayed event changes nothing and reports applied=false.
+// Everything happens in one transaction: a rejected event leaves no trace in
+// the tables.
+func (s *Store) ApplyPayment(ctx context.Context, ev PaymentEvent) (applied bool, err error) {
+	err = s.tx(ctx, func(q *ordersdb.Queries) error {
+		n, err := q.RecordPartnerEvent(ctx, ordersdb.RecordPartnerEventParams{EventID: ev.EventID, Partner: "payments", Type: "payment.succeeded"})
+		if err != nil || n == 0 {
+			return err
+		}
+		p, err := q.LockPayment(ctx, ev.ChargeID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("%w: unknown charge %s", ErrRejected, ev.ChargeID)
+		}
+		if err != nil {
+			return err
+		}
+		o, err := q.GetOrder(ctx, ev.OrderID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && p.OrderID != o.ID) {
+			return fmt.Errorf("%w: charge %s is not of order %s", ErrRejected, ev.ChargeID, ev.OrderID)
+		}
+		if err != nil {
+			return err
+		}
+		if ev.AmountCents != p.AmountCents || ev.AmountCents != o.TotalCents {
+			return fmt.Errorf("%w: amount_mismatch: %d paid, order total %d", ErrRejected, ev.AmountCents, o.TotalCents)
+		}
+		changed, err := q.SucceedPayment(ctx, p.ChargeID)
+		if err != nil {
+			return err
+		}
+		if changed == 0 {
+			return fmt.Errorf("%w: charge %s is %s", ErrRejected, p.ChargeID, p.Status)
+		}
+		if err := transition(ctx, q, o.ID, StatusAwaitingPayment, StatusPaid, SystemActor); err != nil {
+			return fmt.Errorf("%w: order %s is %s", ErrRejected, o.ID, o.Status)
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
+}
+
+// SetShipment keeps the carrier's references, once, while in production.
+func (s *Store) SetShipment(ctx context.Context, id uuid.UUID, shipment, tracking string) error {
+	n, err := s.q.SetShipment(ctx, ordersdb.SetShipmentParams{ID: id, ShipmentID: &shipment, TrackingCode: &tracking})
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("%w: only an order in production without a shipment can ship", ErrConflict)
+	}
+	return nil
+}
+
+// ShippingEvent is what the carrier reports, already authenticated.
+type ShippingEvent struct {
+	EventID    string
+	Type       string // shipment.picked_up or shipment.delivered
+	ShipmentID string
+	OrderID    uuid.UUID
+}
+
+// ApplyShipping moves the order with the carrier: picked up means shipped,
+// then delivered. The shipment must be the one the panel created for the
+// order.
+func (s *Store) ApplyShipping(ctx context.Context, ev ShippingEvent) (applied bool, err error) {
+	from, to := StatusInProduction, StatusShipped
+	if ev.Type == "shipment.delivered" {
+		from, to = StatusShipped, StatusDelivered
+	} else if ev.Type != "shipment.picked_up" {
+		return false, fmt.Errorf("%w: event type %q", ErrRejected, ev.Type)
+	}
+	err = s.tx(ctx, func(q *ordersdb.Queries) error {
+		n, err := q.RecordPartnerEvent(ctx, ordersdb.RecordPartnerEventParams{EventID: ev.EventID, Partner: "shipping", Type: ev.Type})
+		if err != nil || n == 0 {
+			return err
+		}
+		o, err := q.GetOrder(ctx, ev.OrderID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (o.ShipmentID == nil || *o.ShipmentID != ev.ShipmentID)) {
+			return fmt.Errorf("%w: shipment %s is not of order %s", ErrRejected, ev.ShipmentID, ev.OrderID)
+		}
+		if err != nil {
+			return err
+		}
+		if err := transition(ctx, q, o.ID, from, to, SystemActor); err != nil {
+			return fmt.Errorf("%w: order %s is %s", ErrRejected, o.ID, o.Status)
+		}
+		applied = true
+		return nil
+	})
+	return applied, err
 }
 
 func transition(ctx context.Context, q *ordersdb.Queries, id uuid.UUID, from, to Status, actor uuid.UUID) error {

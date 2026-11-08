@@ -39,6 +39,15 @@ type Order struct {
 	QuoteExpiresAt     time.Time
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	ShippingCents      int64
+	ShipRecipient      string
+	ShipStreet         string
+	ShipNumber         string
+	ShipCity           string
+	ShipState          string
+	ShipPostalCode     string
+	ShipmentID         *string
+	TrackingCode       *string
 }
 
 type OrderStatusHistory struct {
@@ -48,6 +57,22 @@ type OrderStatusHistory struct {
 	ToStatus   string
 	Actor      uuid.UUID
 	At         time.Time
+}
+
+type PartnerEvent struct {
+	EventID    string
+	Partner    string
+	Type       string
+	ReceivedAt time.Time
+}
+
+type Payment struct {
+	ChargeID    string
+	OrderID     uuid.UUID
+	AmountCents int64
+	Status      string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type PriceTable struct {

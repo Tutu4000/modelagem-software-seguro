@@ -1,6 +1,7 @@
 package orders
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pricing"
 	"nuggetmachine/internal/problem"
 	"nuggetmachine/internal/server"
@@ -27,6 +29,18 @@ type Handler struct {
 	Audit       *audit.Logger
 	BuildVolume [3]float64
 	Now         func() time.Time
+	// Gateway and Carrier are the partners (FC5), reached on the partners
+	// network.
+	Gateway Gateway
+	Carrier Carrier
+}
+
+type Gateway interface {
+	CreateCharge(ctx context.Context, r partners.ChargeRequest) (partners.Charge, error)
+}
+
+type Carrier interface {
+	Quote(ctx context.Context, r partners.QuoteRequest) (partners.ShippingQuote, error)
 }
 
 // Catalog is the active price table, for the front-end to build the order
@@ -41,12 +55,13 @@ func (h *Handler) Catalog(c *gin.Context) {
 }
 
 type createRequest struct {
-	FileID    uuid.UUID `json:"file_id"`
-	Material  string    `json:"material"`
-	Color     string    `json:"color"`
-	Quality   string    `json:"quality"`
-	Finishing string    `json:"finishing"`
-	Quantity  int       `json:"quantity"`
+	FileID    uuid.UUID        `json:"file_id"`
+	Material  string           `json:"material"`
+	Color     string           `json:"color"`
+	Quality   string           `json:"quality"`
+	Finishing string           `json:"finishing"`
+	Quantity  int              `json:"quantity"`
+	Shipping  partners.Address `json:"shipping"`
 }
 
 // Create quotes an order on the server, from the customer's processed file and
@@ -56,6 +71,10 @@ func (h *Handler) Create(c *gin.Context) {
 	user := auth.MustUser(c)
 	var req createRequest
 	if err := server.DecodeJSON(c, &req); err != nil {
+		problem.Abort(c, problem.New(problem.InvalidRequest, err))
+		return
+	}
+	if err := req.Shipping.Validate(); err != nil {
 		problem.Abort(c, problem.New(problem.InvalidRequest, err))
 		return
 	}
@@ -92,22 +111,73 @@ func (h *Handler) Create(c *gin.Context) {
 		problem.Abort(c, problem.New(problem.InvalidRequest, err))
 		return
 	}
+	// The carrier quotes the shipping of all units (RF07). Without it there
+	// is no total, so no order (D03).
+	shipping, err := h.Carrier.Quote(ctx, partners.QuoteRequest{
+		PostalCode: req.Shipping.PostalCode,
+		VolumeCM3:  *task.VolumeMM3 / 1000 * float64(req.Quantity),
+	})
+	if err != nil {
+		problem.Abort(c, problem.New(problem.PartnerUnavailable, err))
+		return
+	}
+	quote = quote.WithShipping(shipping.PriceCents)
 
 	now := h.Now()
+	a := req.Shipping
 	o := Order{
 		ID: uuid.New(), OwnerID: uuid.UUID(user.ID()), FileID: uuid.UUID(file.ID),
 		Material: req.Material, Color: req.Color, Quality: req.Quality, Finishing: req.Finishing,
 		Quantity:          int32(req.Quantity), // #nosec G115 -- Quote limits the quantity to 1..1000
-		PriceTableVersion: version, UnitCents: quote.UnitCents, DiscountCents: quote.DiscountCents, TotalCents: quote.TotalCents,
+		PriceTableVersion: version, UnitCents: quote.UnitCents, DiscountCents: quote.DiscountCents,
+		ShippingCents: quote.ShippingCents, TotalCents: quote.TotalCents,
 		VolumeMm3: *task.VolumeMM3, BboxMm: task.BBoxMM[:], DfmFlags: pricing.DFM(*task.BBoxMM, h.BuildVolume),
 		Status: string(StatusQuoted), QuoteExpiresAt: now.Add(QuoteValidity), CreatedAt: now,
+		ShipRecipient: a.Recipient, ShipStreet: a.Street, ShipNumber: a.Number,
+		ShipCity: a.City, ShipState: a.State, ShipPostalCode: a.PostalCode,
 	}
 	if err := h.Store.Create(ctx, o); err != nil {
 		problem.Abort(c, err)
 		return
 	}
 	h.record(c, "order.created", o.ID, fmt.Sprintf("total %d cents, price table %d", o.TotalCents, version))
-	c.JSON(http.StatusCreated, NewView(o, nil, nil))
+	c.JSON(http.StatusCreated, NewView(o, Details{}))
+}
+
+// Pay creates the charge at the gateway for the total computed by the server
+// (C14). The order only becomes paid when the gateway's signed notification
+// arrives. A second call while a charge is pending returns the same charge.
+func (h *Handler) Pay(c *gin.Context) {
+	user := auth.MustUser(c)
+	o, ok := h.own(c, user)
+	if !ok {
+		return
+	}
+	if Status(o.Status) != StatusAwaitingPayment {
+		problem.Abort(c, problem.New(problem.Conflict, fmt.Errorf("order %s is %s", o.ID, o.Status)))
+		return
+	}
+	ctx := c.Request.Context()
+	if p, err := h.Store.LivePayment(ctx, o.ID); err != nil {
+		problem.Abort(c, err)
+		return
+	} else if p != nil {
+		c.JSON(http.StatusAccepted, p)
+		return
+	}
+	charge, err := h.Gateway.CreateCharge(ctx, partners.ChargeRequest{
+		OrderID: o.ID, AmountCents: o.TotalCents, IdempotencyKey: "order-" + o.ID.String(),
+	})
+	if err != nil {
+		problem.Abort(c, problem.New(problem.PartnerUnavailable, err))
+		return
+	}
+	if err := h.Store.AddPayment(ctx, o.ID, charge.ChargeID, o.TotalCents); err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	h.record(c, "payment.requested", o.ID, fmt.Sprintf("charge %s, %d cents", charge.ChargeID, o.TotalCents))
+	c.JSON(http.StatusAccepted, Payment{ChargeID: charge.ChargeID, AmountCents: o.TotalCents, Status: "pending", CreatedAt: h.Now()})
 }
 
 // Submit sends a quoted order to technical review, while the quote holds.
@@ -136,7 +206,7 @@ func (h *Handler) Submit(c *gin.Context) {
 	}
 	h.record(c, "order.submitted", o.ID, "")
 	o.Status = string(StatusAwaitingReview)
-	c.JSON(http.StatusOK, NewView(o, nil, nil))
+	c.JSON(http.StatusOK, NewView(o, Details{}))
 }
 
 func (h *Handler) List(c *gin.Context) {
@@ -148,30 +218,25 @@ func (h *Handler) List(c *gin.Context) {
 	}
 	out := make([]View, 0, len(list))
 	for _, o := range list {
-		out = append(out, NewView(o, nil, nil))
+		out = append(out, NewView(o, Details{}))
 	}
 	c.JSON(http.StatusOK, gin.H{"orders": out})
 }
 
-// Get shows one order with its history (RF12) and the review result (RF20).
+// Get shows one order with its history and tracking (RF12), the review result
+// (RF20) and the payment.
 func (h *Handler) Get(c *gin.Context) {
 	user := auth.MustUser(c)
 	o, ok := h.own(c, user)
 	if !ok {
 		return
 	}
-	ctx := c.Request.Context()
-	history, err := h.Store.History(ctx, o.ID)
+	d, err := h.Store.Details(c.Request.Context(), o.ID)
 	if err != nil {
 		problem.Abort(c, err)
 		return
 	}
-	review, err := h.Store.ReviewOf(ctx, o.ID)
-	if err != nil {
-		problem.Abort(c, err)
-		return
-	}
-	c.JSON(http.StatusOK, NewView(o, history, review))
+	c.JSON(http.StatusOK, NewView(o, d))
 }
 
 // own finds an order of the user. Someone else's order and a missing one get

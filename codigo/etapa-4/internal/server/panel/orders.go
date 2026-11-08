@@ -16,6 +16,7 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/authz"
 	"nuggetmachine/internal/orders"
+	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pricing"
 	"nuggetmachine/internal/problem"
 	"nuggetmachine/internal/server"
@@ -47,11 +48,18 @@ func (h handlers) respondList(c *gin.Context, list []orders.Order, err error) {
 		problem.Abort(c, err)
 		return
 	}
+	address := seesAddress(auth.MustUser(c))
 	out := make([]orders.StaffView, 0, len(list))
 	for _, o := range list {
-		out = append(out, orders.NewStaffView(o, nil, nil))
+		out = append(out, orders.NewStaffView(o, orders.Details{}, address))
 	}
 	c.JSON(http.StatusOK, gin.H{"orders": out})
+}
+
+// seesAddress: support and admin handle deliveries; the technician does not
+// need the customer's address (LGPD: data minimization).
+func seesAddress(u auth.User) bool {
+	return u.Role() == auth.RoleSupport || u.Role() == auth.RoleAdmin
 }
 
 func (h handlers) getOrder(c *gin.Context) {
@@ -60,18 +68,54 @@ func (h handlers) getOrder(c *gin.Context) {
 	if !ok {
 		return
 	}
+	d, err := h.d.Orders.Details(c.Request.Context(), o.ID)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, orders.NewStaffView(o, d, seesAddress(u)))
+}
+
+// startProduction moves a paid order into production (assigned technician).
+func (h handlers) startProduction(c *gin.Context) {
+	u := auth.MustUser(c)
+	o, ok := h.order(c, func(o orders.Order) error { return authz.CanWorkOnOrder(u, techOf(o)) })
+	if !ok {
+		return
+	}
+	if err := h.d.Orders.Transition(c.Request.Context(), o.ID, orders.Status(o.Status), orders.StatusInProduction, uuid.UUID(u.ID())); err != nil {
+		h.abortOrderError(c, err)
+		return
+	}
+	h.record(c, "order.in_production", o.ID, "")
+	c.JSON(http.StatusOK, gin.H{"id": o.ID, "status": orders.StatusInProduction})
+}
+
+// ship asks the carrier for a pickup with the order's address and keeps the
+// tracking code. The order becomes shipped when the carrier's signed
+// notification of the pickup arrives.
+func (h handlers) ship(c *gin.Context) {
+	u := auth.MustUser(c)
+	o, ok := h.order(c, func(o orders.Order) error { return authz.CanWorkOnOrder(u, techOf(o)) })
+	if !ok {
+		return
+	}
+	if orders.Status(o.Status) != orders.StatusInProduction || o.ShipmentID != nil {
+		problem.Abort(c, problem.New(problem.Conflict, fmt.Errorf("order %s is %s", o.ID, o.Status)))
+		return
+	}
 	ctx := c.Request.Context()
-	history, err := h.d.Orders.History(ctx, o.ID)
+	shipment, err := h.d.Carrier.CreateShipment(ctx, partners.ShipmentRequest{OrderID: o.ID, Address: orders.AddressOf(o)})
 	if err != nil {
-		problem.Abort(c, err)
+		problem.Abort(c, problem.New(problem.PartnerUnavailable, err))
 		return
 	}
-	review, err := h.d.Orders.ReviewOf(ctx, o.ID)
-	if err != nil {
-		problem.Abort(c, err)
+	if err := h.d.Orders.SetShipment(ctx, o.ID, shipment.ShipmentID, shipment.TrackingCode); err != nil {
+		h.abortOrderError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, orders.NewStaffView(o, history, review))
+	h.record(c, "shipment.requested", o.ID, "tracking "+shipment.TrackingCode)
+	c.JSON(http.StatusAccepted, gin.H{"id": o.ID, "shipment_id": shipment.ShipmentID, "tracking_code": shipment.TrackingCode})
 }
 
 // assign gives an order awaiting review to a technician. Keycloak confirms

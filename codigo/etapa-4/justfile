@@ -42,7 +42,7 @@ token who="a":
 panel-token who="admin":
     go run ./cmd/token -panel -user {{ who }}
 
-# Upload fictitious STLs for customers A and B through the public API
+# Upload fictitious STLs for customers A and B and walk their orders up to production
 seed:
     go run ./cmd/seed
 

@@ -25,6 +25,8 @@ import (
 
 	"nuggetmachine/internal/devlogin"
 	"nuggetmachine/internal/fakestl"
+	"nuggetmachine/internal/partners"
+	"nuggetmachine/internal/webhook"
 )
 
 const (
@@ -328,6 +330,8 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 		{"panel_orders cannot change a price", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "UPDATE orders SET total_cents = 0"},
 		{"orders cannot read tasks", "postgres", "nugget", "orders", "db_orders_password", "SELECT 1 FROM tasks LIMIT 1"},
 		{"panel_orders cannot read files", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "SELECT 1 FROM files LIMIT 1"},
+		{"panel_orders cannot mark a payment", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "UPDATE payments SET status = 'succeeded'"},
+		{"orders cannot change a payment amount", "postgres", "nugget", "orders", "db_orders_password", "UPDATE payments SET amount_cents = 1"},
 		{"audit cannot update events", "postgres-audit", "audit", "audit_app", "db_audit_password", "UPDATE events SET result = 'x'"},
 		{"audit cannot delete events", "postgres-audit", "audit", "audit_app", "db_audit_password", "DELETE FROM events"},
 	}
@@ -532,9 +536,18 @@ type orderView struct {
 	ID                string `json:"id"`
 	Status            string `json:"status"`
 	UnitCents         int64  `json:"unit_cents"`
+	ShippingCents     int64  `json:"shipping_cents"`
 	TotalCents        int64  `json:"total_cents"`
 	PriceTableVersion int64  `json:"price_table_version"`
-	History           []struct {
+	TrackingCode      string `json:"tracking_code"`
+	Shipping          *struct {
+		PostalCode string `json:"postal_code"`
+	} `json:"shipping"`
+	Payment *struct {
+		ChargeID string `json:"charge_id"`
+		Status   string `json:"status"`
+	} `json:"payment"`
+	History []struct {
 		To string `json:"to"`
 	} `json:"history"`
 	Review *struct {
@@ -573,7 +586,8 @@ func processedFile(t *testing.T, token string, x, y, z float32) string {
 	return id
 }
 
-const plaOrder = `{"file_id":%q,"material":"pla","color":"black","quality":"standard","finishing":"none","quantity":2}`
+const plaOrder = `{"file_id":%q,"material":"pla","color":"black","quality":"standard","finishing":"none","quantity":2,` +
+	`"shipping":{"recipient":"Customer Test","street":"Avenida Paulista","number":"1000","city":"São Paulo","state":"SP","postal_code":"01310-100"}}`
 
 func createOrder(t *testing.T, token, fileID string) orderView {
 	t.Helper()
@@ -604,8 +618,9 @@ func TestOrderQuoteFollowsTheCatalog(t *testing.T) {
 	o := createOrder(t, token, file)
 
 	unit := (6*cat.Rules.Materials["pla"].CentsPerCM3*cat.Rules.Qualities["standard"]+999)/1000 + cat.Rules.Finishings["none"]
-	if o.Status != "quoted" || o.UnitCents != unit || o.TotalCents != 2*unit+cat.Rules.SetupCents || o.PriceTableVersion != cat.Version {
-		t.Errorf("order %+v, want unit %d, total %d and table %d", o, unit, 2*unit+cat.Rules.SetupCents, cat.Version)
+	want := 2*unit + cat.Rules.SetupCents + o.ShippingCents
+	if o.Status != "quoted" || o.UnitCents != unit || o.ShippingCents <= 0 || o.TotalCents != want || o.PriceTableVersion != cat.Version {
+		t.Errorf("order %+v, want unit %d, shipping quoted, total %d and table %d", o, unit, want, cat.Version)
 	}
 	resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/submit", token, "")
 	wantStatus(t, resp, http.StatusOK)
@@ -766,6 +781,262 @@ func TestPriceTableNeedsTwoAdmins(t *testing.T) {
 	decode(t, resp, &kept)
 	if kept.TotalCents != old.TotalCents || kept.PriceTableVersion != old.PriceTableVersion {
 		t.Errorf("the old order changed: %+v, was %+v", kept, old)
+	}
+}
+
+// approvedOrder takes a new order of the customer to awaiting_payment: quote,
+// submission, assignment and approval by the technician.
+func approvedOrder(t *testing.T, customer string) orderView {
+	t.Helper()
+	o := submittedOrder(t, customer, processedFile(t, customer, 10, 10, 10))
+	wantStatus(t, panelDo(t, http.MethodPost, "/panel/v1/orders/"+o.ID+"/assign", staff(t, devlogin.Admin),
+		`{"technician_id":"`+devlogin.Technician.ID.String()+`"}`), http.StatusOK)
+	wantStatus(t, panelDo(t, http.MethodPost, "/panel/v1/orders/"+o.ID+"/review", staff(t, devlogin.Technician),
+		`{"decision":"approved","report":"e2e: approved for the payment tests"}`), http.StatusOK)
+	o.Status = "awaiting_payment"
+	return o
+}
+
+func orderOf(t *testing.T, customer, id string) orderView {
+	t.Helper()
+	resp := apiJSON(t, http.MethodGet, "/api/v1/orders/"+id, customer, "")
+	wantStatus(t, resp, http.StatusOK)
+	var o orderView
+	decode(t, resp, &o)
+	return o
+}
+
+// waitOrder polls once a second: the per-user limit (60 per minute) is shared
+// with the rest of the test.
+func waitOrder(t *testing.T, customer, id, want string) orderView {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		o := orderOf(t, customer, id)
+		if o.Status == want {
+			return o
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("order %s stayed %q, want %q", id, o.Status, want)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func pay(t *testing.T, customer, id string) string {
+	t.Helper()
+	resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+id+"/payment", customer, "")
+	wantStatus(t, resp, http.StatusAccepted)
+	var p struct {
+		ChargeID string `json:"charge_id"`
+	}
+	decode(t, resp, &p)
+	return p.ChargeID
+}
+
+// E8.2 and E8.3 from end to end: the gateway's signed notification pays the
+// order, the technician starts production and books the pickup, and the
+// carrier's notifications ship and deliver it.
+func TestOrderFromPaymentToDelivery(t *testing.T) {
+	customer := login(t, devlogin.CustomerA)
+	o := approvedOrder(t, customer)
+
+	pay(t, customer, o.ID)
+	paid := waitOrder(t, customer, o.ID, "paid")
+	if paid.Payment == nil || paid.Payment.Status != "succeeded" {
+		t.Errorf("payment %+v, want succeeded", paid.Payment)
+	}
+
+	tech := staff(t, devlogin.Technician)
+	orderPath := "/panel/v1/orders/" + o.ID
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/ship", tech, ""), http.StatusConflict)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/production", staff(t, devlogin.Technician2), ""), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/production", tech, ""), http.StatusOK)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/ship", tech, ""), http.StatusAccepted)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/ship", tech, ""), http.StatusConflict)
+
+	done := waitOrder(t, customer, o.ID, "delivered")
+	var steps []string
+	for _, h := range done.History {
+		steps = append(steps, h.To)
+	}
+	want := []string{"quoted", "awaiting_review", "awaiting_payment", "paid", "in_production", "shipped", "delivered"}
+	if !slices.Equal(steps, want) || done.TrackingCode == "" {
+		t.Errorf("history %v and tracking %q, want %v and a tracking code", steps, done.TrackingCode, want)
+	}
+
+	// The audit record is written right after the commit that the status
+	// poll already sees, so it is polled too.
+	want = []string{"order.in_production", "payment.requested", "payment.succeeded", "shipment.delivered", "shipment.picked_up", "shipment.requested"}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+			"SELECT DISTINCT name FROM events WHERE target = '"+o.ID+"' AND name LIKE ANY (ARRAY['payment.%', 'shipment.%', 'order.in_production']) ORDER BY name")
+		got := strings.Fields(out)
+		if slices.Equal(got, want) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("audit events %v, want %v", got, want)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+}
+
+// signedPost sends a webhook to the public address as the partner would, or
+// as an attacker who does not have the secret. It keeps to the nginx rate per
+// IP (10 r/s), so a burst of attacks is not cut by the limiter instead of by
+// the signature check.
+func signedPost(t *testing.T, path string, secret []byte, at time.Time, body []byte) *http.Response {
+	t.Helper()
+	time.Sleep(150 * time.Millisecond)
+	req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if secret != nil {
+		req.Header.Set(webhook.Header, webhook.Sign(secret, at, body))
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { resp.Body.Close() })
+	return resp
+}
+
+// C14: the payment webhook is public, so the signature, the timestamp, the
+// event ID and the amount are what protect it. The test plays the gateway
+// with the real secret, and an attacker without it, before the simulator's
+// own notification arrives.
+func TestPaymentWebhookAttacks(t *testing.T) {
+	customer := login(t, devlogin.CustomerB)
+	o := approvedOrder(t, customer)
+	charge := pay(t, customer, o.ID)
+	secret := []byte(readSecret(t, "partner_payments_webhook_secret"))
+	const path = "/api/v1/webhooks/payments"
+	event := func(id string, amount int64) []byte {
+		b, _ := json.Marshal(partners.PaymentEvent{EventID: id, Type: partners.PaymentSucceeded, ChargeID: charge,
+			OrderID: uuid.MustParse(o.ID), AmountCents: amount})
+		return b
+	}
+	now := time.Now()
+
+	good := event("evt_e2e_"+uuid.NewString(), o.TotalCents)
+	altered := bytes.Replace(good, []byte(strconv.FormatInt(o.TotalCents, 10)), []byte("1"), 1)
+	attacks := map[string]*http.Response{
+		"no signature":   signedPost(t, path, nil, now, good),
+		"another secret": signedPost(t, path, []byte("guessed-secret"), now, good),
+		"old timestamp":  signedPost(t, path, secret, now.Add(-10*time.Minute), good),
+		"wrong amount":   signedPost(t, path, secret, now, event("evt_e2e_"+uuid.NewString(), 1)),
+		"unknown charge": signedPost(t, path, secret, now, bytes.Replace(good, []byte(charge), []byte("ch_forged"), 1)),
+	}
+	time.Sleep(150 * time.Millisecond)
+	req, _ := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(altered))
+	req.Header.Set(webhook.Header, webhook.Sign(secret, now, good))
+	altResp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	altResp.Body.Close()
+	attacks["body altered after signing"] = altResp
+	for name, resp := range attacks {
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, resp.StatusCode)
+		}
+	}
+	if st := orderOf(t, customer, o.ID).Status; st != "awaiting_payment" {
+		t.Fatalf("after the attacks the order is %q, want awaiting_payment", st)
+	}
+
+	first := signedPost(t, path, secret, now, good)
+	replay := signedPost(t, path, secret, now, good)
+	if first.StatusCode != http.StatusOK || replay.StatusCode != http.StatusOK {
+		t.Errorf("valid event got %d, replay %d, want 200 and 200", first.StatusCode, replay.StatusCode)
+	}
+	var replayed struct {
+		Status string `json:"status"`
+	}
+	decode(t, replay, &replayed)
+	if replayed.Status != "duplicate" {
+		t.Errorf("replay answered %q, want duplicate", replayed.Status)
+	}
+	if st := orderOf(t, customer, o.ID).Status; st != "paid" {
+		t.Errorf("order %q, want paid", st)
+	}
+
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT count(*) FROM events WHERE name = 'payment.rejected' AND target = '"+o.ID+"' AND reason LIKE '%amount_mismatch%'")
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("payment.rejected with amount_mismatch: %q, want 1", strings.TrimSpace(out))
+	}
+}
+
+// C15: a forged carrier notification does not ship anything.
+func TestShippingWebhookForged(t *testing.T) {
+	body, _ := json.Marshal(partners.ShippingEvent{EventID: "evt_forged", Type: partners.ShipmentDelivered,
+		ShipmentID: "shp_forged", OrderID: uuid.New()})
+	for name, resp := range map[string]*http.Response{
+		"no signature":   signedPost(t, "/api/v1/webhooks/shipping", nil, time.Now(), body),
+		"another secret": signedPost(t, "/api/v1/webhooks/shipping", []byte("guessed"), time.Now(), body),
+		"payments secret on shipping": signedPost(t, "/api/v1/webhooks/shipping",
+			[]byte(readSecret(t, "partner_payments_webhook_secret")), time.Now(), body),
+	} {
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: got %d, want 400", name, resp.StatusCode)
+		}
+	}
+	// Even with the right secret, a shipment that is not the order's is refused.
+	resp := signedPost(t, "/api/v1/webhooks/shipping", []byte(readSecret(t, "partner_shipping_webhook_secret")), time.Now(), body)
+	wantStatus(t, resp, http.StatusBadRequest)
+}
+
+func TestPaymentOutOfOrder(t *testing.T) {
+	a, b := login(t, devlogin.CustomerA), login(t, devlogin.CustomerB)
+	quoted := createOrder(t, a, processedFile(t, a, 6, 6, 6))
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+quoted.ID+"/payment", a, ""), http.StatusConflict)
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+quoted.ID+"/payment", b, ""), http.StatusForbidden)
+}
+
+// D03: without the partners, nothing is quoted or charged, and the order
+// stays where it was.
+func TestPartnersDownFailSafe(t *testing.T) {
+	customer := login(t, devlogin.CustomerB)
+	o := approvedOrder(t, customer)
+	file := processedFile(t, customer, 7, 7, 7)
+	dockerCompose(t, "stop", "partnersim")
+	t.Cleanup(func() { dockerCompose(t, "start", "partnersim") })
+
+	for name, resp := range map[string]*http.Response{
+		"quote":   apiJSON(t, http.MethodPost, "/api/v1/orders", customer, fmt.Sprintf(plaOrder, file)),
+		"payment": apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/payment", customer, ""),
+	} {
+		if resp.StatusCode != http.StatusBadGateway {
+			t.Errorf("%s with the partner down got %d, want 502", name, resp.StatusCode)
+		}
+	}
+	if st := orderOf(t, customer, o.ID); st.Status != "awaiting_payment" || st.Payment != nil {
+		t.Errorf("order %+v, want awaiting_payment without a payment", st)
+	}
+}
+
+// LGPD, data minimization: support sees the delivery address; the technician
+// works on the part and does not.
+func TestAddressVisibleOnlyToWhoNeedsIt(t *testing.T) {
+	customer := login(t, devlogin.CustomerB)
+	o := approvedOrder(t, customer)
+	for _, tc := range []struct {
+		who  devlogin.Account
+		sees bool
+	}{{devlogin.Technician, false}, {devlogin.Support, true}} {
+		resp := panelDo(t, http.MethodGet, "/panel/v1/orders/"+o.ID, staff(t, tc.who), "")
+		wantStatus(t, resp, http.StatusOK)
+		var seen orderView
+		decode(t, resp, &seen)
+		if (seen.Shipping != nil) != tc.sees {
+			t.Errorf("%s sees the address: %v, want %v", tc.who.Username, seen.Shipping != nil, tc.sees)
+		}
 	}
 }
 

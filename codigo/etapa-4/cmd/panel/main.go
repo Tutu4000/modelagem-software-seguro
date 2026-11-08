@@ -21,6 +21,7 @@ import (
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/idpadmin"
 	"nuggetmachine/internal/orders"
+	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pg"
 	"nuggetmachine/internal/server/panel"
 	"nuggetmachine/internal/session"
@@ -59,6 +60,7 @@ func run(log *slog.Logger) error {
 	valkeyAddr := env.Required("VALKEY_ADDR")
 	valkeyUser := env.String("VALKEY_USER", "panel")
 	valkeyPassword := env.Secret("VALKEY_PASSWORD")
+	carrierURL, carrierKey := env.Required("CARRIER_URL"), env.Secret("CARRIER_API_KEY")
 	keycloakURL := env.Required("KEYCLOAK_ADMIN_URL")
 	realm := env.String("KEYCLOAK_REALM", "nugget")
 	adminSecret := env.Secret("KEYCLOAK_PANEL_ADMIN_SECRET")
@@ -110,6 +112,7 @@ func run(log *slog.Logger) error {
 		IdP:            idpadmin.New(keycloakURL, realm, "panel-admin", adminSecret),
 		Orders:         orders.NewStore(ordersPool),
 		Files:          storage.NewS3(s3cfg),
+		Carrier:        partners.NewClient(carrierURL, carrierKey),
 		StepUpMaxAge:   stepUp,
 		Now:            time.Now,
 		Log:            log,

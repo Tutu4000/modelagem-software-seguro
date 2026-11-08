@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -11,11 +12,14 @@ import (
 	"nuggetmachine/internal/problem"
 )
 
-// Route is one registered route and the roles it accepts.
+// Route is one registered route and how it authenticates: a bearer token with
+// the roles it accepts, or a declared signature scheme for the partners'
+// webhooks, which carry no user.
 type Route struct {
 	Method string
 	Path   string
 	Roles  []auth.Role
+	Auth   string // "bearer", or "hmac:<partner>"
 }
 
 // Router is a gin engine that only gets routes through Routes, so every route
@@ -71,7 +75,19 @@ func (r *Routes) Handle(method, path string, roles []auth.Role, handlers ...gin.
 		Method: method,
 		Path:   joinPath(r.group.BasePath(), path),
 		Roles:  roles,
+		Auth:   "bearer",
 	})
+}
+
+// HandleSigned registers a route without a user, authenticated by the
+// handler's signature check (a webhook). The scheme must be declared, so the
+// route registry still tells how every route is protected.
+func (r *Router) HandleSigned(method, path, scheme string, handlers ...gin.HandlerFunc) {
+	if !strings.HasPrefix(scheme, "hmac:") {
+		panic("route " + method + " " + path + " without a signature scheme")
+	}
+	r.Engine.Handle(method, path, handlers...)
+	r.Registered = append(r.Registered, Route{Method: method, Path: path, Auth: scheme})
 }
 
 func joinPath(base, path string) string {

@@ -20,6 +20,7 @@ import (
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/orders"
+	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pg"
 	"nuggetmachine/internal/pricing"
 	"nuggetmachine/internal/queue"
@@ -65,6 +66,9 @@ func run(log *slog.Logger) error {
 	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
 	amqpUser := env.String("AMQP_USER", "api")
 	amqpPassword := env.Secret("AMQP_PASSWORD")
+	paymentsURL, carrierURL := env.Required("PAYMENTS_URL"), env.Required("CARRIER_URL")
+	paymentsKey, carrierKey := env.Secret("PAYMENTS_API_KEY"), env.Secret("CARRIER_API_KEY")
+	paymentsSecret, shippingSecret := env.Secret("PAYMENTS_WEBHOOK_SECRET"), env.Secret("SHIPPING_WEBHOOK_SECRET")
 	valkeyAddr := env.Required("VALKEY_ADDR")
 	valkeyUser := env.String("VALKEY_USER", "api")
 	valkeyPassword := env.Secret("VALKEY_PASSWORD")
@@ -125,20 +129,24 @@ func run(log *slog.Logger) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	router, err := customer.New(customer.Deps{
-		Verifier:       verifier,
-		Files:          files.NewPostgresRepo(filesPool),
-		Store:          store,
-		Queue:          tasks,
-		Tasks:          tasks,
-		Audit:          auditLog,
-		Sessions:       sessions,
-		Limiter:        sessions,
-		RatePerMinute:  ratePerMinute,
-		Orders:         orders.NewStore(ordersPool),
-		BuildVolume:    buildVolume,
-		Now:            time.Now,
-		Log:            log,
-		TrustedProxies: trusted,
+		Verifier:              verifier,
+		Files:                 files.NewPostgresRepo(filesPool),
+		Store:                 store,
+		Queue:                 tasks,
+		Tasks:                 tasks,
+		Audit:                 auditLog,
+		Sessions:              sessions,
+		Limiter:               sessions,
+		RatePerMinute:         ratePerMinute,
+		Orders:                orders.NewStore(ordersPool),
+		BuildVolume:           buildVolume,
+		Now:                   time.Now,
+		Gateway:               partners.NewClient(paymentsURL, paymentsKey),
+		Carrier:               partners.NewClient(carrierURL, carrierKey),
+		PaymentsWebhookSecret: paymentsSecret,
+		ShippingWebhookSecret: shippingSecret,
+		Log:                   log,
+		TrustedProxies:        trusted,
 	})
 	if err != nil {
 		return err

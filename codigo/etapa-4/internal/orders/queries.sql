@@ -27,12 +27,14 @@ WHERE version = @version AND status = 'draft';
 -- name: InsertOrder :exec
 INSERT INTO orders (
 	id, owner_id, file_id, material, color, quality, finishing, quantity,
-	price_table_version, unit_cents, discount_cents, total_cents,
-	volume_mm3, bbox_mm, dfm_flags, status, quote_expires_at
+	price_table_version, unit_cents, discount_cents, shipping_cents, total_cents,
+	volume_mm3, bbox_mm, dfm_flags, status, quote_expires_at,
+	ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code
 ) VALUES (
 	@id, @owner_id, @file_id, @material, @color, @quality, @finishing, @quantity,
-	@price_table_version, @unit_cents, @discount_cents, @total_cents,
-	@volume_mm3, @bbox_mm, @dfm_flags, @status, @quote_expires_at
+	@price_table_version, @unit_cents, @discount_cents, @shipping_cents, @total_cents,
+	@volume_mm3, @bbox_mm, @dfm_flags, @status, @quote_expires_at,
+	@ship_recipient, @ship_street, @ship_number, @ship_city, @ship_state, @ship_postal_code
 );
 
 -- There is no customer lookup by ID alone: the owner is part of the query
@@ -79,3 +81,28 @@ VALUES (@order_id, @technician_id, @decision, @report);
 
 -- name: GetReview :one
 SELECT order_id, technician_id, decision, report, created_at FROM reviews WHERE order_id = @order_id;
+
+-- name: SetShipment :execrows
+UPDATE orders SET shipment_id = @shipment_id, tracking_code = @tracking_code, updated_at = now()
+WHERE id = @id AND status = 'in_production' AND shipment_id IS NULL;
+
+-- name: InsertPayment :exec
+INSERT INTO payments (charge_id, order_id, amount_cents, status)
+VALUES (@charge_id, @order_id, @amount_cents, 'pending');
+
+-- name: LivePayment :one
+SELECT charge_id, order_id, amount_cents, status, created_at, updated_at
+FROM payments
+WHERE order_id = @order_id AND status IN ('pending', 'succeeded');
+
+-- Locks the charge until the end of the webhook transaction.
+-- name: LockPayment :one
+SELECT charge_id, order_id, amount_cents, status FROM payments WHERE charge_id = @charge_id FOR UPDATE;
+
+-- name: SucceedPayment :execrows
+UPDATE payments SET status = 'succeeded', updated_at = now() WHERE charge_id = @charge_id AND status = 'pending';
+
+-- A replayed event conflicts with the primary key and inserts nothing.
+-- name: RecordPartnerEvent :execrows
+INSERT INTO partner_events (event_id, partner, type) VALUES (@event_id, @partner, @type)
+ON CONFLICT (event_id) DO NOTHING;
