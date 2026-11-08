@@ -14,6 +14,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -363,6 +365,123 @@ func TestIDVersions(t *testing.T) {
 				t.Errorf("%s IDs are version %q, want %q", c.table, got, c.want)
 			}
 		})
+	}
+}
+
+const panelBase = "https://localhost:9445"
+
+// panelLogin logs a staff account in through the panel-web browser flow, with
+// password and TOTP. maxAge 0 forces a new login (step-up).
+func panelLogin(t *testing.T, a devlogin.Account, maxAge int) string {
+	t.Helper()
+	browser, err := keycloak.NewBrowser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := devlogin.PanelLogin
+	opts.MaxAge = maxAge
+	ctx, cancel := context.WithTimeout(context.Background(), httpWait)
+	defer cancel()
+	tokens, err := browser.Login(ctx, a, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tokens.Access
+}
+
+// D02: the panel routes do not exist on the public port.
+func TestPanelIsNotOnThePublicPort(t *testing.T) {
+	wantStatus(t, do(t, http.MethodGet, base+"/panel/v1/me", "", nil, -1), http.StatusNotFound)
+}
+
+// D02 and E6.4: only a browser login with TOTP reaches the panel. A password
+// grant token, even of staff with TOTP, carries acr 1 and no panel audience.
+func TestPanelNeedsBrowserLoginWithMFA(t *testing.T) {
+	admin := panelLogin(t, devlogin.Admin, -1)
+	resp := do(t, http.MethodGet, panelBase+"/panel/v1/me", admin, nil, -1)
+	wantStatus(t, resp, http.StatusOK)
+	var me struct {
+		Role string `json:"role"`
+	}
+	decode(t, resp, &me)
+	if me.Role != "admin" {
+		t.Errorf("role %q, want admin", me.Role)
+	}
+
+	for name, token := range map[string]string{
+		"staff password grant": login(t, devlogin.Admin),
+		"customer token":       login(t, devlogin.CustomerA),
+	} {
+		t.Run(name, func(t *testing.T) {
+			wantStatus(t, do(t, http.MethodGet, panelBase+"/panel/v1/me", token, nil, -1), http.StatusUnauthorized)
+		})
+	}
+}
+
+func TestOnlyAdminsRevokeUsers(t *testing.T) {
+	support := panelLogin(t, devlogin.Support, -1)
+	body := strings.NewReader(`{"justification":"support trying an admin operation"}`)
+	resp := do(t, http.MethodPost, panelBase+"/panel/v1/users/"+devlogin.CustomerD.ID.String()+"/revoke", support, body, -1)
+	wantStatus(t, resp, http.StatusForbidden)
+}
+
+// E6.4 from end to end: the admin logs in again, revokes customer D with a
+// justification, D's existing token stops working on the public API, and D
+// can no longer log in.
+func TestPanelRevokesUser(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), httpWait)
+	defer cancel()
+	victim, err := keycloak.Login(ctx, devlogin.CustomerD)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := base + "/api/v1/files/" + uuid.NewString()
+	wantStatus(t, do(t, http.MethodGet, path, victim.Access, nil, -1), http.StatusForbidden)
+	t.Cleanup(func() { setEnabled(t, devlogin.CustomerD.ID, true) })
+
+	admin := panelLogin(t, devlogin.Admin, 0)
+	revoke := panelBase + "/panel/v1/users/" + devlogin.CustomerD.ID.String() + "/revoke"
+	wantStatus(t, do(t, http.MethodPost, revoke, admin, strings.NewReader(`{}`), -1), http.StatusUnprocessableEntity)
+	resp := do(t, http.MethodPost, revoke, admin, strings.NewReader(`{"justification":"e2e: account seen in a credential leak"}`), -1)
+	wantStatus(t, resp, http.StatusOK)
+
+	wantStatus(t, do(t, http.MethodGet, path, victim.Access, nil, -1), http.StatusUnauthorized)
+	if _, err := keycloak.Login(ctx, devlogin.CustomerD); err == nil {
+		t.Error("the revoked user could still log in")
+	}
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT name FROM events WHERE target = '"+devlogin.CustomerD.ID.String()+"' AND name IN ('user.revoked', 'panel.critical') ORDER BY name")
+	if got := strings.Fields(out); !slices.Contains(got, "user.revoked") || !slices.Contains(got, "panel.critical") {
+		t.Errorf("audit events for the revocation: %v", got)
+	}
+}
+
+// setEnabled turns an account back on through the Keycloak Admin API, from a
+// container on the internal network, since the Admin API is not published.
+func setEnabled(t *testing.T, id uuid.UUID, enabled bool) {
+	t.Helper()
+	script := `T=$(curl -sf -X POST http://keycloak:8080/realms/nugget/protocol/openid-connect/token ` +
+		`-d grant_type=client_credentials -d client_id=panel-admin -d client_secret="$S" | sed -n 's/.*"access_token":"\([^"]*\)".*/\1/p') && ` +
+		`curl -sf -X PUT -H "Authorization: Bearer $T" -H 'Content-Type: application/json' ` +
+		`-d '{"enabled":` + strconv.FormatBool(enabled) + `}' http://keycloak:8080/admin/realms/nugget/users/` + id.String()
+	out, err := exec.Command("docker", "run", "--rm", "--network", "nuggetmachine_internal",
+		"-e", "S="+readSecret(t, "keycloak_panel_admin_secret"), "curlimages/curl:8.17.0", "sh", "-c", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("set enabled=%v for %s: %v\n%s", enabled, id, err, out)
+	}
+}
+
+// FC2: nginx serves the panel only to the gateway of the public network, where
+// loopback and SSH tunnel connections arrive. Another container on that
+// network is refused.
+func TestPanelRefusesOtherAddresses(t *testing.T) {
+	out, err := exec.Command("docker", "run", "--rm", "--network", "nuggetmachine_public", "curlimages/curl:8.17.0",
+		"-sk", "-o", "/dev/null", "-w", "%{http_code}", "https://nginx:11443/panel/v1/me").CombinedOutput()
+	if err != nil {
+		t.Fatalf("%v: %s", err, out)
+	}
+	if code := strings.TrimSpace(string(out)); code != "403" {
+		t.Errorf("panel from another container got %s, want 403", code)
 	}
 }
 

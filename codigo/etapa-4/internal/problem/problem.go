@@ -19,21 +19,34 @@ const (
 	TooManyTriangles Code = "too_many_triangles"
 	RateLimited      Code = "rate_limited"
 	Unavailable      Code = "unavailable"
-	Internal         Code = "internal"
+	InvalidRequest   Code = "invalid_request"
+	// MFARequired: the token does not prove a second factor (panel, D02).
+	MFARequired Code = "mfa_required"
+	// StepUpRequired: a critical operation needs a recent login (E6.4).
+	StepUpRequired Code = "step_up_required"
+	// JustificationRequired: a critical operation needs a written reason.
+	JustificationRequired Code = "justification_required"
+	IdPUnavailable        Code = "idp_unavailable"
+	Internal              Code = "internal"
 )
 
 var catalog = map[Code]struct {
 	status int
 	title  string
 }{
-	Unauthenticated:  {http.StatusUnauthorized, "Authentication required"},
-	Forbidden:        {http.StatusForbidden, "Access denied"},
-	FileTooLarge:     {http.StatusRequestEntityTooLarge, "File too large"},
-	InvalidSTL:       {http.StatusUnprocessableEntity, "Invalid STL"},
-	TooManyTriangles: {http.StatusUnprocessableEntity, "STL with too many triangles"},
-	RateLimited:      {http.StatusTooManyRequests, "Too many requests"},
-	Unavailable:      {http.StatusServiceUnavailable, "Service unavailable"},
-	Internal:         {http.StatusInternalServerError, "Internal error"},
+	Unauthenticated:       {http.StatusUnauthorized, "Authentication required"},
+	Forbidden:             {http.StatusForbidden, "Access denied"},
+	FileTooLarge:          {http.StatusRequestEntityTooLarge, "File too large"},
+	InvalidSTL:            {http.StatusUnprocessableEntity, "Invalid STL"},
+	TooManyTriangles:      {http.StatusUnprocessableEntity, "STL with too many triangles"},
+	RateLimited:           {http.StatusTooManyRequests, "Too many requests"},
+	Unavailable:           {http.StatusServiceUnavailable, "Service unavailable"},
+	InvalidRequest:        {http.StatusBadRequest, "Invalid request"},
+	MFARequired:           {http.StatusUnauthorized, "Multi-factor authentication required"},
+	StepUpRequired:        {http.StatusUnauthorized, "Recent authentication required"},
+	JustificationRequired: {http.StatusUnprocessableEntity, "Justification required"},
+	IdPUnavailable:        {http.StatusBadGateway, "Identity provider unavailable"},
+	Internal:              {http.StatusInternalServerError, "Internal error"},
 }
 
 type Error struct {

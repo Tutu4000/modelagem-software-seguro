@@ -36,12 +36,17 @@ const (
 
 var knownRoles = []Role{RoleCustomer, RoleTechnician, RoleSupport, RoleAdmin}
 
+// StaffRoles are the roles of the internal panel.
+var StaffRoles = []Role{RoleTechnician, RoleSupport, RoleAdmin}
+
 // User is only created by Verify, from a valid token.
 type User struct {
 	id       UserID
 	role     Role
 	session  string
 	issuedAt time.Time
+	acr      string
+	authTime time.Time
 }
 
 func (u User) ID() UserID { return u.id }
@@ -54,6 +59,14 @@ func (u User) SessionID() string { return u.session }
 
 // IssuedAt lets a per-user revocation reject every token issued before it.
 func (u User) IssuedAt() time.Time { return u.issuedAt }
+
+// ACR is the level of authentication Keycloak reached: "2" means password and
+// TOTP. Only the browser flow sets it above "1".
+func (u User) ACR() string { return u.acr }
+
+// AuthTime is when the user last typed the credentials, not when the token was
+// refreshed. Zero when the token does not say.
+func (u User) AuthTime() time.Time { return u.authTime }
 
 // StaticKey verifies every token with one public key. The tests use it in
 // place of the IdP.
@@ -94,8 +107,10 @@ func NewVerifier(c VerifierConfig) *Verifier {
 }
 
 type claims struct {
-	Type        string `json:"typ"`
-	SessionID   string `json:"sid"`
+	Type        string           `json:"typ"`
+	SessionID   string           `json:"sid"`
+	ACR         string           `json:"acr"`
+	AuthTime    *jwt.NumericDate `json:"auth_time"`
 	RealmAccess struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
@@ -133,7 +148,11 @@ func (v *Verifier) Verify(token string) (User, error) {
 	if c.SessionID == "" || c.IssuedAt == nil {
 		return User{}, errors.New("token without sid or iat")
 	}
-	return User{id: UserID(id), role: role, session: c.SessionID, issuedAt: c.IssuedAt.Time}, nil
+	u := User{id: UserID(id), role: role, session: c.SessionID, issuedAt: c.IssuedAt.Time, acr: c.ACR}
+	if c.AuthTime != nil {
+		u.authTime = c.AuthTime.Time
+	}
+	return u, nil
 }
 
 // appRole requires exactly one application role: an account that is both a

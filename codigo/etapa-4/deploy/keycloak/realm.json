@@ -18,6 +18,57 @@
   "ssoSessionIdleTimeout": 1800,
   "ssoSessionMaxLifespan": 36000,
   "defaultSignatureAlgorithm": "EdDSA",
+  "browserFlow": "browser-step-up",
+  "attributes": {
+    "acr.loa.map": "{\"1\":1,\"2\":2}"
+  },
+  "authenticationFlows": [
+    {
+      "alias": "browser-step-up",
+      "description": "Browser login with levels of authentication: level 1 is the password, level 2 adds TOTP (D02, E6.4)",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "auth-cookie", "authenticatorFlow": false, "requirement": "ALTERNATIVE", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up forms", "requirement": "ALTERNATIVE", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up forms",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up level 1", "requirement": "CONDITIONAL", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up level 2", "requirement": "CONDITIONAL", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up level 1",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "conditional-level-of-authentication", "authenticatorConfig": "level-1", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "auth-username-password-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up level 2",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "conditional-level-of-authentication", "authenticatorConfig": "level-2", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false}
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {"alias": "level-1", "config": {"loa-condition-level": "1", "loa-max-age": "36000"}},
+    {"alias": "level-2", "config": {"loa-condition-level": "2", "loa-max-age": "300"}}
+  ],
   "otpPolicyType": "totp",
   "otpPolicyAlgorithm": "HmacSHA1",
   "otpPolicyDigits": 6,
@@ -110,15 +161,17 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
-      "redirectUris": ["https://localhost:9443/*"],
-      "webOrigins": ["https://localhost:9443"],
+      "redirectUris": ["https://localhost:9445/*"],
+      "webOrigins": ["https://localhost:9445"],
       "frontchannelLogout": false,
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "https://localhost:9443/*",
-        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "post.logout.redirect.uris": "https://localhost:9445/*",
+        "backchannel.logout.url": "http://panel:8090/oidc/backchannel-logout",
         "backchannel.logout.session.required": "true",
-        "backchannel.logout.revoke.offline.tokens": "true"
+        "backchannel.logout.revoke.offline.tokens": "true",
+        "default.acr.values": "2",
+        "minimum.acr.value": "2"
       },
       "protocolMappers": [
         {
@@ -151,17 +204,30 @@
           "protocol": "openid-connect",
           "protocolMapper": "oidc-audience-mapper",
           "config": {"included.client.audience": "api", "access.token.claim": "true", "id.token.claim": "false"}
-        },
-        {
-          "name": "audience-panel",
-          "protocol": "openid-connect",
-          "protocolMapper": "oidc-audience-mapper",
-          "config": {"included.client.audience": "panel", "access.token.claim": "true", "id.token.claim": "false"}
         }
       ]
+    },
+    {
+      "clientId": "panel-admin",
+      "name": "Panel service account (Keycloak Admin API)",
+      "description": "Used only by the panel to log out and disable a user in an incident. Holds realm-management/manage-users: the narrowest Keycloak role that can do it.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "{{PANEL_ADMIN_SECRET}}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "frontchannelLogout": false
     }
   ],
   "users": [
+    {
+      "username": "service-account-panel-admin",
+      "enabled": true,
+      "serviceAccountClientId": "panel-admin",
+      "clientRoles": {"realm-management": ["manage-users"]}
+    },
     {
       "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01",
       "username": "customer-a",
@@ -191,6 +257,17 @@
       "emailVerified": true,
       "firstName": "Customer",
       "lastName": "C",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04",
+      "username": "customer-d",
+      "email": "customer-d@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "D",
       "enabled": true,
       "realmRoles": ["customer"],
       "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]

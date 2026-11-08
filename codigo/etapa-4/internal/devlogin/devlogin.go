@@ -1,6 +1,8 @@
 // Package devlogin gets real Keycloak tokens for the tests and the local tools
-// (seed, ZAP), through the password grant of the "e2e" client. That client
-// only exists in the local realm; people log in through the browser.
+// (seed, ZAP). Customers log in through the password grant of the "e2e"
+// client, which only exists in the local realm. The panel needs proof of MFA,
+// which only the browser flow gives, so BrowserLogin goes through the login
+// pages like a person would.
 package devlogin
 
 import (
@@ -19,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,9 +36,11 @@ type Account struct {
 }
 
 var (
-	CustomerA  = Account{"customer-a", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01"), false}
-	CustomerB  = Account{"customer-b", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02"), false}
-	CustomerC  = Account{"customer-c", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0c03"), false}
+	CustomerA = Account{"customer-a", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01"), false}
+	CustomerB = Account{"customer-b", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02"), false}
+	CustomerC = Account{"customer-c", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0c03"), false}
+	// CustomerD is revoked by the panel e2e test, so no other test uses it.
+	CustomerD  = Account{"customer-d", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04"), false}
 	Technician = Account{"technician", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01"), true}
 	Support    = Account{"support", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1b02"), true}
 	Admin      = Account{"admin", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c03"), true}
@@ -43,7 +48,7 @@ var (
 
 // Resolve accepts "a", "b", "c" or a username.
 func Resolve(name string) (Account, error) {
-	for _, a := range []Account{CustomerA, CustomerB, CustomerC, Technician, Support, Admin} {
+	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, Technician, Support, Admin} {
 		if name == a.Username || "customer-"+name == a.Username {
 			return a, nil
 		}
@@ -54,7 +59,11 @@ func Resolve(name string) (Account, error) {
 type Client struct {
 	issuer  string
 	secrets string
+	tls     *tls.Config
 	http    *http.Client
+
+	mu       sync.Mutex
+	lastStep int64 // TOTP time step of the last code used
 }
 
 // New reads the client secret, the demo password and the TOTP secret from the
@@ -68,14 +77,36 @@ func New(issuer, secretsDir string) (*Client, error) {
 	if !pool.AppendCertsFromPEM(pem) {
 		return nil, fmt.Errorf("tls_ca.pem: no certificate")
 	}
+	tlsConfig := &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
 	return &Client{
 		issuer:  strings.TrimSuffix(issuer, "/"),
 		secrets: secretsDir,
+		tls:     tlsConfig,
 		http: &http.Client{
 			Timeout:   30 * time.Second,
-			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
+			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 		},
 	}, nil
+}
+
+// otp returns a TOTP code that was not used yet. Keycloak refuses a code used
+// twice in the same 30-second step, so a second login in the same step waits
+// for the next one.
+func (c *Client) otp(ctx context.Context) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	if step := now.Unix() / 30; step <= c.lastStep {
+		wait := time.Unix((c.lastStep+1)*30, 0).Sub(now)
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(wait):
+		}
+		now = time.Now()
+	}
+	c.lastStep = now.Unix() / 30
+	return TOTP([]byte(c.secret("keycloak_totp_secret")), now), nil
 }
 
 // HTTP is a client that trusts the local CA, for calls to the API.
@@ -102,7 +133,11 @@ func (c *Client) Login(ctx context.Context, a Account) (Tokens, error) {
 		"scope":      {"openid"},
 	}
 	if a.Staff {
-		form.Set("otp", TOTP([]byte(c.secret("keycloak_totp_secret")), time.Now()))
+		code, err := c.otp(ctx)
+		if err != nil {
+			return Tokens{}, err
+		}
+		form.Set("otp", code)
 	}
 	body, err := c.post(ctx, "/protocol/openid-connect/token", form)
 	if err != nil {

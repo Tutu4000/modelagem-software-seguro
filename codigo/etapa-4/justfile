@@ -38,6 +38,10 @@ logs service="":
 token who="a":
     go run ./cmd/token -user {{ who }}
 
+# Log a staff account in to the panel through the browser flow (password and TOTP) and print the token
+panel-token who="admin":
+    go run ./cmd/token -panel -user {{ who }}
+
 # Upload fictitious STLs for customers A and B through the public API
 seed:
     go run ./cmd/seed
