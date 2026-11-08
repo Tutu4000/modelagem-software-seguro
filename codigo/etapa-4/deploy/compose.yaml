@@ -19,7 +19,9 @@ services:
   nginx:
     <<: *hardened
     image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
-    ports: ["443:8443", "8443:9443", "8444:10443"]
+    # The panel listens only on the host's loopback: reaching it from another
+    # machine takes an SSH tunnel, which stands for the VPN (FC2).
+    ports: ["443:8443", "8443:9443", "8444:10443", "127.0.0.1:9445:11443"]
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     tmpfs: ["/tmp:size=128m"]
@@ -28,10 +30,44 @@ services:
       public: {}
       internal:
         ipv4_address: 172.28.10.10
-    depends_on: [api, garage, keycloak]
+    depends_on: [api, panel, garage, keycloak]
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m, pids: 128 }
+
+  # Internal panel (D02): own binary, own address, own database role and own
+  # Valkey user. It never shares a process with the public API.
+  panel:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: panel
+    environment:
+      TRUSTED_PROXIES: 172.28.10.10
+      OIDC_ISSUER: https://localhost:8444/realms/nugget
+      OIDC_JWKS_URL: http://keycloak:8080/realms/nugget/protocol/openid-connect/certs
+      OIDC_AUDIENCE: panel
+      AUDIT_DB_HOST: postgres-audit
+      DB_PANEL_AUDIT_PASSWORD_FILE: /run/secrets/db_panel_audit_password
+      VALKEY_ADDR: valkey:6379
+      VALKEY_USER: panel
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_panel_password
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      KEYCLOAK_PANEL_ADMIN_SECRET_FILE: /run/secrets/keycloak_panel_admin_secret
+      RATE_LIMIT_PER_MINUTE: "60"
+      PANEL_STEP_UP_MAX_AGE: 5m
+      INTERNAL_ADDR: ":8090"
+      GOMEMLIMIT: 200MiB
+    secrets: [db_panel_audit_password, valkey_panel_password, keycloak_panel_admin_secret]
+    networks: [internal]
+    depends_on:
+      keycloak: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 128 }
 
   # Identity provider (E5.3): customer login and staff SSO with MFA. Reached
   # from outside only through nginx, which hides the admin console.
@@ -268,7 +304,7 @@ services:
     volumes:
       - audit:/var/lib/postgresql
       - ../migrations/audit:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_audit_password, db_audit_password]
+    secrets: [postgres_audit_password, db_audit_password, db_panel_audit_password]
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
@@ -300,8 +336,14 @@ services:
         -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
 
 networks:
-  # The only network with published ports, and only nginx is on it.
-  public: {}
+  # The only network with published ports, and only nginx is on it. The fixed
+  # subnet lets nginx allow the panel only from its gateway, which is where
+  # connections to the loopback-only port arrive.
+  public:
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+          gateway: 172.28.20.1
   # No way out to the internet.
   internal:
     internal: true
@@ -339,3 +381,6 @@ secrets:
   valkey_api_password: { file: ../secrets/valkey_api_password }
   valkey_health_password: { file: ../secrets/valkey_health_password }
   valkey_users_acl: { file: ../secrets/valkey_users.acl }
+  valkey_panel_password: { file: ../secrets/valkey_panel_password }
+  db_panel_audit_password: { file: ../secrets/db_panel_audit_password }
+  keycloak_panel_admin_secret: { file: ../secrets/keycloak_panel_admin_secret }

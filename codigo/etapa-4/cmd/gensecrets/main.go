@@ -66,6 +66,9 @@ func main() {
 		"keycloak_e2e_client_secret",
 		"valkey_api_password",
 		"valkey_health_password",
+		"valkey_panel_password",
+		"db_panel_audit_password",
+		"keycloak_panel_admin_secret",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -91,12 +94,13 @@ func main() {
 		log.Fatal(err)
 	}
 	g.write("rabbitmq_users.json", users)
-	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_health_password")))
+	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_panel_password"), g.read("valkey_health_password")))
 	realm, err := renderRealm(*realmTemplate, map[string][]byte{
-		"PUBLIC_HOST":       []byte(*host),
-		"DEMO_PASSWORD":     g.read("keycloak_demo_password"),
-		"TOTP_SECRET":       g.read("keycloak_totp_secret"),
-		"E2E_CLIENT_SECRET": g.read("keycloak_e2e_client_secret"),
+		"PUBLIC_HOST":        []byte(*host),
+		"DEMO_PASSWORD":      g.read("keycloak_demo_password"),
+		"TOTP_SECRET":        g.read("keycloak_totp_secret"),
+		"E2E_CLIENT_SECRET":  g.read("keycloak_e2e_client_secret"),
+		"PANEL_ADMIN_SECRET": g.read("keycloak_panel_admin_secret"),
 	})
 	if err != nil {
 		log.Fatal(err)
@@ -289,16 +293,20 @@ func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 
 // valkeyACL keeps only SHA-256 hashes of the passwords. The default user is
 // off, the API reaches only its own key prefixes with the commands it uses,
-// and the health check user can only PING (E5.1).
-func valkeyACL(apiPassword, healthPassword []byte) []byte {
+// and the health check user can only PING (E5.1). The panel has a user of its
+// own with the same keys: it reads the revocations and writes the per-user
+// cut of an incident.
+func valkeyACL(apiPassword, panelPassword, healthPassword []byte) []byte {
 	hash := func(p []byte) string {
 		sum := sha256.Sum256(bytes.TrimSpace(p))
 		return hex.EncodeToString(sum[:])
 	}
+	const app = " resetkeys ~session:* ~ratelimit:* resetchannels -@all" +
+		" +get +mget +set +exists +incr +pexpire +pttl +eval +evalsha +ping +hello +client|setinfo"
 	return []byte(strings.Join([]string{
 		"user default off",
-		"user api on #" + hash(apiPassword) + " resetkeys ~session:* ~ratelimit:* resetchannels -@all" +
-			" +get +mget +set +exists +incr +pexpire +pttl +eval +evalsha +ping +hello +client|setinfo",
+		"user api on #" + hash(apiPassword) + app,
+		"user panel on #" + hash(panelPassword) + app,
 		"user healthcheck on #" + hash(healthPassword) + " resetkeys resetchannels -@all +ping",
 		"",
 	}, "\n"))

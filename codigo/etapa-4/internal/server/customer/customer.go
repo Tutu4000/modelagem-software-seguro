@@ -3,15 +3,12 @@
 package customer
 
 import (
-	"fmt"
 	"log/slog"
-
-	"github.com/gin-gonic/gin"
+	"net/http"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
-	"nuggetmachine/internal/problem"
 	"nuggetmachine/internal/server"
 	"nuggetmachine/internal/session"
 )
@@ -34,26 +31,20 @@ type Deps struct {
 	TrustedProxies []string
 }
 
-func New(d Deps) (*gin.Engine, error) {
-	r := gin.New()
-	if err := r.SetTrustedProxies(d.TrustedProxies); err != nil {
-		return nil, fmt.Errorf("trusted proxies: %w", err)
+func New(d Deps) (*server.Router, error) {
+	r, err := server.NewRouter(d.TrustedProxies, d.Log)
+	if err != nil {
+		return nil, err
 	}
-	if d.Log != nil {
-		r.Use(server.RequestLog(d.Log))
-	}
-	r.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
-		problem.Abort(c, fmt.Errorf("panic: %v", recovered))
-	}))
 
 	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Tasks: d.Tasks, Audit: d.Audit}
-	api := r.Group("/api/v1",
-		auth.Require(d.Verifier, auth.RoleCustomer),
+	api := r.Group("/api/v1", d.Verifier,
 		session.Active(d.Sessions, d.Audit),
 		session.RateLimit(d.Limiter, d.Audit, d.RatePerMinute),
 	)
-	api.GET("/files/:id", h.Status)
-	api.GET("/files/:id/download", h.Download)
-	api.POST("/files", h.Upload)
+	customer := []auth.Role{auth.RoleCustomer}
+	api.Handle(http.MethodGet, "/files/:id", customer, h.Status)
+	api.Handle(http.MethodGet, "/files/:id/download", customer, h.Download)
+	api.Handle(http.MethodPost, "/files", customer, h.Upload)
 	return r, nil
 }

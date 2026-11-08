@@ -14,12 +14,12 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/pg"
 	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/customer"
 	"nuggetmachine/internal/session"
@@ -42,8 +42,8 @@ func run(log *slog.Logger) error {
 	issuer := env.Required("OIDC_ISSUER")
 	jwksURL := env.Required("OIDC_JWKS_URL")
 	audience := env.String("OIDC_AUDIENCE", "api")
-	mainDB := dbConfig{host: env.Required("DB_HOST"), name: env.String("DB_NAME", "nugget")}
-	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "audit")}
+	mainHost, mainName := env.Required("DB_HOST"), env.String("DB_NAME", "nugget")
+	auditHost, auditName := env.Required("AUDIT_DB_HOST"), env.String("AUDIT_DB_NAME", "audit")
 	s3cfg := storage.S3Config{
 		Bucket:         env.String("S3_BUCKET", "files"),
 		Region:         env.String("S3_REGION", "garage"),
@@ -77,17 +77,17 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	filesPool, err := mainDB.open(ctx, "files", filesPassword)
+	filesPool, err := pg.Open(ctx, mainHost, mainName, "files", filesPassword)
 	if err != nil {
 		return err
 	}
 	defer filesPool.Close()
-	queuePool, err := mainDB.open(ctx, "queue", queuePassword)
+	queuePool, err := pg.Open(ctx, mainHost, mainName, "queue", queuePassword)
 	if err != nil {
 		return err
 	}
 	defer queuePool.Close()
-	auditPool, err := auditDB.open(ctx, "audit_app", auditPassword)
+	auditPool, err := pg.Open(ctx, auditHost, auditName, "audit_app", auditPassword)
 	if err != nil {
 		return err
 	}
@@ -182,30 +182,4 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
-}
-
-type dbConfig struct {
-	host, name string
-}
-
-// open connects with the module's role. The internal network has no TLS in
-// the local environment (backlog section 5).
-func (d dbConfig) open(ctx context.Context, user string, password []byte) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s dbname=%s user=%s sslmode=disable", d.host, d.name, user))
-	if err != nil {
-		return nil, err
-	}
-	cfg.ConnConfig.Password = string(password)
-	cfg.MaxConns = 10
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("database %s: %w", d.name, err)
-	}
-	pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("database %s with role %s: %w", d.name, user, err)
-	}
-	return pool, nil
 }

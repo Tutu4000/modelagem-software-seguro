@@ -19,6 +19,10 @@ FROM base AS api
 COPY --from=build /out/api /api
 ENTRYPOINT ["/api"]
 
+FROM base AS panel
+COPY --from=build /out/panel /panel
+ENTRYPOINT ["/panel"]
+
 FROM base AS garage-init
 COPY --from=build /out/garage-init /garage-init
 ENTRYPOINT ["/garage-init"]
