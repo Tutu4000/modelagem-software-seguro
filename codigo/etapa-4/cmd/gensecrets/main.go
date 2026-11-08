@@ -69,6 +69,8 @@ func main() {
 		"valkey_panel_password",
 		"db_panel_audit_password",
 		"keycloak_panel_admin_secret",
+		"db_orders_password",
+		"db_panel_orders_password",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -79,12 +81,12 @@ func main() {
 	})
 	// Garage only imports keys in its own format: GK + 12 bytes in hex and a
 	// 32-byte secret in hex.
-	g.once([]string{"s3_access_key_id", "s3_secret_access_key"}, func() map[string][]byte {
-		return map[string][]byte{
-			"s3_access_key_id":     append([]byte("GK"), randomHex(12)...),
-			"s3_secret_access_key": randomHex(32),
-		}
-	})
+	for _, prefix := range []string{"s3", "s3_panel"} {
+		id, secret := prefix+"_access_key_id", prefix+"_secret_access_key"
+		g.once([]string{id, secret}, func() map[string][]byte {
+			return map[string][]byte{id: append([]byte("GK"), randomHex(12)...), secret: randomHex(32)}
+		})
+	}
 	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, func() map[string][]byte { return tlsChain(*host) })
 
 	// Derived from the secrets above: always regenerated, so they never go

@@ -211,7 +211,7 @@ Os testes de cada prática entram num commit antes da implementação, junto com
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `auth.revoked_token_used`, `rate.limited`, `panel.access`, `panel.critical`, `user.revoked`, `review.approved`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
+|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `auth.revoked_token_used`, `rate.limited`, `panel.access`, `panel.critical`, `user.revoked`, `order.created`, `order.submitted`, `order.assigned`, `review.approved`, `review.rejected`, `file.staff_download`, `price_table.proposed`, `price_table.approved`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
 |E7.2|Banco de auditoria separado, em que o papel da aplicação só tem `INSERT`|`UPDATE` e `DELETE` feitos pela aplicação recebem permissão negada|C18|P1|
 |E7.3|Logs da aplicação em JSON (`slog`), sem senha, token, cartão ou conteúdo de arquivo|Um teste procura o token da requisição no log e falha se encontrar|C17|P1|
 |E7.4|Grafana com papel só de leitura no banco de auditoria e um painel de negações, uploads recusados e acessos ao painel|O painel mostra os eventos do seed|C19|P2|
@@ -249,7 +249,10 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |VPN do painel|Porta do nginx publicada só em `127.0.0.1:9445`, e o nginx só aceita o gateway da rede `public`, por onde chegam o loopback e um túnel SSH. A evolução prevista é o Cloudflare Access (E2.7)|
 |MFA no token do painel|Só o login pelo navegador (`panel-web`) comprova o TOTP, com `acr=2` e `auth_time`. Tokens obtidos por usuário e senha trazem `acr=1` mesmo para a equipe com TOTP, e o painel os recusa|
 |Step-up nas operações críticas (E6.4)|Login de no máximo 5 minutos, pedido pelo cabeçalho `WWW-Authenticate` da RFC 9470, no lugar de um segundo código TOTP dentro da mesma sessão|
-|Service account do painel no Keycloak|Para revogar um usuário, o painel desativa a conta e encerra as sessões pela Admin API, com o papel `manage-users`. É o papel mais estreito que o Keycloak oferece e também permite editar usuários: **risco aceito**. O segredo só existe no contêiner do painel, a Admin API não é publicada, e cada uso fica no evento `user.revoked`|
+|Service account do painel no Keycloak|Para revogar um usuário, o painel desativa a conta e encerra as sessões pela Admin API, com o papel `manage-users`. É o papel mais estreito que o Keycloak oferece e também permite editar usuários: **risco aceito**. O segredo só existe no contêiner do painel, a Admin API não é publicada, e cada uso fica no evento `user.revoked`. A mesma conta confere se quem recebe um pedido é técnico|
+|DFM no worker (E4.4)|O alerta `exceeds_build_volume` é calculado no módulo de pedidos, a partir da caixa envolvente que o worker já devolve, contra um volume de impressão de 250 mm por eixo (`BUILD_VOLUME_MM`). A mensagem da fila não muda|
+|Aprovar sem laudo, só pelo líder de produção (D02)|Não existe. O MVP não tem o perfil de líder de produção, então toda aprovação exige laudo e técnico atribuído|
+|Papéis do painel|O painel usa papéis próprios no banco (`panel_orders`, `panel_audit`), uma chave do Garage só de leitura e um usuário próprio no Valkey. O `UPDATE` em `orders` é concedido por coluna: nem a API nem o painel conseguem mudar um preço pelo SQL|
 |Cofre de segredos|Docker secrets|
 |Banco criptografado em repouso|Não implementado localmente. Em produção, disco criptografado do provedor|
 |Backup em outra conta|Bucket separado, com uma chave que a API não tem|
@@ -281,6 +284,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |M1|Concluído|E0.1 e E1|
 |M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
 |M3|Pendente|E9.1 e os itens P2|
-|E6.1, E6.2 e E6.4|Concluídos|Binário `panel` próprio, em `127.0.0.1:9445`, com TOTP exigido no token e evento `panel.access` em toda requisição. Toda rota declara os perfis num registro, e um teste falha se alguma rota não declarar. O binário `api` não depende do painel. A operação crítica "revogar usuário" exige step-up e justificativa. O E6.3 (aprovação técnica) entra com os pedidos, na F4|
+|E6.1, E6.2 e E6.4|Concluídos|Binário `panel` próprio, em `127.0.0.1:9445`, com TOTP exigido no token e evento `panel.access` em toda requisição. Toda rota declara os perfis num registro, e um teste falha se alguma rota não declarar. O binário `api` não depende do painel. A operação crítica "revogar usuário" exige step-up e justificativa|
+|E8.1 e E6.3|Concluídos|Pedido com orçamento calculado só no servidor, que recusa campos desconhecidos no corpo (CA03). Tabela de preços versionada, que só vale depois da aprovação de outro admin, e pedidos que mantêm o preço do orçamento. Revisão técnica só pelo técnico atribuído, com laudo, uma por pedido (CA05). Download do STL pela equipe só pelo técnico atribuído, como operação crítica (CA08). Histórico de estados e alerta de DFM|
 |E5.1 e E5.2|Concluídos|Valkey com ACL por usuário. O back-channel logout do Keycloak revoga a sessão em todas as réplicas, e a revogação por usuário já existe para o painel (F3). Limite de 60 requisições por minuto por usuário, com 429 e `Retry-After`. Sem o Valkey, 503|
 |E5.3|Concluído|Keycloak com realm versionado, quatro perfis, TOTP obrigatório para a equipe, bloqueio por tentativas, tokens EdDSA de 5 minutos e clientes `web` e `panel-web` com PKCE. A API confere `iss`, `aud`, tipo e perfil, e um token válido da equipe recebe 403 na API do cliente|

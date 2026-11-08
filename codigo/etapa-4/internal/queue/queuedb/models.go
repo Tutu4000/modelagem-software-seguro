@@ -18,6 +18,56 @@ type File struct {
 	CreatedAt time.Time
 }
 
+type Order struct {
+	ID                 uuid.UUID
+	OwnerID            uuid.UUID
+	FileID             uuid.UUID
+	Material           string
+	Color              string
+	Quality            string
+	Finishing          string
+	Quantity           int32
+	PriceTableVersion  int64
+	UnitCents          int64
+	DiscountCents      int64
+	TotalCents         int64
+	VolumeMm3          float64
+	BboxMm             []float64
+	DfmFlags           []string
+	Status             string
+	AssignedTechnician *uuid.UUID
+	QuoteExpiresAt     time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+}
+
+type OrderStatusHistory struct {
+	ID         uuid.UUID
+	OrderID    uuid.UUID
+	FromStatus *string
+	ToStatus   string
+	Actor      uuid.UUID
+	At         time.Time
+}
+
+type PriceTable struct {
+	Version    int64
+	Status     string
+	Rules      []byte
+	CreatedBy  *uuid.UUID
+	CreatedAt  time.Time
+	ApprovedBy *uuid.UUID
+	ApprovedAt *time.Time
+}
+
+type Review struct {
+	OrderID      uuid.UUID
+	TechnicianID uuid.UUID
+	Decision     string
+	Report       string
+	CreatedAt    time.Time
+}
+
 type Task struct {
 	ID        uuid.UUID
 	FileID    uuid.UUID

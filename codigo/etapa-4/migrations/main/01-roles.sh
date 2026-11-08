@@ -1,5 +1,6 @@
 #!/bin/sh
-# One database role per module (E3.1). Passwords come from Docker secrets.
+# One database role per module and per binary (E3.1, D02). Passwords come
+# from Docker secrets.
 #
 # Keycloak gets its own database and owns it. The application roles cannot
 # even connect to it.
@@ -7,9 +8,13 @@ set -eu
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
 	-v files_pw="$(cat /run/secrets/db_files_password)" \
 	-v queue_pw="$(cat /run/secrets/db_queue_password)" \
+	-v orders_pw="$(cat /run/secrets/db_orders_password)" \
+	-v panel_orders_pw="$(cat /run/secrets/db_panel_orders_password)" \
 	-v keycloak_pw="$(cat /run/secrets/db_keycloak_password)" <<'SQL'
 CREATE ROLE files LOGIN PASSWORD :'files_pw';
 CREATE ROLE queue LOGIN PASSWORD :'queue_pw';
+CREATE ROLE orders LOGIN PASSWORD :'orders_pw';
+CREATE ROLE panel_orders LOGIN PASSWORD :'panel_orders_pw';
 CREATE ROLE keycloak LOGIN PASSWORD :'keycloak_pw';
 CREATE DATABASE keycloak OWNER keycloak;
 REVOKE ALL ON DATABASE keycloak FROM PUBLIC;

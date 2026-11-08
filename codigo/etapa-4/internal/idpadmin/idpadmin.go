@@ -1,12 +1,14 @@
 // Package idpadmin calls the Keycloak Admin API with the panel's service
-// account ("panel-admin", client credentials). It only disables a user and
-// ends their sessions: the incident response of the panel (E6.4).
+// account ("panel-admin", client credentials). It disables a user and ends
+// their sessions (the incident response of the panel, E6.4), and reads a
+// user's roles (before assigning an order to a technician).
 package idpadmin
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -55,6 +57,57 @@ func (c *Client) LogoutAndDisable(ctx context.Context, user uuid.UUID) error {
 		return fmt.Errorf("log out user: %w", err)
 	}
 	return nil
+}
+
+// HasRealmRole tells whether the account exists and has the realm role, such
+// as before assigning an order to a technician.
+func (c *Client) HasRealmRole(ctx context.Context, user uuid.UUID, role string) (bool, error) {
+	var roles []struct {
+		Name string `json:"name"`
+	}
+	err := c.get(ctx, "/users/"+user.String()+"/role-mappings/realm", &roles)
+	if errors.Is(err, errUserNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, r := range roles {
+		if r.Name == role {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+var errUserNotFound = errors.New("user not found")
+
+func (c *Client) get(ctx context.Context, path string, out any) error {
+	token, err := c.token(ctx)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/admin/realms/"+c.realm+path, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	switch {
+	case resp.StatusCode == http.StatusNotFound:
+		return errUserNotFound
+	case resp.StatusCode != http.StatusOK:
+		return fmt.Errorf("GET %s: %s", path, resp.Status)
+	}
+	return json.Unmarshal(data, out)
 }
 
 func (c *Client) call(ctx context.Context, method, path string, body []byte) error {

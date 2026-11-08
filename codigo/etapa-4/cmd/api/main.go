@@ -19,7 +19,9 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/pg"
+	"nuggetmachine/internal/pricing"
 	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/customer"
 	"nuggetmachine/internal/session"
@@ -54,7 +56,12 @@ func run(log *slog.Logger) error {
 	}
 	filesPassword := env.Secret("DB_FILES_PASSWORD")
 	queuePassword := env.Secret("DB_QUEUE_PASSWORD")
+	ordersPassword := env.Secret("DB_ORDERS_PASSWORD")
 	auditPassword := env.Secret("DB_AUDIT_PASSWORD")
+	buildVolume, err := pricing.ParseBuildVolume(env.String("BUILD_VOLUME_MM", "250,250,250"))
+	if err != nil {
+		return err
+	}
 	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
 	amqpUser := env.String("AMQP_USER", "api")
 	amqpPassword := env.Secret("AMQP_PASSWORD")
@@ -87,6 +94,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer queuePool.Close()
+	ordersPool, err := pg.Open(ctx, mainHost, mainName, "orders", ordersPassword)
+	if err != nil {
+		return err
+	}
+	defer ordersPool.Close()
 	auditPool, err := pg.Open(ctx, auditHost, auditName, "audit_app", auditPassword)
 	if err != nil {
 		return err
@@ -122,6 +134,9 @@ func run(log *slog.Logger) error {
 		Sessions:       sessions,
 		Limiter:        sessions,
 		RatePerMinute:  ratePerMinute,
+		Orders:         orders.NewStore(ordersPool),
+		BuildVolume:    buildVolume,
+		Now:            time.Now,
 		Log:            log,
 		TrustedProxies: trusted,
 	})

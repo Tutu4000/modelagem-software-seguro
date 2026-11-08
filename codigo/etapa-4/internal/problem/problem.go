@@ -27,7 +27,10 @@ const (
 	// JustificationRequired: a critical operation needs a written reason.
 	JustificationRequired Code = "justification_required"
 	IdPUnavailable        Code = "idp_unavailable"
-	Internal              Code = "internal"
+	// Conflict: the resource is not in the status the operation needs.
+	Conflict     Code = "conflict"
+	QuoteExpired Code = "quote_expired"
+	Internal     Code = "internal"
 )
 
 var catalog = map[Code]struct {
@@ -46,6 +49,8 @@ var catalog = map[Code]struct {
 	StepUpRequired:        {http.StatusUnauthorized, "Recent authentication required"},
 	JustificationRequired: {http.StatusUnprocessableEntity, "Justification required"},
 	IdPUnavailable:        {http.StatusBadGateway, "Identity provider unavailable"},
+	Conflict:              {http.StatusConflict, "Conflict with the current status"},
+	QuoteExpired:          {http.StatusConflict, "Quote expired"},
 	Internal:              {http.StatusInternalServerError, "Internal error"},
 }
 

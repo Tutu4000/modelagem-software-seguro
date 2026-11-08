@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.5.0
+  version: 0.6.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -88,6 +88,142 @@ paths:
           $ref: "#/components/responses/RateLimited"
         "503":
           $ref: "#/components/responses/Problem"
+  /api/v1/catalog:
+    get:
+      summary: Active price table, to build the order form
+      responses:
+        "200":
+          description: Materials, colors, qualities, finishings, setup fee and volume discounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, currency, rules]
+                properties:
+                  version:
+                    type: integer
+                  currency:
+                    type: string
+                    example: BRL
+                  rules:
+                    $ref: "#/components/schemas/PriceRules"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders:
+    post:
+      summary: Quote an order from one of the customer's processed files
+      description: >
+        The price is computed only on the server, from the model volume and
+        the active price table (CA03). The body has no price field, and any
+        unknown field (such as total_cents or status) is refused with 400.
+        The quote holds for 24 hours.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file_id, material, color, quality, finishing, quantity]
+              properties:
+                file_id:
+                  type: string
+                  format: uuid
+                material:
+                  type: string
+                color:
+                  type: string
+                quality:
+                  type: string
+                finishing:
+                  type: string
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+      responses:
+        "201":
+          description: Order quoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The file is not processed yet (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      summary: The customer's orders, newest first (RF09)
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}:
+    get:
+      summary: One of the customer's orders, with its history and review (RF12, RF20)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/submit:
+    post:
+      summary: Send a quoted order to technical review
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order awaiting review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order is not quoted (conflict) or the quote expired (quote_expired)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
 components:
   securitySchemes:
     # Access token issued by Keycloak (realm "nugget") with audience "api"
@@ -101,6 +237,13 @@ components:
       type: openIdConnect
       openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
   parameters:
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     FileID:
       name: id
       in: path
@@ -162,6 +305,106 @@ components:
                 type: number
               minItems: 3
               maxItems: 3
+    PriceRules:
+      type: object
+      properties:
+        materials:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              name:
+                type: string
+              cents_per_cm3:
+                type: integer
+              colors:
+                type: array
+                items:
+                  type: string
+        qualities:
+          type: object
+          description: Multiplier in per mille (1000 keeps the material price)
+          additionalProperties:
+            type: integer
+        finishings:
+          type: object
+          description: Cents per unit
+          additionalProperties:
+            type: integer
+        setup_cents:
+          type: integer
+        discounts:
+          type: array
+          items:
+            type: object
+            properties:
+              min_quantity:
+                type: integer
+              percent_off:
+                type: integer
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        file_id:
+          type: string
+          format: uuid
+        material:
+          type: string
+        color:
+          type: string
+        quality:
+          type: string
+        finishing:
+          type: string
+        quantity:
+          type: integer
+        price_table_version:
+          type: integer
+        unit_cents:
+          type: integer
+        discount_cents:
+          type: integer
+        total_cents:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [quoted, awaiting_review, awaiting_payment, rejected, paid, in_production, shipped, delivered, cancelled]
+        quote_expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                type: string
+                nullable: true
+              to:
+                type: string
+              at:
+                type: string
+                format: date-time
+        review:
+          type: object
+          nullable: true
+          properties:
+            decision:
+              type: string
+              enum: [approved, rejected]
+            report:
+              type: string
+            reviewed_at:
+              type: string
+              format: date-time
     Problem:
       type: object
       required: [type, title, status, code]

@@ -12,13 +12,21 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/server"
 	"nuggetmachine/internal/session"
 )
 
-// IdP is what the panel asks of Keycloak in an incident.
+// IdP is what the panel asks of Keycloak: the incident response and whether
+// an account has a role.
 type IdP interface {
 	LogoutAndDisable(ctx context.Context, user uuid.UUID) error
+	HasRealmRole(ctx context.Context, user uuid.UUID, role string) (bool, error)
+}
+
+// Presigner signs read URLs with the panel's read-only storage key.
+type Presigner interface {
+	PresignGet(key string, ttl time.Duration) (string, error)
 }
 
 type Deps struct {
@@ -28,6 +36,8 @@ type Deps struct {
 	RatePerMinute int
 	Audit         *audit.Logger
 	IdP           IdP
+	Orders        *orders.Store
+	Files         Presigner
 	// StepUpMaxAge is how recent the login must be for a critical operation.
 	StepUpMaxAge   time.Duration
 	Now            func() time.Time
@@ -49,8 +59,22 @@ func New(d Deps) (*server.Router, error) {
 		Access(d.Audit),
 	)
 	h := handlers{d: d}
+	critical := Critical(d.StepUpMaxAge, d.Now, d.Audit)
+	admin := []auth.Role{auth.RoleAdmin}
+	technician := []auth.Role{auth.RoleTechnician}
+
 	v1.Handle(http.MethodGet, "/me", auth.StaffRoles, h.me)
-	v1.Handle(http.MethodPost, "/users/:id/revoke", []auth.Role{auth.RoleAdmin},
-		Critical(d.StepUpMaxAge, d.Now, d.Audit), h.revoke)
+	v1.Handle(http.MethodPost, "/users/:id/revoke", admin, critical, h.revoke)
+
+	v1.Handle(http.MethodGet, "/orders", []auth.Role{auth.RoleAdmin, auth.RoleSupport}, h.listOrders)
+	v1.Handle(http.MethodGet, "/orders/assigned", technician, h.assignedOrders)
+	v1.Handle(http.MethodGet, "/orders/:id", auth.StaffRoles, h.getOrder)
+	v1.Handle(http.MethodPost, "/orders/:id/assign", admin, h.assign)
+	v1.Handle(http.MethodPost, "/orders/:id/file", technician, critical, h.file)
+	v1.Handle(http.MethodPost, "/orders/:id/review", technician, h.review)
+
+	v1.Handle(http.MethodGet, "/price-tables", admin, h.priceTables)
+	v1.Handle(http.MethodPost, "/price-tables", admin, h.proposePriceTable)
+	v1.Handle(http.MethodPost, "/price-tables/:version/approve", admin, critical, h.approvePriceTable)
 	return r, nil
 }

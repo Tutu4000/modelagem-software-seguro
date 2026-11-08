@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — internal panel API
-  version: 0.1.0
+  version: 0.2.0
   description: >
     Staff routes (technician, support, admin), served by the panel binary on
     an address of its own, reachable only from the host's loopback or an SSH
@@ -102,7 +102,224 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+  /panel/v1/orders:
+    get:
+      summary: List orders, optionally by status (admin, support)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OrderList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/assigned:
+    get:
+      summary: Orders assigned to the logged-in technician
+      responses:
+        "200":
+          $ref: "#/components/responses/OrderList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}:
+    get:
+      summary: One order with volume, bounding box, DFM flags, history and review
+      description: >
+        Support and admin see any order; a technician only the orders assigned
+        to them. Someone else's order and a missing one get the same 403.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffOrder"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/assign:
+    post:
+      summary: Assign an order awaiting review to a technician (admin)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [technician_id]
+              properties:
+                technician_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Order assigned
+        "400":
+          description: The account is not a technician (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/file:
+    post:
+      summary: URL to the customer's design (assigned technician, critical)
+      description: >
+        Needs a recent login and a justification. The URL lasts 5 minutes and
+        is signed with a read-only storage key. Not even an admin can open a
+        design.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Justification"
+      responses:
+        "200":
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                  expires_in:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/review:
+    post:
+      summary: Technical review with the DFM report (assigned technician)
+      description: >
+        Only from awaiting_review. Approved moves the order to
+        awaiting_payment, rejected to rejected. A second review gets 409.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, report]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+                report:
+                  type: string
+                  minLength: 10
+                  maxLength: 5000
+      responses:
+        "200":
+          description: Review recorded
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/price-tables:
+    get:
+      summary: Price table versions (admin)
+      responses:
+        "200":
+          description: Versions, newest first
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      summary: Propose a new price table (admin)
+      description: The table is created as a draft and changes no price until another admin approves it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rules]
+              properties:
+                rules:
+                  type: object
+                  description: Same shape as the rules of GET /api/v1/catalog
+      responses:
+        "201":
+          description: Draft created
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/price-tables/{version}/approve:
+    post:
+      summary: Activate a draft (another admin, critical)
+      description: >
+        Needs a recent login and a justification. The admin who proposed it
+        gets 403. The previous table is retired in the same transaction, and
+        existing orders keep the price they were quoted with.
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Justification"
+      responses:
+        "200":
+          description: Table active
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
 components:
+  parameters:
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
   securitySchemes:
     oidc:
       type: openIdConnect
@@ -111,6 +328,17 @@ components:
         Client panel-web, authorization code with PKCE. The client always asks
         for acr 2 (password and TOTP).
   responses:
+    OrderList:
+      description: Orders, newest first
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              orders:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StaffOrder"
     Problem:
       description: Error in the Problem Details format (RFC 9457)
       content:
@@ -135,6 +363,35 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    StaffOrder:
+      type: object
+      description: The customer view of the order (see openapi.yaml) plus the review data
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+        total_cents:
+          type: integer
+        volume_mm3:
+          type: number
+        bbox_mm:
+          type: array
+          items:
+            type: number
+        dfm_flags:
+          type: array
+          items:
+            type: string
+            enum: [exceeds_build_volume]
+        assigned_technician:
+          type: string
+          format: uuid
+          nullable: true
     Justification:
       type: object
       required: [justification]
@@ -166,4 +423,5 @@ components:
             - rate_limited
             - unavailable
             - idp_unavailable
+            - conflict
             - internal

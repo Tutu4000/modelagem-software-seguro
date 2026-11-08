@@ -41,9 +41,11 @@ O realm é gerado a partir de [deploy/keycloak/realm.json](deploy/keycloak/realm
 |Conta|Perfil|TOTP|
 |-|-|-|
 |`customer-a`, `customer-b`, `customer-c`, `customer-d`|`customer`|Não|
-|`technician`|`technician`|Sim|
+|`technician`, `technician-2`|`technician`|Sim|
 |`support`|`support`|Sim|
-|`admin`|`admin`|Sim|
+|`admin`, `admin-2`|`admin`|Sim|
+
+O `technician-2` nunca recebe pedidos nos testes, para conferir que só o técnico atribuído trabalha num pedido. O `admin-2` aprova as tabelas de preço que o `admin` propõe, porque uma tabela precisa de dois admins.
 
 O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel.
 
@@ -58,6 +60,17 @@ curl --cacert secrets/tls_ca.pem -H "Authorization: Bearer $TOKEN" https://local
 
 O contrato das rotas está no [openapi.yaml](openapi.yaml).
 
+### Fluxo de um pedido
+
+1. **Cliente:** envia o STL (`POST /api/v1/files`) e espera o estado `done`.
+2. **Cliente:** consulta o catálogo (`GET /api/v1/catalog`) e pede o orçamento (`POST /api/v1/orders`). O preço é calculado só no servidor; o pedido nasce `quoted`, e o orçamento vale 24 horas.
+3. **Cliente:** confirma (`POST /api/v1/orders/{id}/submit`), e o pedido passa a `awaiting_review`.
+4. **Admin, no painel:** atribui o pedido a um técnico (`POST /panel/v1/orders/{id}/assign`).
+5. **Técnico atribuído, no painel:** abre o STL com justificativa (`POST /panel/v1/orders/{id}/file`) e registra o laudo e a decisão (`POST /panel/v1/orders/{id}/review`). Aprovado, o pedido vai para `awaiting_payment`; reprovado, para `rejected`.
+6. **Cliente:** acompanha o pedido, o histórico e o resultado da revisão (`GET /api/v1/orders/{id}`).
+
+Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/price-tables`) e aprovada por outro (`POST /panel/v1/price-tables/{versão}/approve`). Os pedidos já orçados mantêm o preço que tinham.
+
 ## Componentes
 
 |Serviço|Rede|Papel|
@@ -68,7 +81,7 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 |`panel`|`internal`|Painel interno, em binário próprio. Só aceita tokens do `panel-web` com TOTP (`acr=2`) e perfis da equipe, e grava `panel.access` em toda requisição. A operação crítica "revogar usuário" (só `admin`) exige um login de no máximo 5 minutos e uma justificativa. Grava no banco de auditoria com o papel `panel_audit`, e usa uma service account própria no Keycloak|
 |`api`|`internal`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
-|`postgres`|`internal`|Banco principal (`nugget`). Os papéis `files` e `queue` só alcançam as próprias tabelas, `files` e `tasks`|
+|`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, e `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL|
 |`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|
 |`rabbitmq`|`internal` e `processing`|Filas quorum `tasks` (até 3 entregas), `tasks.failed` e `results`. Os usuários `api` e `worker` não declaram nada|
 |`garage`|`internal` e `processing`|Bucket privado `files`. Só se lê com URL pré-assinada|

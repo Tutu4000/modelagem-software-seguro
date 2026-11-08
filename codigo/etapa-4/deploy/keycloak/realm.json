@@ -328,6 +328,44 @@
           "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
         }
       ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a02",
+      "username": "technician-2",
+      "email": "technician-2@nugget.local",
+      "emailVerified": true,
+      "firstName": "Second",
+      "lastName": "Technician",
+      "enabled": true,
+      "realmRoles": ["technician"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c04",
+      "username": "admin-2",
+      "email": "admin-2@nugget.local",
+      "emailVerified": true,
+      "firstName": "Second",
+      "lastName": "Admin",
+      "enabled": true,
+      "realmRoles": ["admin"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
     }
   ]
 }
