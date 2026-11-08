@@ -13,6 +13,12 @@ default:
 secrets *args:
     go run ./cmd/gensecrets {{ args }}
 
+# Renew only the TLS chain when it no longer fits (no AKI, expiring or another
+# host) and restart what serves or trusts it. The other secrets stay.
+cert host="localhost":
+    go run ./cmd/gensecrets -host {{ host }}
+    {{ compose }} restart nginx partnersim
+
 # Start the environment, rebuilding the images
 up:
     {{ compose }} up -d --build
