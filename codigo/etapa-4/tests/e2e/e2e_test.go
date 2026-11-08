@@ -123,7 +123,8 @@ func status(t *testing.T, token, id string) state {
 	return st
 }
 
-// waitFor polls slowly, so as not to hit the rate limit.
+// waitFor polls slowly, so as not to hit the per-IP or the per-user rate
+// limit.
 func waitFor(t *testing.T, token, id, want string) state {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -135,7 +136,7 @@ func waitFor(t *testing.T, token, id, want string) state {
 		if time.Now().After(deadline) {
 			t.Fatalf("file %s stayed %q, want %q", id, st.Status, want)
 		}
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 
@@ -363,6 +364,117 @@ func TestIDVersions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// E5.1: a logout in Keycloak revokes the access token in every API replica.
+// The back-channel call reaches one replica; the revocation is in Valkey.
+func TestLogoutRevokesTokenOnAllReplicas(t *testing.T) {
+	dockerCompose(t, "up", "-d", "--no-recreate", "--scale", "api=3")
+	// nginx re-resolves the replicas every 10s, so both scaling steps wait for
+	// it: otherwise the next test could hit a replica that no longer exists.
+	t.Cleanup(func() {
+		dockerCompose(t, "up", "-d", "--no-recreate", "--scale", "api=1")
+		time.Sleep(12 * time.Second)
+	})
+	time.Sleep(12 * time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), httpWait)
+	defer cancel()
+	tokens, err := keycloak.Login(ctx, devlogin.CustomerA)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := base + "/api/v1/files/" + uuid.NewString()
+	wantStatus(t, do(t, http.MethodGet, path, tokens.Access, nil, -1), http.StatusForbidden)
+
+	if err := keycloak.Logout(ctx, tokens.Refresh); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 12 {
+		if resp := do(t, http.MethodGet, path, tokens.Access, nil, -1); resp.StatusCode != http.StatusUnauthorized {
+			t.Errorf("request %d after logout got %d, want 401", i+1, resp.StatusCode)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+}
+
+// D03: without Valkey the API cannot check revocations, so it refuses.
+func TestValkeyDownFailsClosed(t *testing.T) {
+	token := login(t, devlogin.CustomerA)
+	path := base + "/api/v1/files/" + uuid.NewString()
+	dockerCompose(t, "stop", "valkey")
+	t.Cleanup(func() { dockerCompose(t, "start", "valkey") })
+
+	wantStatus(t, do(t, http.MethodGet, path, token, nil, -1), http.StatusServiceUnavailable)
+
+	dockerCompose(t, "start", "valkey")
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp := do(t, http.MethodGet, path, token, nil, -1)
+		if resp.StatusCode == http.StatusForbidden {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the API still answers %d after Valkey came back", resp.StatusCode)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// The API's Valkey user reaches only its own keys and commands, and the
+// default user is off.
+func TestValkeyACL(t *testing.T) {
+	password := readSecret(t, "valkey_api_password")
+	for _, cmd := range [][]string{{"FLUSHALL"}, {"KEYS", "*"}, {"CONFIG", "GET", "*"}, {"SET", "other:key", "1"}} {
+		args := append([]string{"exec", "-T", "-e", "REDISCLI_AUTH=" + password, "valkey", "valkey-cli", "--user", "api", "--no-auth-warning"}, cmd...)
+		if out := composeOutput(args...); !strings.Contains(out, "NOPERM") {
+			t.Errorf("%v as api: %q, want NOPERM", cmd, strings.TrimSpace(out))
+		}
+	}
+	if out := composeOutput("exec", "-T", "valkey", "valkey-cli", "PING"); !strings.Contains(out, "NOAUTH") {
+		t.Errorf("PING as default: %q, want NOAUTH", strings.TrimSpace(out))
+	}
+}
+
+// composeOutput runs docker compose and returns the output even when the
+// command fails, for checks that expect an error.
+func composeOutput(args ...string) string {
+	out, _ := exec.Command("docker", append([]string{"compose", "-f", compose}, args...)...).CombinedOutput()
+	return string(out)
+}
+
+// The back-channel logout lives on the internal listener only.
+func TestBackchannelLogoutIsNotPublic(t *testing.T) {
+	resp := do(t, http.MethodPost, base+"/oidc/backchannel-logout", "", strings.NewReader("logout_token=x"), -1)
+	wantStatus(t, resp, http.StatusNotFound)
+}
+
+// E5.2: one user is limited across replicas and IPs, while another user from
+// the same IP is not. The pace stays below the per-IP limit of nginx. Runs
+// near the end because customer B stays limited for a minute.
+func TestUserRateLimit(t *testing.T) {
+	limited, other := login(t, devlogin.CustomerB), login(t, devlogin.CustomerC)
+	path := base + "/api/v1/files/" + uuid.NewString()
+
+	var rejected *http.Response
+	for range 70 {
+		resp := do(t, http.MethodGet, path, limited, nil, -1)
+		if resp.StatusCode == http.StatusTooManyRequests {
+			rejected = resp
+		}
+		time.Sleep(120 * time.Millisecond)
+	}
+	if rejected == nil {
+		t.Fatal("none of the 70 requests got 429")
+	}
+	var body struct {
+		Code string `json:"code"`
+	}
+	decode(t, rejected, &body)
+	if body.Code != "rate_limited" || rejected.Header.Get("Retry-After") == "" {
+		t.Errorf("429 with code %q and Retry-After %q", body.Code, rejected.Header.Get("Retry-After"))
+	}
+	wantStatus(t, do(t, http.MethodGet, path, other, nil, -1), http.StatusForbidden)
 }
 
 // RS03 and E2.3: a burst from one IP gets 429. It runs last because it

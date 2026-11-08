@@ -81,43 +81,69 @@ func New(issuer, secretsDir string) (*Client, error) {
 // HTTP is a client that trusts the local CA, for calls to the API.
 func (c *Client) HTTP() *http.Client { return c.http }
 
+// Tokens is the result of a login. The refresh token is what ends the
+// Keycloak session in Logout.
+type Tokens struct {
+	Access  string `json:"access_token"`
+	Refresh string `json:"refresh_token"`
+}
+
 // Token logs the account in and returns its access token.
 func (c *Client) Token(ctx context.Context, a Account) (string, error) {
+	t, err := c.Login(ctx, a)
+	return t.Access, err
+}
+
+func (c *Client) Login(ctx context.Context, a Account) (Tokens, error) {
 	form := url.Values{
-		"grant_type":    {"password"},
-		"client_id":     {"e2e"},
-		"client_secret": {c.secret("keycloak_e2e_client_secret")},
-		"username":      {a.Username},
-		"password":      {c.secret("keycloak_demo_password")},
-		"scope":         {"openid"},
+		"grant_type": {"password"},
+		"username":   {a.Username},
+		"password":   {c.secret("keycloak_demo_password")},
+		"scope":      {"openid"},
 	}
 	if a.Staff {
 		form.Set("otp", TOTP([]byte(c.secret("keycloak_totp_secret")), time.Now()))
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.issuer+"/protocol/openid-connect/token", strings.NewReader(form.Encode()))
+	body, err := c.post(ctx, "/protocol/openid-connect/token", form)
 	if err != nil {
-		return "", err
+		return Tokens{}, fmt.Errorf("login of %s: %w", a.Username, err)
+	}
+	var t Tokens
+	if err := json.Unmarshal(body, &t); err != nil || t.Access == "" {
+		return Tokens{}, fmt.Errorf("login of %s: no access token in the response", a.Username)
+	}
+	return t, nil
+}
+
+// Logout ends the Keycloak session. Keycloak then calls the back-channel
+// logout of the API, which revokes the session's access tokens.
+func (c *Client) Logout(ctx context.Context, refresh string) error {
+	_, err := c.post(ctx, "/protocol/openid-connect/logout", url.Values{"refresh_token": {refresh}})
+	return err
+}
+
+// post authenticates as the e2e client and expects a 2xx answer.
+func (c *Client) post(ctx context.Context, path string, form url.Values) ([]byte, error) {
+	form.Set("client_id", "e2e")
+	form.Set("client_secret", c.secret("keycloak_e2e_client_secret"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.issuer+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("login of %s: %s: %s", a.Username, resp.Status, bytes.TrimSpace(body))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, fmt.Errorf("%s: %s", resp.Status, bytes.TrimSpace(body))
 	}
-	var tok struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(body, &tok); err != nil || tok.AccessToken == "" {
-		return "", fmt.Errorf("login of %s: no access token in the response", a.Username)
-	}
-	return tok.AccessToken, nil
+	return body, nil
 }
 
 func (c *Client) secret(name string) string {

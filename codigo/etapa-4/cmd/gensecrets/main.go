@@ -64,6 +64,8 @@ func main() {
 		"keycloak_demo_password",
 		"keycloak_totp_secret",
 		"keycloak_e2e_client_secret",
+		"valkey_api_password",
+		"valkey_health_password",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -89,6 +91,7 @@ func main() {
 		log.Fatal(err)
 	}
 	g.write("rabbitmq_users.json", users)
+	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_health_password")))
 	realm, err := renderRealm(*realmTemplate, map[string][]byte{
 		"PUBLIC_HOST":       []byte(*host),
 		"DEMO_PASSWORD":     g.read("keycloak_demo_password"),
@@ -282,6 +285,23 @@ func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 			{"worker", "/", "^$", "^results$", "^tasks$"},
 		},
 	}, "", "  ")
+}
+
+// valkeyACL keeps only SHA-256 hashes of the passwords. The default user is
+// off, the API reaches only its own key prefixes with the commands it uses,
+// and the health check user can only PING (E5.1).
+func valkeyACL(apiPassword, healthPassword []byte) []byte {
+	hash := func(p []byte) string {
+		sum := sha256.Sum256(bytes.TrimSpace(p))
+		return hex.EncodeToString(sum[:])
+	}
+	return []byte(strings.Join([]string{
+		"user default off",
+		"user api on #" + hash(apiPassword) + " resetkeys ~session:* ~ratelimit:* resetchannels -@all" +
+			" +get +mget +set +exists +incr +pexpire +pttl +eval +evalsha +ping +hello +client|setinfo",
+		"user healthcheck on #" + hash(healthPassword) + " resetkeys resetchannels -@all +ping",
+		"",
+	}, "\n"))
 }
 
 // rabbitHash follows the RabbitMQ format: base64(salt + SHA-256(salt +

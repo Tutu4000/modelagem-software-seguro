@@ -12,6 +12,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/valkey-io/valkey-go v1.0.78
 )
 
 require (

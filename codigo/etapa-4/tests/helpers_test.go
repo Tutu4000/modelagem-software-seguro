@@ -29,6 +29,7 @@ import (
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/customer"
+	"nuggetmachine/internal/session"
 	"nuggetmachine/internal/storage"
 )
 
@@ -52,18 +53,24 @@ func (c *clock) Advance(d time.Duration) {
 }
 
 type env struct {
-	t      *testing.T
-	router http.Handler
-	store  *storage.Memory
-	repo   *files.MemoryRepo
-	queue  *queue.Memory
-	audit  *bytes.Buffer // audit log
-	app    *bytes.Buffer // request log
-	key    ed25519.PrivateKey
-	clock  *clock
+	t        *testing.T
+	router   http.Handler
+	store    *storage.Memory
+	repo     *files.MemoryRepo
+	queue    *queue.Memory
+	audit    *bytes.Buffer // audit log
+	app      *bytes.Buffer // request log
+	sessions *session.Memory
+	verifier *auth.Verifier
+	key      ed25519.PrivateKey
+	clock    *clock
 }
 
-func newEnv(t *testing.T) *env {
+// newEnv uses a rate limit high enough to stay out of the way of the tests
+// that do not exercise it.
+func newEnv(t *testing.T) *env { return newEnvWithRate(t, 1000) }
+
+func newEnvWithRate(t *testing.T, perMinute int) *env {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -71,28 +78,33 @@ func newEnv(t *testing.T) *env {
 	}
 	clk := &clock{t: time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)}
 	e := &env{
-		t:     t,
-		store: storage.NewMemory([]byte("storage-test-secret"), "https://storage.local", clk.Now),
-		repo:  files.NewMemoryRepo(),
-		queue: queue.NewMemory(),
-		audit: &bytes.Buffer{},
-		app:   &bytes.Buffer{},
-		key:   priv,
-		clock: clk,
+		t:        t,
+		store:    storage.NewMemory([]byte("storage-test-secret"), "https://storage.local", clk.Now),
+		repo:     files.NewMemoryRepo(),
+		queue:    queue.NewMemory(),
+		audit:    &bytes.Buffer{},
+		app:      &bytes.Buffer{},
+		sessions: session.NewMemory(clk.Now),
+		key:      priv,
+		clock:    clk,
 	}
+	e.verifier = auth.NewVerifier(auth.VerifierConfig{
+		Keys:     auth.StaticKey(pub),
+		Issuer:   testIssuer,
+		Audience: "api",
+		Now:      clk.Now,
+	})
 	router, err := customer.New(customer.Deps{
-		Verifier: auth.NewVerifier(auth.VerifierConfig{
-			Keys:     auth.StaticKey(pub),
-			Issuer:   testIssuer,
-			Audience: "api",
-			Now:      clk.Now,
-		}),
-		Files: e.repo,
-		Store: e.store,
-		Queue: e.queue,
-		Tasks: e.queue,
-		Audit: audit.New(e.audit),
-		Log:   slog.New(slog.NewJSONHandler(e.app, nil)),
+		Verifier:      e.verifier,
+		Files:         e.repo,
+		Store:         e.store,
+		Queue:         e.queue,
+		Tasks:         e.queue,
+		Audit:         audit.New(e.audit),
+		Sessions:      e.sessions,
+		Limiter:       e.sessions,
+		RatePerMinute: perMinute,
+		Log:           slog.New(slog.NewJSONHandler(e.app, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,6 +112,9 @@ func newEnv(t *testing.T) *env {
 	e.router = router
 	return e
 }
+
+// sessionOf is the Keycloak session the test tokens of a user belong to.
+func sessionOf(user auth.UserID) string { return "session-" + user.String() }
 
 const testIssuer = "https://idp.test/realms/nugget"
 
@@ -113,6 +128,7 @@ func (e *env) claims(user auth.UserID, validity time.Duration) jwt.MapClaims {
 		"aud":          []string{"api"},
 		"typ":          "Bearer",
 		"sub":          user.String(),
+		"sid":          sessionOf(user),
 		"realm_access": map[string]any{"roles": []string{string(auth.RoleCustomer)}},
 		"iat":          now.Unix(),
 		"exp":          now.Add(validity).Unix(),

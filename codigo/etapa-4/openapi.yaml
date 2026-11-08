@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.4.0
+  version: 0.5.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -37,7 +37,9 @@ paths:
         "422":
           $ref: "#/components/responses/Problem"
         "429":
-          description: Rate limit exceeded
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/files/{id}:
     get:
       summary: Processing status of one of the customer's own files
@@ -53,6 +55,10 @@ paths:
         "401":
           $ref: "#/components/responses/Problem"
         "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
           $ref: "#/components/responses/Problem"
   /api/v1/files/{id}/download:
     get:
@@ -78,6 +84,10 @@ paths:
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     # Access token issued by Keycloak (realm "nugget") with audience "api"
@@ -100,7 +110,23 @@ components:
         format: uuid
   responses:
     Problem:
-      description: Error in the Problem Details format
+      description: >
+        Error in the Problem Details format. A 401 also covers a token whose
+        session was logged out or revoked. A 503 means the session store is
+        down: the API fails closed instead of trusting the token.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RateLimited:
+      description: >
+        Rate limit exceeded: per IP at nginx, or per user (60 requests per
+        minute) across all replicas, with code rate_limited.
+      headers:
+        Retry-After:
+          description: Seconds until the user may try again
+          schema:
+            type: integer
       content:
         application/problem+json:
           schema:
