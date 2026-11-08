@@ -1,4 +1,4 @@
-// Package files é o módulo Arquivos.
+// Package files is the Files module.
 package files
 
 import (
@@ -21,13 +21,14 @@ import (
 	"nuggetmachine/internal/stl"
 )
 
-// ErrNotFound vale para arquivo inexistente e para arquivo alheio, para não
-// revelar quais IDs existem.
-var ErrNotFound = errors.New("arquivo não encontrado")
+// ErrNotFound covers both a missing file and someone else's file, so that the
+// response does not reveal which IDs exist.
+var ErrNotFound = errors.New("file not found")
 
 const downloadTTL = 5 * time.Minute // RS01
 
-// FileID também é a chave do objeto no armazenamento.
+// FileID is also the object key in the storage. It is a UUIDv4 because the
+// customer sees it: a v7 would reveal when each design was uploaded (C02).
 type FileID uuid.UUID
 
 func NewFileID() FileID { return FileID(uuid.New()) }
@@ -46,8 +47,8 @@ type File struct {
 	SHA256 [32]byte
 }
 
-// Repo não tem busca só por ID: toda leitura passa pela autorização central
-// (D01).
+// Repo has no lookup by ID alone: every read goes through the central
+// authorization (D01).
 type Repo interface {
 	Save(ctx context.Context, f File) error
 	FindForUser(ctx context.Context, u auth.User, id FileID) (File, error)
@@ -60,6 +61,18 @@ type ObjectStore interface {
 
 type Enqueuer interface {
 	Enqueue(ctx context.Context, f File, model stl.Validated) error
+}
+
+// TaskStatus is what the queue module reports about the processing of a file.
+// The files module never reads the queue's table (E3.1).
+type TaskStatus struct {
+	State     string
+	VolumeMM3 *float64
+	BBoxMM    *[3]float64
+}
+
+type TaskReader interface {
+	StatusOf(ctx context.Context, id FileID) (TaskStatus, error)
 }
 
 type MemoryRepo struct {
@@ -96,7 +109,37 @@ type Handler struct {
 	Repo  Repo
 	Store ObjectStore
 	Queue Enqueuer
+	Tasks TaskReader
 	Audit *audit.Logger
+}
+
+// Status shows the progress to the owner only, with the same denial as
+// Download.
+func (h *Handler) Status(c *gin.Context) {
+	user := auth.MustUser(c)
+	target := c.Param("id")
+
+	f, err := h.findForUser(c, user, target)
+	if errors.Is(err, ErrNotFound) {
+		h.recordDenied(c, user, "file.status", target)
+		problem.Abort(c, problem.New(problem.Forbidden, err))
+		return
+	}
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+
+	st, err := h.Tasks.StatusOf(c.Request.Context(), f.ID)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	body := gin.H{"id": f.ID.String(), "status": st.State}
+	if st.VolumeMM3 != nil && st.BBoxMM != nil {
+		body["result"] = gin.H{"volume_mm3": *st.VolumeMM3, "bbox_mm": st.BBoxMM[:]}
+	}
+	c.JSON(http.StatusOK, body)
 }
 
 func (h *Handler) Download(c *gin.Context) {
@@ -122,19 +165,22 @@ func (h *Handler) Download(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"url": url})
 }
 
-// Upload só grava o arquivo e cria a tarefa depois do limite de tamanho e do
+// Upload only stores the file and creates the task after the size limit and
 // stl.Parse (RS03).
 func (h *Handler) Upload(c *gin.Context) {
 	user := auth.MustUser(c)
 
 	data, err := readBody(c)
 	if err != nil {
+		h.recordRejected(c, user, err)
 		problem.Abort(c, err)
 		return
 	}
 	model, err := stl.Parse(data)
 	if err != nil {
-		problem.Abort(c, stlProblem(err))
+		err = stlProblem(err)
+		h.recordRejected(c, user, err)
+		problem.Abort(c, err)
 		return
 	}
 
@@ -155,10 +201,10 @@ func (h *Handler) Upload(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"id": f.ID.String(), "status": "processing"})
 }
 
-// readBody recusa um Content-Length acima do limite sem ler o corpo, e corta a
-// leitura no limite quando o tamanho não é declarado.
+// readBody rejects a Content-Length above the limit without reading the body,
+// and cuts the read at the limit when the size is not declared.
 func readBody(c *gin.Context) ([]byte, error) {
-	tooLarge := problem.New(problem.FileTooLarge, fmt.Errorf("upload acima de %d bytes", stl.MaxSize))
+	tooLarge := problem.New(problem.FileTooLarge, fmt.Errorf("upload above %d bytes", stl.MaxSize))
 	if c.Request.ContentLength > stl.MaxSize {
 		return nil, tooLarge
 	}
@@ -201,5 +247,25 @@ func (h *Handler) recordDenied(c *gin.Context, u auth.User, action, target strin
 	})
 	if err != nil {
 		_ = c.Error(err)
+	}
+}
+
+// recordRejected only records validation rejections (RS03), with the error code
+// as the reason. Internal failures go to the request log.
+func (h *Handler) recordRejected(c *gin.Context, u auth.User, err error) {
+	var pe *problem.Error
+	if !errors.As(err, &pe) {
+		return
+	}
+	rerr := h.Audit.Record(audit.Event{
+		Name:   "upload.rejected",
+		Actor:  u.ID().String(),
+		Action: "file.upload",
+		Result: "rejected",
+		Reason: string(pe.Code),
+		Origin: c.ClientIP(),
+	})
+	if rerr != nil {
+		_ = c.Error(rerr)
 	}
 }

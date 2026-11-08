@@ -1,6 +1,6 @@
 package tests
 
-// Prática 1 (RS01, D01). Os IDs seguem a tabela de docs/etapa-4-codigo-seguro.md.
+// Practice 1 (RS01, D01). The IDs follow the table in docs/etapa-4-codigo-seguro.md.
 
 import (
 	"bytes"
@@ -18,24 +18,24 @@ import (
 	"nuggetmachine/internal/files"
 )
 
-func TestTS01_ClienteBaixaOProprioSTL(t *testing.T) {
+func TestTS01_CustomerDownloadsOwnSTL(t *testing.T) {
 	e := newEnv(t)
 	a := newUser()
-	content := []byte("projeto do cliente A")
+	content := []byte("design of customer A")
 	f := e.seedFile(a, content)
 
 	rec := e.fetch(e.downloadURL(a, f))
 
 	wantStatus(t, rec, http.StatusOK)
 	if !bytes.Equal(rec.Body.Bytes(), content) {
-		t.Fatal("a URL não entregou o arquivo do cliente")
+		t.Fatal("the URL did not deliver the customer's file")
 	}
 }
 
-func TestTS02_ClienteNaoBaixaOSTLDeOutroCliente(t *testing.T) {
+func TestTS02_CustomerCannotDownloadAnotherCustomersSTL(t *testing.T) {
 	e := newEnv(t)
 	a, b := newUser(), newUser()
-	fileB := e.seedFile(b, []byte("projeto confidencial do cliente B"))
+	fileB := e.seedFile(b, []byte("confidential design of customer B"))
 	missing := files.NewFileID()
 	tokenA := e.token(a)
 
@@ -44,9 +44,9 @@ func TestTS02_ClienteNaoBaixaOSTLDeOutroCliente(t *testing.T) {
 		path   string
 		target files.FileID
 	}{
-		{"arquivo de outro cliente", downloadPath(fileB.ID), fileB.ID},
-		{"user_id de outro cliente na URL é ignorado", downloadPath(fileB.ID) + "?user_id=" + b.String(), fileB.ID},
-		{"arquivo inexistente recebe a mesma resposta", downloadPath(missing), missing},
+		{"another customer's file", downloadPath(fileB.ID), fileB.ID},
+		{"another customer's user_id in the URL is ignored", downloadPath(fileB.ID) + "?user_id=" + b.String(), fileB.ID},
+		{"missing file gets the same response", downloadPath(missing), missing},
 	}
 	bodies := map[string]string{}
 	for _, tc := range cases {
@@ -54,38 +54,38 @@ func TestTS02_ClienteNaoBaixaOSTLDeOutroCliente(t *testing.T) {
 			rec := e.get(tc.path, tokenA)
 			wantStatus(t, rec, http.StatusForbidden)
 			if code := problemCode(t, rec); code != "forbidden" {
-				t.Errorf("code %q, esperado \"forbidden\"", code)
+				t.Errorf("code %q, want \"forbidden\"", code)
 			}
 			var body map[string]any
 			decode(t, rec, &body)
 			if _, ok := body["url"]; ok {
-				t.Fatal("a resposta negada trouxe uma URL")
+				t.Fatal("the denied response carried a URL")
 			}
 			bodies[tc.name] = rec.Body.String()
 		})
 	}
 	if bodies[cases[0].name] != bodies[cases[2].name] {
-		t.Error("arquivo de outro cliente e arquivo inexistente tiveram respostas diferentes, o que revela quais IDs existem")
+		t.Error("another customer's file and a missing file got different responses, which reveals which IDs exist")
 	}
 
 	denied := e.events("authz.denied")
 	if len(denied) != len(cases) {
-		t.Fatalf("%d eventos authz.denied, esperado %d", len(denied), len(cases))
+		t.Fatalf("%d authz.denied events, want %d", len(denied), len(cases))
 	}
 	for i, ev := range denied {
 		if ev["actor"] != a.String() || ev["target"] != cases[i].target.String() || ev["result"] != "denied" {
-			t.Errorf("evento inesperado para %q: %v", cases[i].name, ev)
+			t.Errorf("unexpected event for %q: %v", cases[i].name, ev)
 		}
 	}
-	if strings.Contains(e.logs.String(), tokenA) {
-		t.Error("o token apareceu no log (C17)")
+	if strings.Contains(e.audit.String(), tokenA) {
+		t.Error("the token appeared in the log (C17)")
 	}
 }
 
-func TestTS03_RequisicaoSemTokenValidoRecebe401(t *testing.T) {
+func TestTS03_RequestWithoutValidTokenGets401(t *testing.T) {
 	e := newEnv(t)
 	a, b := newUser(), newUser()
-	fileB := e.seedFile(b, []byte("projeto confidencial do cliente B"))
+	fileB := e.seedFile(b, []byte("confidential design of customer B"))
 
 	_, otherKey, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -101,28 +101,28 @@ func TestTS03_RequisicaoSemTokenValidoRecebe401(t *testing.T) {
 		name  string
 		token string
 	}{
-		{"sem token", ""},
-		{"token malformado", "isto-nao-e-um-jwt"},
-		{"token do cliente B assinado por outra chave", sign(t, otherKey, e.claims(b, 15*time.Minute))},
-		{"token do cliente B expirado", sign(t, e.key, e.claims(b, -time.Minute))},
-		{"token sem assinatura (alg none)", unsigned},
-		{"token do cliente A com o usuário trocado para B", swapSubject(t, e.token(a), b)},
+		{"no token", ""},
+		{"malformed token", "this-is-not-a-jwt"},
+		{"customer B token signed by another key", sign(t, otherKey, e.claims(b, 15*time.Minute))},
+		{"expired customer B token", sign(t, e.key, e.claims(b, -time.Minute))},
+		{"unsigned token (alg none)", unsigned},
+		{"customer A token with the user swapped to B", swapSubject(t, e.token(a), b)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			rec := e.get(downloadPath(fileB.ID), tc.token)
 			wantStatus(t, rec, http.StatusUnauthorized)
 			if code := problemCode(t, rec); code != "unauthenticated" {
-				t.Errorf("code %q, esperado \"unauthenticated\"", code)
+				t.Errorf("code %q, want \"unauthenticated\"", code)
 			}
 		})
 	}
 }
 
-func TestTS04_URLPreAssinadaExpiraEm5Minutos(t *testing.T) {
+func TestTS04_PresignedURLExpiresIn5Minutes(t *testing.T) {
 	e := newEnv(t)
 	a := newUser()
-	signed := e.downloadURL(a, e.seedFile(a, []byte("projeto do cliente A")))
+	signed := e.downloadURL(a, e.seedFile(a, []byte("design of customer A")))
 
 	e.clock.Advance(4*time.Minute + 59*time.Second)
 	wantStatus(t, e.fetch(signed), http.StatusOK)
@@ -131,11 +131,11 @@ func TestTS04_URLPreAssinadaExpiraEm5Minutos(t *testing.T) {
 	wantStatus(t, e.fetch(signed), http.StatusForbidden)
 }
 
-func TestTS05_URLAdulteradaRecebe403(t *testing.T) {
+func TestTS05_TamperedURLGets403(t *testing.T) {
 	e := newEnv(t)
 	a, b := newUser(), newUser()
-	fileA := e.seedFile(a, []byte("projeto do cliente A"))
-	fileB := e.seedFile(b, []byte("projeto confidencial do cliente B"))
+	fileA := e.seedFile(a, []byte("design of customer A"))
+	fileB := e.seedFile(b, []byte("confidential design of customer B"))
 	signed, err := url.Parse(e.downloadURL(a, fileA))
 	if err != nil {
 		t.Fatal(err)
@@ -145,21 +145,21 @@ func TestTS05_URLAdulteradaRecebe403(t *testing.T) {
 		name   string
 		change func(u *url.URL)
 	}{
-		{"acesso direto, sem assinatura", func(u *url.URL) {
+		{"direct access, no signature", func(u *url.URL) {
 			u.RawQuery = ""
 		}},
-		{"assinatura alterada", func(u *url.URL) {
+		{"altered signature", func(u *url.URL) {
 			q := u.Query()
 			q.Set("sig", flipLast(q.Get("sig")))
 			u.RawQuery = q.Encode()
 		}},
-		{"validade estendida", func(u *url.URL) {
+		{"extended expiry", func(u *url.URL) {
 			q := u.Query()
 			exp, _ := strconv.ParseInt(q.Get("exp"), 10, 64)
 			q.Set("exp", strconv.FormatInt(exp+3600, 10))
 			u.RawQuery = q.Encode()
 		}},
-		{"assinatura do arquivo A usada no arquivo B", func(u *url.URL) {
+		{"signature of file A used on file B", func(u *url.URL) {
 			u.Path = strings.Replace(u.Path, fileA.ID.String(), fileB.ID.String(), 1)
 		}},
 	}
@@ -169,8 +169,8 @@ func TestTS05_URLAdulteradaRecebe403(t *testing.T) {
 			tc.change(&u)
 			rec := e.fetch(u.String())
 			wantStatus(t, rec, http.StatusForbidden)
-			if bytes.Contains(rec.Body.Bytes(), []byte("projeto")) {
-				t.Fatal("o armazenamento entregou conteúdo")
+			if bytes.Contains(rec.Body.Bytes(), []byte("design")) {
+				t.Fatal("the storage delivered content")
 			}
 		})
 	}

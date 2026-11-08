@@ -1,0 +1,38 @@
+# Database access generated from the migrations and from each module's queries.
+# Regenerate with `just sqlc`. Each module gets its own package, just as it has
+# its own database role (E3.1).
+version: "2"
+
+sql:
+  - engine: postgresql
+    schema: migrations/main
+    queries: internal/files/queries.sql
+    gen:
+      go: &go
+        package: filesdb
+        out: internal/files/filesdb
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        overrides:
+          - db_type: uuid
+            go_type: github.com/google/uuid.UUID
+          - db_type: timestamptz
+            go_type: time.Time
+
+  - engine: postgresql
+    schema: migrations/main
+    queries: internal/queue/queries.sql
+    gen:
+      go:
+        <<: *go
+        package: queuedb
+        out: internal/queue/queuedb
+
+  - engine: postgresql
+    schema: migrations/audit
+    queries: internal/audit/queries.sql
+    gen:
+      go:
+        <<: *go
+        package: auditdb
+        out: internal/audit/auditdb

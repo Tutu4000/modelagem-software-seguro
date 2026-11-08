@@ -1,4 +1,5 @@
-// Package auth tira a identidade só do token, nunca da requisição (RS01).
+// Package auth takes the identity from the token only, never from the request
+// (RS01).
 package auth
 
 import (
@@ -23,9 +24,9 @@ func (id UserID) String() string { return uuid.UUID(id).String() }
 
 type Role string
 
-const RoleCliente Role = "cliente"
+const RoleCustomer Role = "customer"
 
-// User só é criado por Verify, a partir de um token válido.
+// User is only created by Verify, from a valid token.
 type User struct {
 	id   UserID
 	role Role
@@ -35,7 +36,7 @@ func (u User) ID() UserID { return u.id }
 
 func (u User) Role() Role { return u.role }
 
-// Verifier guarda só a chave pública: quem assina os tokens é o IdP.
+// Verifier holds only the public key: the IdP signs the tokens.
 type Verifier struct {
 	pub ed25519.PublicKey
 	now func() time.Time
@@ -50,7 +51,7 @@ type claims struct {
 	jwt.RegisteredClaims
 }
 
-// Verify aceita só EdDSA, o que barra o alg none e a troca de algoritmo
+// Verify accepts only EdDSA, which blocks alg none and algorithm confusion
 // (ASVS 9.1.2).
 func (v *Verifier) Verify(token string) (User, error) {
 	var c claims
@@ -61,14 +62,14 @@ func (v *Verifier) Verify(token string) (User, error) {
 		jwt.WithTimeFunc(v.now),
 	)
 	if err != nil {
-		return User{}, fmt.Errorf("token inválido: %w", err)
+		return User{}, fmt.Errorf("invalid token: %w", err)
 	}
 	id, err := uuid.Parse(c.Subject)
 	if err != nil {
-		return User{}, fmt.Errorf("sub não é um UUID: %w", err)
+		return User{}, fmt.Errorf("sub is not a UUID: %w", err)
 	}
-	if c.Role != RoleCliente {
-		return User{}, fmt.Errorf("perfil %q não aceito", c.Role)
+	if c.Role != RoleCustomer {
+		return User{}, fmt.Errorf("role %q not accepted", c.Role)
 	}
 	return User{id: UserID(id), role: c.Role}, nil
 }
@@ -77,7 +78,7 @@ func RequireUser(v *Verifier) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token, ok := bearerToken(c.GetHeader("Authorization"))
 		if !ok {
-			problem.Abort(c, problem.New(problem.Unauthenticated, errors.New("sem token Bearer")))
+			problem.Abort(c, problem.New(problem.Unauthenticated, errors.New("no Bearer token")))
 			return
 		}
 		u, err := v.Verify(token)
@@ -90,7 +91,7 @@ func RequireUser(v *Verifier) gin.HandlerFunc {
 	}
 }
 
-// MustUser só pode ser chamado em rotas atrás do RequireUser.
+// MustUser may only be called on routes behind RequireUser.
 func MustUser(c *gin.Context) User {
 	return c.MustGet(userKey).(User)
 }

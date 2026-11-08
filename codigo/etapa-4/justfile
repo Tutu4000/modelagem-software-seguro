@@ -1,0 +1,72 @@
+# Local environment shortcuts. Works on Linux, macOS and Windows: every recipe
+# uses only docker and go, one command per line.
+
+set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
+
+compose := "docker compose -f deploy/compose.yaml"
+sqlc := "sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537"
+
+default:
+    @just --list
+
+# Generate the secrets in secrets/ (use `just secrets -force` to regenerate)
+secrets *args:
+    go run ./cmd/gensecrets {{ args }}
+
+# Start the environment, rebuilding the images
+up:
+    {{ compose }} up -d --build
+
+down:
+    {{ compose }} down
+
+# Also delete the volumes: databases, queue and files
+reset:
+    {{ compose }} down -v
+
+# Change the number of API replicas
+scale n="3":
+    {{ compose }} up -d --no-recreate --scale api={{ n }}
+
+ps:
+    {{ compose }} ps
+
+logs service="":
+    {{ compose }} logs -f {{ service }}
+
+# Print a test token: who is "a", "b" or a UUID
+token who="a" ttl="15m":
+    go run ./cmd/devtoken -sub {{ who }} -ttl {{ ttl }}
+
+# Upload fictitious STLs for customers A and B through the public API
+seed:
+    go run ./cmd/seed
+
+test:
+    go test ./...
+
+# End-to-end tests against the compose environment (needs `just up`)
+test-e2e:
+    go test -tags e2e -count=1 ./tests/e2e/...
+
+# Regenerate the database access from migrations/ and each module's queries.sql
+[unix]
+sqlc:
+    docker run --rm -u "$(id -u):$(id -g)" -v "{{ justfile_directory() }}:/src" -w /src {{ sqlc }} generate
+
+[windows]
+sqlc:
+    docker run --rm -v "{{ justfile_directory() }}:/src" -w /src {{ sqlc }} generate
+
+# go vet, gosec, govulncheck, gitleaks (on the git history) and sqlc code up to date
+lint:
+    go vet ./...
+    docker run --rm -v "{{ justfile_directory() }}:/src:ro" -w /src {{ sqlc }} diff
+    go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet ./...
+    go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+    docker run --rm -v "{{ justfile_directory() }}/../..:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner
+
+# ZAP scan driven by openapi.yaml, authenticated as customer A (Stage 5)
+zap:
+    go run ./cmd/devtoken -sub a -ttl 2h -out secrets/zap_token
+    {{ compose }} --profile zap run --rm zap

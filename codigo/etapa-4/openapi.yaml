@@ -1,0 +1,144 @@
+openapi: 3.0.3
+info:
+  title: nugget-machine — public API
+  version: 0.3.0
+  description: >
+    Customer routes. The panel routes live in another binary and do not exist
+    here. Errors follow Problem Details (RFC 9457), without the internal cause.
+servers:
+  - url: https://localhost
+security:
+  - bearerAuth: []
+paths:
+  /api/v1/files:
+    post:
+      summary: Upload a binary STL
+      description: >
+        The file is validated before it is stored (RS03): up to 100 MB, binary
+        STL structure and up to 2 million triangles.
+      requestBody:
+        required: true
+        content:
+          model/stl:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "202":
+          description: File accepted and processing task created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadAccepted"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "429":
+          description: Rate limit exceeded
+  /api/v1/files/{id}:
+    get:
+      summary: Processing status of one of the customer's own files
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Task status and, once done, the result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FileStatus"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /api/v1/files/{id}/download:
+    get:
+      summary: Presigned URL to download one of the customer's own files
+      description: >
+        Only the owner gets the URL (RS01). Someone else's file and a missing
+        file get the same 403 response. The URL is valid for 5 minutes.
+      parameters:
+        - $ref: "#/components/parameters/FileID"
+      responses:
+        "200":
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    FileID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Problem:
+      description: Error in the Problem Details format
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    UploadAccepted:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+    FileStatus:
+      type: object
+      required: [id, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [waiting, processing, done, failed]
+        result:
+          type: object
+          properties:
+            volume_mm3:
+              type: number
+            bbox_mm:
+              type: array
+              items:
+                type: number
+              minItems: 3
+              maxItems: 3
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
