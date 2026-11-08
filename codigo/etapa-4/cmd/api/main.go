@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/customer"
+	"nuggetmachine/internal/session"
 	"nuggetmachine/internal/storage"
 )
 
@@ -35,6 +37,7 @@ func main() {
 func run(log *slog.Logger) error {
 	var env config.Env
 	addr := env.String("API_ADDR", ":8080")
+	internalAddr := env.String("INTERNAL_ADDR", ":8090")
 	trusted := env.List("TRUSTED_PROXIES")
 	issuer := env.Required("OIDC_ISSUER")
 	jwksURL := env.Required("OIDC_JWKS_URL")
@@ -55,6 +58,13 @@ func run(log *slog.Logger) error {
 	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
 	amqpUser := env.String("AMQP_USER", "api")
 	amqpPassword := env.Secret("AMQP_PASSWORD")
+	valkeyAddr := env.Required("VALKEY_ADDR")
+	valkeyUser := env.String("VALKEY_USER", "api")
+	valkeyPassword := env.Secret("VALKEY_PASSWORD")
+	ratePerMinute, err := strconv.Atoi(env.String("RATE_LIMIT_PER_MINUTE", "60"))
+	if err != nil || ratePerMinute < 1 {
+		return fmt.Errorf("RATE_LIMIT_PER_MINUTE: want a positive integer")
+	}
 	if err := env.Err(); err != nil {
 		return err
 	}
@@ -90,23 +100,52 @@ func run(log *slog.Logger) error {
 	defer broker.Close()
 	closed := broker.Closed()
 
+	sessions, err := session.NewValkey(valkeyAddr, valkeyUser, valkeyPassword)
+	if err != nil {
+		return fmt.Errorf("Valkey at %s: %w", valkeyAddr, err)
+	}
+	defer sessions.Close()
+
 	store := storage.NewS3(s3cfg)
 	auditLog := audit.NewWithStore(os.Stdout, audit.NewPostgres(auditPool))
 	tasks := queue.NewRabbit(queuePool, broker, store, auditLog, log)
+	verifier := auth.NewVerifier(auth.VerifierConfig{Keys: keys, Issuer: issuer, Audience: audience, Now: time.Now})
 
 	gin.SetMode(gin.ReleaseMode)
 	router, err := customer.New(customer.Deps{
-		Verifier:       auth.NewVerifier(auth.VerifierConfig{Keys: keys, Issuer: issuer, Audience: audience, Now: time.Now}),
+		Verifier:       verifier,
 		Files:          files.NewPostgresRepo(filesPool),
 		Store:          store,
 		Queue:          tasks,
 		Tasks:          tasks,
 		Audit:          auditLog,
+		Sessions:       sessions,
+		Limiter:        sessions,
+		RatePerMinute:  ratePerMinute,
 		Log:            log,
 		TrustedProxies: trusted,
 	})
 	if err != nil {
 		return err
+	}
+
+	// The internal listener is reachable only on the internal network: nginx
+	// never forwards to it. Keycloak calls it for the back-channel logout.
+	internal := http.NewServeMux()
+	internal.Handle("POST /oidc/backchannel-logout", session.LogoutHandler{
+		Verifier: verifier,
+		Clients:  []string{"web", "panel-web", "e2e"},
+		Store:    sessions,
+		Audit:    auditLog,
+		Log:      log,
+	})
+	internalSrv := &http.Server{
+		Addr:              internalAddr,
+		Handler:           internal,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
 
 	// The timeouts cover a 100 MB upload over a slow connection without leaving
@@ -120,10 +159,11 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       time.Minute,
 		MaxHeaderBytes:    16 << 10,
 	}
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	go func() { errc <- srv.ListenAndServe() }()
+	go func() { errc <- internalSrv.ListenAndServe() }()
 	go func() { errc <- tasks.ConsumeResults(ctx) }()
-	log.Info("API up", "addr", addr)
+	log.Info("API up", "addr", addr, "internal_addr", internalAddr)
 
 	// Without RabbitMQ the API exits, and Docker restarts it once it is back.
 	select {
@@ -136,6 +176,9 @@ func run(log *slog.Logger) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	if err := internalSrv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil

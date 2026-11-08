@@ -38,13 +38,22 @@ var knownRoles = []Role{RoleCustomer, RoleTechnician, RoleSupport, RoleAdmin}
 
 // User is only created by Verify, from a valid token.
 type User struct {
-	id   UserID
-	role Role
+	id       UserID
+	role     Role
+	session  string
+	issuedAt time.Time
 }
 
 func (u User) ID() UserID { return u.id }
 
 func (u User) Role() Role { return u.role }
+
+// SessionID is the Keycloak session (sid) the token belongs to. A logout
+// revokes it (E5.1).
+func (u User) SessionID() string { return u.session }
+
+// IssuedAt lets a per-user revocation reject every token issued before it.
+func (u User) IssuedAt() time.Time { return u.issuedAt }
 
 // StaticKey verifies every token with one public key. The tests use it in
 // place of the IdP.
@@ -86,6 +95,7 @@ func NewVerifier(c VerifierConfig) *Verifier {
 
 type claims struct {
 	Type        string `json:"typ"`
+	SessionID   string `json:"sid"`
 	RealmAccess struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
@@ -119,7 +129,11 @@ func (v *Verifier) Verify(token string) (User, error) {
 	if err != nil {
 		return User{}, err
 	}
-	return User{id: UserID(id), role: role}, nil
+	// Without sid and iat the token could not be revoked: it is refused.
+	if c.SessionID == "" || c.IssuedAt == nil {
+		return User{}, errors.New("token without sid or iat")
+	}
+	return User{id: UserID(id), role: role, session: c.SessionID, issuedAt: c.IssuedAt.Time}, nil
 }
 
 // appRole requires exactly one application role: an account that is both a

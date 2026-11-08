@@ -13,6 +13,7 @@ import (
 	"nuggetmachine/internal/files"
 	"nuggetmachine/internal/problem"
 	"nuggetmachine/internal/server"
+	"nuggetmachine/internal/session"
 )
 
 type Deps struct {
@@ -22,7 +23,11 @@ type Deps struct {
 	Queue    files.Enqueuer
 	Tasks    files.TaskReader
 	Audit    *audit.Logger
-	Log      *slog.Logger // nil turns off the request log
+	Sessions session.Store
+	Limiter  session.Limiter
+	// RatePerMinute is the per-user request limit (E5.2).
+	RatePerMinute int
+	Log           *slog.Logger // nil turns off the request log
 	// TrustedProxies are the IPs allowed to report the origin through
 	// X-Forwarded-For. When empty, the origin of audit events comes from the
 	// connection, not from a forged header. In the compose, only nginx (E2.3).
@@ -42,7 +47,11 @@ func New(d Deps) (*gin.Engine, error) {
 	}))
 
 	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Tasks: d.Tasks, Audit: d.Audit}
-	api := r.Group("/api/v1", auth.Require(d.Verifier, auth.RoleCustomer))
+	api := r.Group("/api/v1",
+		auth.Require(d.Verifier, auth.RoleCustomer),
+		session.Active(d.Sessions, d.Audit),
+		session.RateLimit(d.Limiter, d.Audit, d.RatePerMinute),
+	)
 	api.GET("/files/:id", h.Status)
 	api.GET("/files/:id/download", h.Download)
 	api.POST("/files", h.Upload)

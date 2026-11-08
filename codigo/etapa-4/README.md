@@ -58,8 +58,9 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 |Serviço|Rede|Papel|
 |-|-|-|
 |`nginx`|`public` e `internal`|Único com portas publicadas. Faz o TLS, limita requisições por IP (429) e o corpo a 100 MB (413), e distribui entre as réplicas da API|
-|`keycloak`|`internal`|Login dos clientes e SSO da equipe, com TOTP obrigatório para a equipe e bloqueio por tentativas. Assina os tokens com EdDSA. Usa o banco `keycloak`, com papel próprio, na instância `postgres`|
-|`api`|`internal`|Rotas do cliente. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`), valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados|
+|`keycloak`|`internal`|Login dos clientes e SSO da equipe, com TOTP obrigatório para a equipe e bloqueio por tentativas. Assina os tokens com EdDSA. Usa o banco `keycloak`, com papel próprio, na instância `postgres`. No logout, avisa a API pelo back-channel|
+|`valkey`|`internal`|Estado compartilhado entre as réplicas da API: sessões revogadas e limite de 60 requisições por minuto por usuário. O usuário `default` fica desligado, e o `api` só alcança as chaves `session:*` e `ratelimit:*`. Se o Valkey cair, a API responde 503|
+|`api`|`internal`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
 |`postgres`|`internal`|Banco principal (`nugget`). Os papéis `files` e `queue` só alcançam as próprias tabelas, `files` e `tasks`|
 |`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|

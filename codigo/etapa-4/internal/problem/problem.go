@@ -17,6 +17,8 @@ const (
 	FileTooLarge     Code = "file_too_large"
 	InvalidSTL       Code = "invalid_stl"
 	TooManyTriangles Code = "too_many_triangles"
+	RateLimited      Code = "rate_limited"
+	Unavailable      Code = "unavailable"
 	Internal         Code = "internal"
 )
 
@@ -29,6 +31,8 @@ var catalog = map[Code]struct {
 	FileTooLarge:     {http.StatusRequestEntityTooLarge, "File too large"},
 	InvalidSTL:       {http.StatusUnprocessableEntity, "Invalid STL"},
 	TooManyTriangles: {http.StatusUnprocessableEntity, "STL with too many triangles"},
+	RateLimited:      {http.StatusTooManyRequests, "Too many requests"},
+	Unavailable:      {http.StatusServiceUnavailable, "Service unavailable"},
 	Internal:         {http.StatusInternalServerError, "Internal error"},
 }
 

@@ -84,7 +84,14 @@
       "serviceAccountsEnabled": false,
       "redirectUris": ["https://{{PUBLIC_HOST}}/*"],
       "webOrigins": ["https://{{PUBLIC_HOST}}"],
-      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://{{PUBLIC_HOST}}/*"},
+      "frontchannelLogout": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://{{PUBLIC_HOST}}/*",
+        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true"
+      },
       "protocolMappers": [
         {
           "name": "audience-api",
@@ -105,7 +112,14 @@
       "serviceAccountsEnabled": false,
       "redirectUris": ["https://localhost:9443/*"],
       "webOrigins": ["https://localhost:9443"],
-      "attributes": {"pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "https://localhost:9443/*"},
+      "frontchannelLogout": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://localhost:9443/*",
+        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true"
+      },
       "protocolMappers": [
         {
           "name": "audience-panel",
@@ -126,6 +140,11 @@
       "implicitFlowEnabled": false,
       "directAccessGrantsEnabled": true,
       "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "attributes": {
+        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true"
+      },
       "protocolMappers": [
         {
           "name": "audience-api",

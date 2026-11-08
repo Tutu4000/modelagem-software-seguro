@@ -211,7 +211,7 @@ Os testes de cada prática entram num commit antes da implementação, junto com
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `panel.access`, `review.approved`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
+|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `auth.revoked_token_used`, `rate.limited`, `panel.access`, `review.approved`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
 |E7.2|Banco de auditoria separado, em que o papel da aplicação só tem `INSERT`|`UPDATE` e `DELETE` feitos pela aplicação recebem permissão negada|C18|P1|
 |E7.3|Logs da aplicação em JSON (`slog`), sem senha, token, cartão ou conteúdo de arquivo|Um teste procura o token da requisição no log e falha se encontrar|C17|P1|
 |E7.4|Grafana com papel só de leitura no banco de auditoria e um painel de negações, uploads recusados e acessos ao painel|O painel mostra os eventos do seed|C19|P2|
@@ -252,7 +252,10 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |Backup em outra conta|Bucket separado, com uma chave que a API não tem|
 |Serviços externos (FC5)|Ficam para o E8|
 |Docker Hardened Images|`golang` e `gcr.io/distroless/static-debian13:nonroot`, fixadas por digest. Continuam sem shell e sem root, e não exigem login com Docker ID|
-|Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey entra com o E5|
+|Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey guarda só as revogações e o limite por usuário (E5)|
+|Tokens de 15 minutos (E5.1)|Tokens de 5 minutos. A revogação vale por 10 minutos, o que cobre todos os tokens emitidos antes dela|
+|Limite por usuário (E5.2)|Janela deslizante aproximada por dois contadores de janela fixa, num script Lua atômico. É mais barata que guardar cada requisição e erra pouco perto da virada da janela|
+|Valkey indisponível|A API falha fechada: responde 503, porque não consegue conferir a revogação (D03). O preço é a API parar junto com o Valkey|
 |Migrações versionadas|SQL em `migrations/`, executado pelo Postgres só na criação do volume. Para mudar o esquema, `just reset`|
 |Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/token`, `cmd/seed`), que rodam no Windows|
 |TLS entre os serviços|Só na borda, no nginx. A rede interna fica sem TLS|
@@ -275,4 +278,5 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |M1|Concluído|E0.1 e E1|
 |M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
 |M3|Pendente|E9.1 e os itens P2|
+|E5.1 e E5.2|Concluídos|Valkey com ACL por usuário. O back-channel logout do Keycloak revoga a sessão em todas as réplicas, e a revogação por usuário já existe para o painel (F3). Limite de 60 requisições por minuto por usuário, com 429 e `Retry-After`. Sem o Valkey, 503|
 |E5.3|Concluído|Keycloak com realm versionado, quatro perfis, TOTP obrigatório para a equipe, bloqueio por tentativas, tokens EdDSA de 5 minutos e clientes `web` e `panel-web` com PKCE. A API confere `iss`, `aud`, tipo e perfil, e um token válido da equipe recebe 403 na API do cliente|
