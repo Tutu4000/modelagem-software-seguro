@@ -12,6 +12,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1" // #nosec G505 -- key identifiers only (RFC 5280)
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -19,6 +20,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -108,6 +110,14 @@ func main() {
 		g.once([]string{id, secret}, func() map[string][]byte {
 			return map[string][]byte{id: append([]byte("GK"), randomHex(12)...), secret: randomHex(32)}
 		})
+	}
+	// The chain is renewed on its own when it no longer fits: no AKI, close
+	// to expiring or for another host. The other secrets stay.
+	if !g.force && g.allExist([]string{"tls_ca.pem", "tls.crt", "tls.key"}) && !tlsCurrent(g.read("tls_ca.pem"), g.read("tls.crt"), *host, time.Now()) {
+		fmt.Println("renewed  tls_ca.pem, tls.crt, tls.key")
+		for name, data := range tlsChain(*host) {
+			g.write(name, data)
+		}
 	}
 	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, func() map[string][]byte { return tlsChain(*host) })
 	// The backups are encrypted to the public key only: the backup service
@@ -231,12 +241,15 @@ func randomHex(n int) []byte {
 }
 
 // tlsChain generates a local CA and the nginx certificate. The CA key is
-// discarded: to renew, run again with -force.
+// discarded: a renewal makes a new CA, which the browsers must import again.
+// Both certificates carry their key identifiers, and the nginx one names its
+// CA's (AKI), which strict verifiers such as Python 3.14 require.
 func tlsChain(host string) map[string][]byte {
 	now := time.Now()
 	caKey := newECKey()
 	ca := &x509.Certificate{
 		SerialNumber:          serial(),
+		SubjectKeyId:          keyID(caKey),
 		Subject:               pkix.Name{CommonName: "nugget-machine local CA"},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(1, 0, 0),
@@ -246,6 +259,11 @@ func tlsChain(host string) map[string][]byte {
 		MaxPathLenZero:        true,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, ca, ca, &caKey.PublicKey, caKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Signing with the parsed CA as parent fills in the AuthorityKeyId.
+	caCert, err := x509.ParseCertificate(caDER)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -260,6 +278,7 @@ func tlsChain(host string) map[string][]byte {
 	key := newECKey()
 	leaf := &x509.Certificate{
 		SerialNumber: serial(),
+		SubjectKeyId: keyID(key),
 		Subject:      pkix.Name{CommonName: host},
 		DNSNames:     dnsNames,
 		IPAddresses:  ips,
@@ -268,7 +287,7 @@ func tlsChain(host string) map[string][]byte {
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -281,6 +300,43 @@ func tlsChain(host string) map[string][]byte {
 		"tls.crt":    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
 		"tls.key":    pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
 	}
+}
+
+// keyID is method 1 of RFC 5280, 4.2.1.2: the SHA-1 of the public key bits.
+// It names the key; it protects nothing.
+func keyID(k *ecdsa.PrivateKey) []byte {
+	pub, err := k.PublicKey.ECDH()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sum := sha1.Sum(pub.Bytes()) // #nosec G401 -- an identifier, not a signature or a MAC
+	return sum[:]
+}
+
+// tlsCurrent says whether the existing chain still serves: the nginx
+// certificate verifies against the CA, names it (AKI), covers the host and
+// holds for more than 30 days.
+func tlsCurrent(caPEM, crtPEM []byte, host string, now time.Time) bool {
+	ca, err1 := parsePEMCert(caPEM)
+	crt, err2 := parsePEMCert(crtPEM)
+	if err1 != nil || err2 != nil || len(crt.AuthorityKeyId) == 0 || !bytes.Equal(crt.AuthorityKeyId, ca.SubjectKeyId) {
+		return false
+	}
+	if now.Add(30 * 24 * time.Hour).After(crt.NotAfter) {
+		return false
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(ca)
+	_, err := crt.Verify(x509.VerifyOptions{Roots: pool, DNSName: host, CurrentTime: now})
+	return err == nil
+}
+
+func parsePEMCert(data []byte) (*x509.Certificate, error) {
+	b, _ := pem.Decode(data)
+	if b == nil {
+		return nil, errors.New("no PEM block")
+	}
+	return x509.ParseCertificate(b.Bytes)
 }
 
 func newECKey() *ecdsa.PrivateKey {

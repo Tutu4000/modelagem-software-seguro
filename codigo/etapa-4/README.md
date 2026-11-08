@@ -18,7 +18,7 @@ Todos os comandos são executados nesta pasta.
 just secrets     # gera chaves, senhas e o certificado TLS em secrets/ (fora do git)
 just up          # constrói as imagens e sobe tudo
 just scale 3     # opcional: três réplicas da API atrás do nginx
-just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento à produção, mais um chamado, uma troca de endereço pendente e um cancelamento
+just seed        # dados da demo: pedidos em todos os estados, chamados, troca de endereço, tabela de preço e eventos de segurança
 ```
 
 |Endereço|O que é|
@@ -63,9 +63,25 @@ for i in $(seq 15); do
 done
 ```
 
-O certificado é de uma CA local. Para o `curl`, use `--cacert secrets/tls_ca.pem`. Para o navegador, importe esse arquivo ou aceite o aviso.
+O certificado é de uma CA local, gerada pelo `just secrets`, com validade de um ano.
+
+* **No `curl`:** use `--cacert secrets/tls_ca.pem`.
+* **No navegador:** importe esse arquivo como autoridade confiável (no Firefox, em *Configurações > Privacidade e Segurança > Certificados > Autoridades > Importar*; no Chrome, em *Configurações > Privacidade e segurança > Segurança > Gerenciar certificados*) ou aceite o aviso.
+
+O `just secrets` renova só a cadeia TLS quando ela deixa de servir: sem o Authority Key Identifier, a menos de 30 dias do vencimento ou para outro host. Os outros segredos ficam como estão.
+
+Para outro endereço, como uma VM, rode `just cert <host>`. Ele gera a cadeia com o host no SAN e reinicia o `nginx` e o `partnersim`, sem `reset`. Depois de uma renovação, a CA é nova, então o navegador precisa importá-la de novo.
 
 No primeiro `just up`, o Keycloak leva cerca de um minuto para criar o banco e importar o realm. A API só sobe depois que ele fica pronto.
+
+### O que o `just seed` cria
+
+O seed usa a API e o painel como os clientes e a equipe usariam, e no fim imprime um roteiro de onde olhar. Leva cerca de um minuto. Ele não é idempotente: para começar limpo, `just reset` antes.
+
+* **Pedidos dos clientes A e B em cada estado:** `quoted`, `awaiting_review` (um deles com o alerta de DFM), `awaiting_payment`, `paid`, `in_production`, `delivered` (com rastreio), `rejected` (com laudo) e `cancelled` (com estorno).
+* **Chamados:** um respondido pelo suporte, e outro com a troca de endereço proposta pelo suporte, esperando o código que está no Mailpit do `customer-b`.
+* **Tabela de preço:** uma proposta do `admin`, com o PLA 10% mais caro, esperando a aprovação do `admin-2`.
+* **Eventos de segurança do `customer-c`:** 15 negações, 10 uploads inválidos e um webhook de pagamento forjado. Eles aparecem no dashboard de segurança e disparam os alertas "Enumeração de IDs" e "Abuso de upload". Para não gerá-los, use `go run ./cmd/seed -no-attacks`.
 
 ### Contas fictícias
 
