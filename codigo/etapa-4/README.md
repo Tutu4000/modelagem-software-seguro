@@ -125,7 +125,10 @@ Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/pri
 |`valkey`|`internal`|Estado compartilhado entre as réplicas da API: sessões revogadas e limite de 60 requisições por minuto por usuário. O usuário `default` fica desligado, e o `api` e o `panel` só alcançam as chaves `session:*` e `ratelimit:*`. Se o Valkey cair, a API responde 503|
 |`panel`|`internal` e `partners`|Painel interno, em binário próprio. Só aceita tokens do `panel-web` com TOTP (`acr=2`) e perfis da equipe, e grava `panel.access` em toda requisição. A operação crítica "revogar usuário" (só `admin`) exige um login de no máximo 5 minutos e uma justificativa. Grava no banco de auditoria com o papel `panel_audit`, e usa uma service account própria no Keycloak|
 |`api`|`internal` e `partners`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
-|`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
+|`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage. Roda sob o gVisor (`runsc`); numa máquina sem gVisor, suba com `WORKER_RUNTIME=runc just up`|
+|`postgres-replica`|`internal`|Réplica de leitura por streaming do `postgres`. Recusa escritas. A lista de pedidos do cliente, o Grafana e o backup leem dela|
+|`backup`|`internal`|Uma vez por dia, faz o `pg_dump` da réplica e da auditoria e um `tar` dos arquivos, criptografa tudo com `age` para a chave pública e grava no bucket `backups`, que só a chave dele alcança. Os backups expiram em 30 dias|
+|`restore-db` e `restore`|`restore` (e `internal`, para o `restore`)|Só existem durante o `just restore-test`: um Postgres vazio e o restaurador, o único contêiner que recebe a chave privada do `age`|
 |`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL, `support` e `panel_support` alcançam os chamados, e `retention` só lê as datas e apaga o que expirou|
 |`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). Os papéis `audit_app`, `panel_audit` e `retention_audit` só têm `INSERT`, e o `grafana_reader` só tem `SELECT`|
 |`rabbitmq`|`internal`, `processing` e `notify`|Filas quorum `tasks` (até 3 entregas), `tasks.failed`, `results`, `notifications` (até 5 entregas) e `notifications.failed`. Nenhum usuário declara nada: o `panel` só publica avisos, e o `notifier` só os consome|
@@ -172,9 +175,21 @@ O `just test-e2e` cobre:
 * o isolamento do `notifier`;
 * o `/metrics` fora das portas públicas e o Prometheus alcançando todos os serviços;
 * o login do Grafana, os dashboards e a consulta à auditoria pelo papel só de leitura;
-* os alertas de enumeração e de abuso de upload disparando para a conta certa.
+* os alertas de enumeração e de abuso de upload disparando para a conta certa;
+* o worker sob o gVisor;
+* a réplica, que recusa escritas e serve a lista de pedidos;
+* o backup criptografado, fora do alcance da chave da API, e o restore-test.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
+
+## Backup e restauração
+
+```sh
+just backup        # um backup agora, sem esperar o diário
+just restore-test  # restaura o último backup num Postgres temporário e confere
+```
+
+O `just restore-test` baixa o backup mais recente e o descriptografa com `secrets/backup_age_identity`. Depois confere o SHA-256 de cada parte contra o manifesto, restaura os dois bancos, compara as contagens de `files`, `orders` e `events` e o número de arquivos, e imprime o tempo total. No fim, o servidor temporário é removido.
 
 ## Outros comandos
 

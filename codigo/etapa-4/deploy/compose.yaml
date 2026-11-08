@@ -155,6 +155,8 @@ services:
       DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
       DB_ORDERS_PASSWORD_FILE: /run/secrets/db_orders_password
       DB_SUPPORT_PASSWORD_FILE: /run/secrets/db_support_password
+      # The customer's order list reads the replica (E3.4).
+      DB_REPLICA_HOST: postgres-replica
       BUILD_VOLUME_MM: "250,250,250"
       PAYMENTS_URL: http://partnersim:8100
       PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
@@ -198,6 +200,7 @@ services:
       valkey: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       postgres: { condition: service_healthy }
+      postgres-replica: { condition: service_healthy }
       postgres-audit: { condition: service_healthy }
     deploy:
       resources:
@@ -370,6 +373,21 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 64m, pids: 64 }
 
+  postgres-replica-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres-replica:5432/nugget?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
+    secrets: [db_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres-replica: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
   postgres-audit-exporter:
     <<: *hardened
     image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
@@ -416,9 +434,17 @@ services:
 
   # Only on the processing network: no database, Valkey or internet, and no
   # Garage key. It reads the files through the message's presigned URL (FC3,
-  # E4.2).
+  # E4.2). It runs under gVisor (E4.8): the STL parser talks to a user-space
+  # kernel, not to the host's. WORKER_RUNTIME=runc is the way out on a host
+  # without gVisor.
   worker:
     <<: *hardened
+    runtime: ${WORKER_RUNTIME:-runsc}
+    # gVisor's network stack does not reach Docker's embedded DNS, so the two
+    # names the worker needs are fixed here.
+    extra_hosts:
+      - rabbitmq:172.28.40.10
+      - garage:172.28.40.11
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -476,7 +502,11 @@ services:
     secrets:
       - source: rabbitmq_users
         target: /etc/rabbitmq/definitions/01-users.json
-    networks: [internal, processing, notify]
+    networks:
+      internal: {}
+      processing:
+        ipv4_address: 172.28.40.10
+      notify: {}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
@@ -500,7 +530,10 @@ services:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage:/var/lib/garage
     secrets: [garage_rpc_secret, garage_admin_token, garage_metrics_token]
-    networks: [internal, processing]
+    networks:
+      internal: {}
+      processing:
+        ipv4_address: 172.28.40.11
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
@@ -521,6 +554,8 @@ services:
       S3_PANEL_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
       S3_RETENTION_ACCESS_KEY_ID_FILE: /run/secrets/s3_retention_access_key_id
       S3_RETENTION_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_retention_secret_access_key
+      S3_BACKUP_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_BACKUP_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
       S3_ENDPOINT: http://garage:3900
     secrets:
       - garage_admin_token
@@ -530,6 +565,8 @@ services:
       - s3_panel_secret_access_key
       - s3_retention_access_key_id
       - s3_retention_secret_access_key
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
     networks: [internal]
     depends_on: [garage]
     deploy:
@@ -557,6 +594,8 @@ services:
       - db_retention_password
       - db_grafana_main_password
       - db_exporter_password
+      - db_backup_password
+      - db_replicator_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
@@ -566,6 +605,110 @@ services:
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # Read replica by streaming (E3.4). On an empty volume it copies the primary
+  # with pg_basebackup, then follows it. It refuses every write.
+  postgres-replica:
+    <<: *limits
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    user: postgres
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+        mkdir -p "$$PGDATA" && chmod 700 "$$PGDATA" &&
+        PGPASSWORD="$$(cat /run/secrets/db_replicator_password)"
+        pg_basebackup -h postgres -U replicator -D "$$PGDATA" -R -X stream;
+        fi &&
+        exec postgres
+    volumes:
+      - replica:/var/lib/postgresql
+    secrets: [db_replicator_password]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 128 }
+
+  # Daily backup (E3.5): the main database from the replica, the trail and the
+  # files, encrypted with age to a public key, in a bucket only its key
+  # reaches. The image is the database's, for pg_dump.
+  backup:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: backup
+    environment:
+      DB_HOST: postgres-replica
+      DB_BACKUP_PASSWORD_FILE: /run/secrets/db_backup_password
+      AUDIT_DB_HOST: postgres-audit
+      DB_AUDIT_BACKUP_PASSWORD_FILE: /run/secrets/db_audit_backup_password
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
+      AGE_RECIPIENT_FILE: /run/secrets/backup_age_recipient
+      BACKUP_INTERVAL: 24h
+    secrets:
+      - db_backup_password
+      - db_audit_backup_password
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
+      - backup_age_recipient
+    networks: [internal]
+    depends_on:
+      garage-init: { condition: service_completed_successfully }
+      postgres-replica: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512m, pids: 64 }
+
+  # `just restore-test` (E3.6): an empty server that lives only for the test,
+  # on its own network, and the only container that gets the age identity.
+  restore-db:
+    <<: *limits
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    profiles: [restore]
+    restart: "no"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs: ["/var/lib/postgresql:size=512m"]
+    networks: [restore]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  restore:
+    <<: *hardened
+    profiles: [restore]
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: backup
+    command: ["-restore-test"]
+    environment:
+      RESTORE_DB_HOST: restore-db
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
+      AGE_IDENTITY_FILE: /run/secrets/backup_age_identity
+    secrets:
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
+      - backup_age_identity
+    networks: [internal, restore]
+    depends_on:
+      restore-db: { condition: service_healthy }
 
   # Separate instance: whoever compromises the main database cannot reach the
   # trail (C18).
@@ -585,6 +728,7 @@ services:
       - db_retention_audit_password
       - db_grafana_reader_password
       - db_audit_exporter_password
+      - db_audit_backup_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
@@ -639,6 +783,7 @@ networks:
     ipam:
       config:
         - subnet: 172.28.40.0/24
+          ip_range: 172.28.40.128/25
   # API and panel to the partners (FC5), with no way out to the internet.
   partners:
     internal: true
@@ -651,6 +796,12 @@ networks:
     ipam:
       config:
         - subnet: 172.28.60.0/24
+  # The restore test's temporary server and nothing else (E3.6).
+  restore:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.70.0/24
   # Only for the Mailpit inbox published on the host's loopback.
   mailui:
     ipam:
@@ -665,6 +816,7 @@ volumes:
   valkey: {}
   prometheus: {}
   grafana: {}
+  replica: {}
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
@@ -714,3 +866,10 @@ secrets:
   db_audit_exporter_password: { file: ../secrets/db_audit_exporter_password }
   valkey_metrics_password: { file: ../secrets/valkey_metrics_password }
   garage_metrics_token: { file: ../secrets/garage_metrics_token }
+  db_backup_password: { file: ../secrets/db_backup_password }
+  db_audit_backup_password: { file: ../secrets/db_audit_backup_password }
+  db_replicator_password: { file: ../secrets/db_replicator_password }
+  s3_backup_access_key_id: { file: ../secrets/s3_backup_access_key_id }
+  s3_backup_secret_access_key: { file: ../secrets/s3_backup_secret_access_key }
+  backup_age_recipient: { file: ../secrets/backup_age_recipient }
+  backup_age_identity: { file: ../secrets/backup_age_identity }

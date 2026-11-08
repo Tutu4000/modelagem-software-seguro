@@ -27,6 +27,10 @@ scrape_configs:
     static_configs:
       - targets: ["postgres-exporter:9187"]
 
+  - job_name: postgres-replica
+    static_configs:
+      - targets: ["postgres-replica-exporter:9187"]
+
   - job_name: postgres-audit
     static_configs:
       - targets: ["postgres-audit-exporter:9187"]

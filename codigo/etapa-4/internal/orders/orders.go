@@ -95,9 +95,22 @@ type PriceTable struct {
 type Store struct {
 	db *pgxpool.Pool
 	q  *ordersdb.Queries
+	// read serves the listings. It is the primary unless WithReplica says
+	// otherwise.
+	read *ordersdb.Queries
 }
 
-func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db, q: ordersdb.New(db)} }
+func NewStore(db *pgxpool.Pool) *Store {
+	q := ordersdb.New(db)
+	return &Store{db: db, q: q, read: q}
+}
+
+// WithReplica sends the customer's order list to the read replica (E3.4). An
+// order created a moment ago may take a few milliseconds to show up there;
+// every other read and every write stays on the primary.
+func (s *Store) WithReplica(replica *pgxpool.Pool) *Store {
+	return &Store{db: s.db, q: s.q, read: ordersdb.New(replica)}
+}
 
 func (s *Store) ActiveRules(ctx context.Context) (int64, pricing.Rules, error) {
 	row, err := s.q.ActivePriceTable(ctx)
@@ -141,7 +154,7 @@ func (s *Store) Get(ctx context.Context, id uuid.UUID) (Order, error) {
 }
 
 func (s *Store) ListForOwner(ctx context.Context, owner uuid.UUID) ([]Order, error) {
-	return s.q.ListOrdersForOwner(ctx, owner)
+	return s.read.ListOrdersForOwner(ctx, owner)
 }
 
 func (s *Store) ListByStatus(ctx context.Context, status string) ([]Order, error) {

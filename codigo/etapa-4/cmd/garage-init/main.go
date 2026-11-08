@@ -47,6 +47,11 @@ func main() {
 	// retention container.
 	retentionKey := key{name: "retention", write: true,
 		id: string(env.Secret("S3_RETENTION_ACCESS_KEY_ID")), secret: string(env.Secret("S3_RETENTION_SECRET_ACCESS_KEY"))}
+	// The backup reads the files and writes only to its own bucket, which no
+	// other key can reach (E3.5).
+	backupBucket := env.String("BACKUP_BUCKET", "backups")
+	backupKey := key{name: "backup",
+		id: string(env.Secret("S3_BACKUP_ACCESS_KEY_ID")), secret: string(env.Secret("S3_BACKUP_SECRET_ACCESS_KEY"))}
 	s3Endpoint := env.String("S3_ENDPOINT", "http://garage:3900")
 	region := env.String("S3_REGION", "garage")
 	if err := env.Err(); err != nil {
@@ -70,22 +75,41 @@ func main() {
 		}
 		log.Printf("Garage ready: bucket %q with key %s (%s), write=%v", bucket, k.id, k.name, k.write)
 	}
-	if err := a.lifecycle(ctx, bucketID, bucket, s3Endpoint, region); err != nil {
-		log.Fatalf("lifecycle: %v", err)
+	backupID, err := a.ensureBucket(ctx, backupBucket)
+	if err != nil {
+		log.Fatalf("bucket %s: %v", backupBucket, err)
 	}
-	log.Printf("lifecycle applied: objects expire after %d days, incomplete uploads after %d", expireDays, abortDays)
+	readOnly := backupKey
+	readOnly.write = false
+	if err := a.grant(ctx, bucketID, readOnly); err != nil {
+		log.Fatalf("key backup on %s: %v", bucket, err)
+	}
+	readWrite := backupKey
+	readWrite.write = true
+	if err := a.grant(ctx, backupID, readWrite); err != nil {
+		log.Fatalf("key backup on %s: %v", backupBucket, err)
+	}
+	log.Printf("Garage ready: bucket %q with key %s (backup), read on %q", backupBucket, backupKey.id, bucket)
+
+	// The file rule is a safety net: the retention job deletes the designs
+	// much earlier, from the order dates (E8.5). The backups expire after 30
+	// days (E3.5).
+	for _, l := range []struct {
+		alias, id string
+		days      int32
+	}{{bucket, bucketID, 400}, {backupBucket, backupID, 30}} {
+		if err := a.lifecycle(ctx, l.id, l.alias, s3Endpoint, region, l.days); err != nil {
+			log.Fatalf("lifecycle of %s: %v", l.alias, err)
+		}
+		log.Printf("lifecycle applied: objects of %q expire after %d days, incomplete uploads after %d", l.alias, l.days, abortDays)
+	}
 }
 
-// The lifecycle rule is a safety net: the retention job deletes the designs
-// much earlier, from the order dates (E8.5).
-const (
-	expireDays = 400
-	abortDays  = 1
-)
+const abortDays = 1
 
 // lifecycle needs an owner key, which no application key is. A temporary one
 // is created, used once and deleted.
-func (a admin) lifecycle(ctx context.Context, bucketID, bucket, endpoint, region string) error {
+func (a admin) lifecycle(ctx context.Context, bucketID, bucket, endpoint, region string, expireDays int32) error {
 	var k struct {
 		ID     string `json:"accessKeyId"`
 		Secret string `json:"secretAccessKey"`

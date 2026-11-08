@@ -33,7 +33,8 @@ datasources:
     uid: main
     type: grafana-postgresql-datasource
     access: proxy
-    url: postgres:5432
+    # The reports read the replica (E3.4).
+    url: postgres-replica:5432
     user: grafana_main
     editable: false
     jsonData:
