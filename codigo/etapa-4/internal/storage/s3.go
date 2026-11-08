@@ -3,6 +3,8 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -112,4 +114,37 @@ func (s *S3) SetLifecycle(ctx context.Context, expireDays, abortDays int32) erro
 		}}},
 	})
 	return err
+}
+
+// List returns every key under the prefix. Only the backup lists a bucket.
+func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)})
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range page.Contents {
+			keys = append(keys, aws.ToString(o.Key))
+		}
+	}
+	return keys, nil
+}
+
+// Get reads a whole object, up to max bytes.
+func (s *S3) Get(ctx context.Context, key string, max int64) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(out.Body, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("object %s is larger than %d bytes", key, max)
+	}
+	return data, nil
 }

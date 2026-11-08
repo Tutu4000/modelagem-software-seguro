@@ -42,3 +42,10 @@ ENTRYPOINT ["/notifier"]
 FROM base AS retention
 COPY --from=build /out/retention /retention
 ENTRYPOINT ["/retention"]
+
+# The backup needs pg_dump and pg_restore of the same major version as the
+# server, so it runs on the database image, as its postgres user.
+FROM postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395 AS backup
+COPY --from=build /out/backup /usr/local/bin/backup
+USER postgres
+ENTRYPOINT ["/usr/local/bin/backup"]

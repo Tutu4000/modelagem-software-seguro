@@ -9,10 +9,12 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
 	-v panel_pw="$(cat /run/secrets/db_panel_audit_password)" \
 	-v retention_pw="$(cat /run/secrets/db_retention_audit_password)" \
 	-v grafana_pw="$(cat /run/secrets/db_grafana_reader_password)" \
-	-v exporter_pw="$(cat /run/secrets/db_audit_exporter_password)" <<'SQL'
+	-v exporter_pw="$(cat /run/secrets/db_audit_exporter_password)" \
+	-v backup_pw="$(cat /run/secrets/db_audit_backup_password)" <<'SQL'
 CREATE ROLE audit_app LOGIN PASSWORD :'app_pw';
 CREATE ROLE panel_audit LOGIN PASSWORD :'panel_pw';
 CREATE ROLE retention_audit LOGIN PASSWORD :'retention_pw';
 CREATE ROLE grafana_reader LOGIN PASSWORD :'grafana_pw';
 CREATE ROLE exporter LOGIN PASSWORD :'exporter_pw';
+CREATE ROLE backup LOGIN PASSWORD :'backup_pw';
 SQL

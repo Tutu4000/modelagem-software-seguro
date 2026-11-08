@@ -51,6 +51,15 @@ grafana:
     @echo "Grafana: https://localhost:9446 (user admin)"
     @echo "Password: secrets/grafana_admin_password"
 
+# Make one encrypted backup now, instead of waiting for the daily one
+backup:
+    {{ compose }} run --rm backup -once
+
+# Restore the latest backup into a temporary server and check it
+restore-test:
+    {{ compose }} --profile restore run --rm restore
+    {{ compose }} --profile restore rm -sf restore-db
+
 # Run one pass of the retention rules now, instead of waiting for the hourly one
 retention:
     {{ compose }} run --rm retention -once

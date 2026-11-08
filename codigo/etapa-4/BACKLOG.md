@@ -95,7 +95,8 @@ As redes do compose reproduzem as fronteiras de confiança:
 |-|-|-|
 |`public`|nginx|Único contêiner com portas publicadas: a 443 para os clientes (FC1) e, só em `127.0.0.1`, as do painel e do Grafana, o que simula a VPN (FC2)|
 |`internal`|nginx, `api`, `panel`, PostgreSQL, Valkey, RabbitMQ, Garage, Prometheus, Grafana e os exporters|Sem portas publicadas e sem saída para a internet. O Grafana chega ao host pelo nginx, em `127.0.0.1:9446`|
-|`processing`|worker, RabbitMQ e Garage|O worker não alcança banco, Valkey nem internet (FC3)|
+|`processing`|worker, RabbitMQ e Garage|O worker não alcança banco, Valkey nem internet (FC3), e roda sob o gVisor|
+|`restore`|`restore-db` e `restore`|Só existe durante o `just restore-test`|
 
 ## 3. Marcos
 
@@ -243,7 +244,8 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 
 |Na arquitetura da Etapa 3|No ambiente local|
 |-|-|
-|Workers sem rede|Rede `processing`, sem internet, banco nem Valkey. Para não ter rede nenhuma, seria preciso o sandbox do E4.8|
+|Workers sem rede, num sandbox por tarefa (E4.8)|O worker roda sob o gVisor (`runtime: runsc`): o parser do STL fala com um kernel em espaço de usuário, não com o do host. Continua na rede `processing`, sem internet, banco nem Valkey, e não há um sandbox novo por tarefa. Como o netstack do gVisor não alcança o DNS embutido do Docker, o RabbitMQ e o Garage têm IP fixo nessa rede e o worker os conhece por `extra_hosts`. Numa máquina sem gVisor, `WORKER_RUNTIME=runc`|
+|Réplica de leitura (E3.4)|Uma réplica por streaming, sem failover automático. Só a lista de pedidos do cliente, os relatórios do Grafana e o backup leem dela; um pedido recém-criado pode demorar milissegundos para aparecer na lista|
 |Autoscaler com teto de custo|`--scale worker=N` manual (E4.7)|
 |IdP dos clientes e SSO com MFA|Keycloak no compose (E5.3). Um cliente `e2e` com login por usuário e senha existe só no realm local, para os testes e as ferramentas|
 |VPN do painel|Porta do nginx publicada só em `127.0.0.1:9445`, e o nginx só aceita o gateway da rede `public`, por onde chegam o loopback e um túnel SSH. A evolução prevista é o Cloudflare Access (E2.7)|
@@ -255,7 +257,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |Papéis do painel|O painel usa papéis próprios no banco (`panel_orders`, `panel_audit`), uma chave do Garage só de leitura e um usuário próprio no Valkey. O `UPDATE` em `orders` é concedido por coluna: nem a API nem o painel conseguem mudar um preço pelo SQL|
 |Cofre de segredos|Docker secrets|
 |Banco criptografado em repouso|Não implementado localmente. Em produção, disco criptografado do provedor|
-|Backup em outra conta|Bucket separado, com uma chave que a API não tem|
+|Backup em outra conta (E3.5)|Bucket `backups` no mesmo Garage, com uma chave própria que só lê `files` e só escreve nele; a API e o painel não têm permissão nenhuma ali. Uma cópia por dia, com `pg_dump` da réplica e da auditoria e um `tar` dos arquivos, tudo criptografado com `age` para uma chave pública. A chave privada só vai para o contêiner do `just restore-test`, que não fica rodando. Os backups expiram em 30 dias pela regra de ciclo de vida. Sem PITR nem arquivamento de WAL, e o backup cabe na memória do contêiner (512 MB)|
 |Serviços externos (FC5)|Gateway e transportadora simulados pelo contêiner `partnersim`, que se comporta como terceiro: chave de API nas chamadas, resposta assíncrona e webhooks assinados (E8.2, E8.3). A API e o painel chegam a ele por uma rede própria, `partners`, sem internet|
 |Webhooks dos parceiros|Rotas públicas pelo nginx, sem JWT, como numa plataforma real. A autenticação é o cabeçalho `X-Nugget-Signature` (HMAC-SHA256 de `t.corpo`, com um segredo por parceiro e tolerância de 5 minutos). O registro de rotas declara o esquema `hmac:payments` ou `hmac:shipping` no lugar dos perfis, e o teste de cobertura aceita só esses casos. O ID do evento é a chave de idempotência|
 |Endereço de entrega|Só o mínimo para entregar: destinatário, logradouro, número, cidade, UF e CEP. O cliente, o suporte e o admin o veem; o técnico não. Vai para a transportadora só na coleta|
@@ -298,6 +300,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |M3|Pendente|E9.1 e os itens P2|
 |E6.1, E6.2 e E6.4|Concluídos|Binário `panel` próprio, em `127.0.0.1:9445`, com TOTP exigido no token e evento `panel.access` em toda requisição. Toda rota declara os perfis num registro, e um teste falha se alguma rota não declarar. O binário `api` não depende do painel. A operação crítica "revogar usuário" exige step-up e justificativa|
 |E8.1 e E6.3|Concluídos|Pedido com orçamento calculado só no servidor, que recusa campos desconhecidos no corpo (CA03). Tabela de preços versionada, que só vale depois da aprovação de outro admin, e pedidos que mantêm o preço do orçamento. Revisão técnica só pelo técnico atribuído, com laudo, uma por pedido (CA05). Download do STL pela equipe só pelo técnico atribuído, como operação crítica (CA08). Histórico de estados e alerta de DFM|
+|E3.4, E3.5, E3.6 e E4.8|Concluídos|Worker sob o gVisor. Réplica de leitura por streaming, que recusa escritas e serve a lista de pedidos, o Grafana e o backup. Backup diário criptografado com `age` num bucket que só a chave do backup alcança, com expiração de 30 dias. `just restore-test` restaura o backup mais recente num servidor temporário, confere os hashes, as contagens e o número de arquivos e mede o tempo|
 |E7.4 e E7.5|Concluídos|Prometheus raspando a API (todas as réplicas, por DNS), o painel, os dois Postgres, o Valkey, o RabbitMQ (por fila), o Garage, o Keycloak e o nginx, sem nenhuma porta publicada. Grafana com os dashboards de segurança, operação e negócio, provisionados e só de leitura. O papel `grafana_reader` só lê a auditoria, e o `grafana_main` não vê dados pessoais. Oito alertas no Grafana: enumeração de IDs, abuso de upload, acesso ao painel fora do horário, operações críticas em série, webhooks forjados, serviço fora, erros 5xx e fila de falhas. O e2e dispara os de enumeração e de upload|
 |E8.4 e E8.5|Concluídos|Avisos ao e-mail cadastrado em cada etapa do pedido, sem o endereço, pelo `notifier`, que não alcança banco nem Garage. Cancelamento pelo cliente até `paid`, com estorno no gateway (RF10, CA06, T11). Chamados de suporte só sobre os próprios pedidos, respondidos pelo suporte no painel (RF11). Troca de endereço proposta pelo suporte como operação crítica e confirmada pelo cliente com o código enviado ao e-mail (C21, CA04). Problema na entrega avisado ao cliente (RF15). Retenção do STL e do endereço por job próprio, com o ciclo de vida do bucket como rede de segurança|
 |E8.2 e E8.3|Concluídos|Frete cotado na transportadora e somado depois do desconto. Pagamento pelo total calculado no servidor, com uma cobrança viva por pedido. O pedido só fica pago com a notificação assinada do gateway, e o valor precisa bater com o total (`payment.rejected` com `amount_mismatch` quando não bate). Evento repetido não tem efeito. Produção e coleta pelo técnico atribuído, coleta e entrega pelos webhooks da transportadora. Com o parceiro fora, 502 `partner_unavailable` e o pedido não muda (D03)|

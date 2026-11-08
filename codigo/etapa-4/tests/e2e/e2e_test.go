@@ -22,6 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 
 	"nuggetmachine/internal/devlogin"
@@ -343,6 +346,8 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 		{"grafana_main cannot read addresses", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT ship_street FROM orders LIMIT 1"},
 		{"grafana_main cannot read e-mails", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT contact_email FROM orders LIMIT 1"},
 		{"grafana_main cannot read tickets", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT body FROM ticket_messages LIMIT 1"},
+		{"backup cannot write", "postgres", "nugget", "backup", "db_backup_password", "UPDATE orders SET status = status"},
+		{"audit backup cannot write", "postgres-audit", "audit", "backup", "db_audit_backup_password", "DELETE FROM events"},
 		{"audit cannot update events", "postgres-audit", "audit", "audit_app", "db_audit_password", "UPDATE events SET result = 'x'"},
 		{"audit cannot delete events", "postgres-audit", "audit", "audit_app", "db_audit_password", "DELETE FROM events"},
 	}
@@ -1630,6 +1635,100 @@ func TestUploadAbuseFiresTheAlert(t *testing.T) {
 		wantStatus(t, do(t, http.MethodPost, base+"/api/v1/files", token, bytes.NewReader(junk), int64(len(junk))), http.StatusUnprocessableEntity)
 	}
 	waitAlert(t, "Abuso de upload por uma conta", devlogin.CustomerF)
+}
+
+// E4.8: the worker runs under gVisor, unless the host has no gVisor and
+// WORKER_RUNTIME says so.
+func TestWorkerRunsUnderGVisor(t *testing.T) {
+	want := "runsc"
+	if v := os.Getenv("WORKER_RUNTIME"); v != "" {
+		want = v
+	}
+	id := strings.TrimSpace(dockerCompose(t, "ps", "-q", "worker"))
+	out, err := exec.Command("docker", "inspect", "--format", "{{.HostConfig.Runtime}}", id).CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker inspect: %v: %s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != want {
+		t.Errorf("worker runtime %q, want %q", got, want)
+	}
+}
+
+// E3.4: the replica follows the primary, refuses writes and serves the
+// customer's order list.
+func TestReadReplica(t *testing.T) {
+	if out := dockerCompose(t, "exec", "-T", "postgres", "psql", "-U", "postgres", "-tAc", "SELECT state FROM pg_stat_replication"); strings.TrimSpace(out) != "streaming" {
+		t.Errorf("replication state %q, want streaming", strings.TrimSpace(out))
+	}
+	cmd := exec.Command("docker", "compose", "-f", compose, "exec", "-T", "postgres-replica",
+		"psql", "-U", "postgres", "-d", "nugget", "-c", "CREATE TABLE replica_write_test (id int)")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), "read-only") {
+		t.Errorf("write on the replica: %v: %s", err, out)
+	}
+
+	token := login(t, devlogin.CustomerE)
+	o := createOrder(t, token, processedFile(t, token, 6, 7, 8))
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		resp := apiJSON(t, http.MethodGet, "/api/v1/orders", token, "")
+		var list struct {
+			Orders []orderView `json:"orders"`
+		}
+		decode(t, resp, &list)
+		if slices.ContainsFunc(list.Orders, func(x orderView) bool { return x.ID == o.ID }) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("order %s not in the list read from the replica", o.ID)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+// garageS3 reaches the buckets through the public Garage port with one of
+// the platform's keys, as an attacker holding that key would.
+func garageS3(t *testing.T, prefix string) *s3.Client {
+	t.Helper()
+	return s3.New(s3.Options{
+		Region: "garage", BaseEndpoint: aws.String("https://localhost:8443"), UsePathStyle: true, HTTPClient: client,
+		Credentials:                credentials.NewStaticCredentialsProvider(readSecret(t, prefix+"_access_key_id"), readSecret(t, prefix+"_secret_access_key"), ""),
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+		ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,
+	})
+}
+
+// E3.5 and E3.6: the backup is encrypted, only its own key reaches the
+// bucket, and the latest backup restores with the expected counts.
+func TestBackupAndRestore(t *testing.T) {
+	dockerCompose(t, "run", "--rm", "backup", "-once")
+	ctx := context.Background()
+
+	_, err := garageS3(t, "s3").ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String("backups")})
+	if err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("the API key listing the backups: %v, want 403", err)
+	}
+
+	backups := garageS3(t, "s3_backup")
+	list, err := backups.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String("backups"), Prefix: aws.String("backups/")})
+	if err != nil || len(list.Contents) < 4 {
+		t.Fatalf("backups listed with the backup key: %v, %d objects", err, len(list.Contents))
+	}
+	obj, err := backups.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String("backups"), Key: list.Contents[len(list.Contents)-1].Key})
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := make([]byte, 21)
+	_, _ = io.ReadFull(obj.Body, head)
+	obj.Body.Close()
+	if string(head) != "age-encryption.org/v1" {
+		t.Errorf("backup object starts with %q, want the age header", head)
+	}
+
+	t.Cleanup(func() { dockerCompose(t, "--profile", "restore", "rm", "-sf", "restore-db") })
+	out := dockerCompose(t, "--profile", "restore", "run", "--rm", "restore")
+	if !strings.Contains(out, "restore-test ok") {
+		t.Errorf("restore-test output:\n%s", out)
+	}
 }
 
 // RF19: a part bigger than the printer shows up flagged in the review.

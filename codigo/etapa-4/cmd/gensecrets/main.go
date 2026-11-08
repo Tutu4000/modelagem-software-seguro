@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"filippo.io/age"
 )
 
 type generator struct {
@@ -88,6 +90,9 @@ func main() {
 		"db_audit_exporter_password",
 		"valkey_metrics_password",
 		"garage_metrics_token",
+		"db_backup_password",
+		"db_audit_backup_password",
+		"db_replicator_password",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -98,13 +103,26 @@ func main() {
 	})
 	// Garage only imports keys in its own format: GK + 12 bytes in hex and a
 	// 32-byte secret in hex.
-	for _, prefix := range []string{"s3", "s3_panel", "s3_retention"} {
+	for _, prefix := range []string{"s3", "s3_panel", "s3_retention", "s3_backup"} {
 		id, secret := prefix+"_access_key_id", prefix+"_secret_access_key"
 		g.once([]string{id, secret}, func() map[string][]byte {
 			return map[string][]byte{id: append([]byte("GK"), randomHex(12)...), secret: randomHex(32)}
 		})
 	}
 	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, func() map[string][]byte { return tlsChain(*host) })
+	// The backups are encrypted to the public key only: the backup service
+	// never holds what decrypts them. The identity goes only to the restore
+	// test (E3.5, E3.6).
+	g.once([]string{"backup_age_identity", "backup_age_recipient"}, func() map[string][]byte {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			log.Fatal(err)
+		}
+		return map[string][]byte{
+			"backup_age_identity":  []byte(id.String() + "\n"),
+			"backup_age_recipient": []byte(id.Recipient().String() + "\n"),
+		}
+	})
 
 	// Derived from the secrets above: always regenerated, so they never go
 	// stale.

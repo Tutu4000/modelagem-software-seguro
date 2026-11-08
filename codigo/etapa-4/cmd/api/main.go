@@ -49,6 +49,7 @@ func run(log *slog.Logger) error {
 	jwksURL := env.Required("OIDC_JWKS_URL")
 	audience := env.String("OIDC_AUDIENCE", "api")
 	mainHost, mainName := env.Required("DB_HOST"), env.String("DB_NAME", "nugget")
+	replicaHost := env.Required("DB_REPLICA_HOST")
 	auditHost, auditName := env.Required("AUDIT_DB_HOST"), env.String("AUDIT_DB_NAME", "audit")
 	s3cfg := storage.S3Config{
 		Bucket:         env.String("S3_BUCKET", "files"),
@@ -107,6 +108,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer ordersPool.Close()
+	// Same role on the read replica: the grants come with the replication.
+	ordersReplica, err := pg.Open(ctx, replicaHost, mainName, "orders", ordersPassword)
+	if err != nil {
+		return err
+	}
+	defer ordersReplica.Close()
 	supportPool, err := pg.Open(ctx, mainHost, mainName, "support", supportPassword)
 	if err != nil {
 		return err
@@ -147,7 +154,7 @@ func run(log *slog.Logger) error {
 		Sessions:              sessions,
 		Limiter:               sessions,
 		RatePerMinute:         ratePerMinute,
-		Orders:                orders.NewStore(ordersPool),
+		Orders:                orders.NewStore(ordersPool).WithReplica(ordersReplica),
 		Support:               support.NewStore(supportPool),
 		Notify:                notify.NewRabbit(broker),
 		BuildVolume:           buildVolume,
