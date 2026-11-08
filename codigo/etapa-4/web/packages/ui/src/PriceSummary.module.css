@@ -1,0 +1,44 @@
+.summary {
+  margin: 0;
+  font-size: var(--text-sm);
+}
+.line {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--line);
+}
+.line dt {
+  color: var(--text-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--text-sm);
+}
+.line dd {
+  margin: 0;
+  font-family: var(--font-mono);
+}
+.discount dd {
+  color: var(--tone-success);
+}
+.total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: var(--space-3) 0 0;
+}
+.total dt {
+  color: var(--navy-900);
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: var(--text-md);
+}
+.total dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  color: var(--navy-900);
+}

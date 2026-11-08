@@ -9,3 +9,5 @@ export { ErrorBanner } from "./ErrorBanner";
 export { isStepUp, isUnauthenticated, notice, unwrap } from "./unwrap";
 export type { ErrorNotice } from "./unwrap";
 export { SessionRecovery } from "./SessionRecovery";
+export { uploadStl } from "./upload";
+export type { UploadAccepted, UploadOptions, XhrLike } from "./upload";

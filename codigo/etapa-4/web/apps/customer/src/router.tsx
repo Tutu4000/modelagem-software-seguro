@@ -8,6 +8,7 @@ import { Layout } from "./Layout";
 import { Account } from "./pages/Account";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
+import { QuotePage } from "./quote/QuotePage";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -48,6 +49,7 @@ const routes: RouteObject[] = [
     ),
   },
   { path: "conta", element: <Protected><Account /></Protected> },
+  { path: "orcar", element: <Protected><QuotePage /></Protected> },
 ];
 
 // The component gallery exists only in development: the production build

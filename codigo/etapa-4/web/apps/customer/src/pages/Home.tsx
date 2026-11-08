@@ -1,4 +1,5 @@
 import { useSession } from "@nugget/auth";
+import { useNavigate } from "react-router";
 import { Button, CheckIcon, CubeIcon, Grid, Panel, ShieldIcon, Stack, TruckIcon, UploadIcon } from "@nugget/ui";
 
 import styles from "./Home.module.css";
@@ -11,9 +12,9 @@ const steps = [
 ];
 
 const materials = [
-  { name: "PLA", text: "Peças de uso geral e protótipos.", colors: "preto, branco, cinza" },
-  { name: "PETG", text: "Mais resistente ao calor e a impactos.", colors: "preto, branco, transparente" },
-  { name: "ABS", text: "Peças técnicas e de encaixe.", colors: "preto, cinza" },
+  { name: "PLA", text: "Peças de uso geral e protótipos.", colors: "preto, branco, vermelho, cinza" },
+  { name: "PETG", text: "Mais resistente ao calor e a impactos.", colors: "preto, transparente, azul" },
+  { name: "Nylon PA12", text: "Peças técnicas, de encaixe e de desgaste.", colors: "cinza, preto" },
 ];
 
 const guarantees = [
@@ -24,6 +25,7 @@ const guarantees = [
 
 export function Home() {
   const session = useSession();
+  const navigate = useNavigate();
   const signedIn = session.state.status === "authenticated";
   return (
     <Stack gap={4}>
@@ -41,16 +43,16 @@ export function Home() {
             <div className={styles.drop}>
               <UploadIcon />
               <span>Arraste o arquivo STL aqui</span>
-              <small>{signedIn ? "Até 100 MB. O envio chega na próxima versão." : "Até 100 MB. Disponível depois do login."}</small>
+              <small>STL binário, até 100 MB.</small>
             </div>
           </Panel.Body>
           <Panel.Footer>
             {signedIn ? (
-              <Button variant="primary" block disabled>
-                Orçar (em breve)
+              <Button variant="primary" block onClick={() => void navigate("/orcar")}>
+                Começar orçamento
               </Button>
             ) : (
-              <Button variant="primary" block disabled={session.state.status === "loading"} onClick={() => void session.signIn("/")}>
+              <Button variant="primary" block disabled={session.state.status === "loading"} onClick={() => void session.signIn("/orcar")}>
                 Entrar para orçar
               </Button>
             )}

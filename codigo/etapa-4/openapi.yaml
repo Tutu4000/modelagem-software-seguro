@@ -819,6 +819,7 @@ components:
           description: purged means the retention deleted the file (E8.5)
         result:
           type: object
+          required: [volume_mm3, bbox_mm]
           properties:
             volume_mm3:
               type: number
@@ -830,11 +831,13 @@ components:
               maxItems: 3
     PriceRules:
       type: object
+      required: [materials, qualities, finishings, setup_cents, discounts]
       properties:
         materials:
           type: object
           additionalProperties:
             type: object
+            required: [name, cents_per_cm3, colors]
             properties:
               name:
                 type: string
@@ -860,6 +863,7 @@ components:
           type: array
           items:
             type: object
+            required: [min_quantity, percent_off]
             properties:
               min_quantity:
                 type: integer
@@ -867,6 +871,24 @@ components:
                 type: integer
     Order:
       type: object
+      required:
+        - id
+        - file_id
+        - material
+        - color
+        - quality
+        - finishing
+        - quantity
+        - price_table_version
+        - unit_cents
+        - discount_cents
+        - shipping_cents
+        - total_cents
+        - currency
+        - status
+        - quote_expires_at
+        - created_at
+        - dfm_flags
       properties:
         id:
           type: string
@@ -906,6 +928,12 @@ components:
         created_at:
           type: string
           format: date-time
+        dfm_flags:
+          type: array
+          description: Manufacturability warnings (RF19), such as exceeds_build_volume
+          items:
+            type: string
+            enum: [exceeds_build_volume]
         shipping:
           $ref: "#/components/schemas/Address"
         tracking_code:
