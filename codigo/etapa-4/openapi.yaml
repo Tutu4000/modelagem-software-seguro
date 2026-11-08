@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.3.0
+  version: 0.4.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -80,10 +80,16 @@ paths:
           $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
+    # Access token issued by Keycloak (realm "nugget") with audience "api"
+    # and the realm role "customer". Browser apps use the "web" client with
+    # authorization code + PKCE.
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
   parameters:
     FileID:
       name: id

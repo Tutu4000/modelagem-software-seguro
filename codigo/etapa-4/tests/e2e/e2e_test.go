@@ -7,8 +7,7 @@ package e2e
 
 import (
 	"bytes"
-	"crypto/tls"
-	"crypto/x509"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -21,40 +20,39 @@ import (
 
 	"github.com/google/uuid"
 
-	"nuggetmachine/internal/devtoken"
+	"nuggetmachine/internal/devlogin"
 	"nuggetmachine/internal/fakestl"
 )
 
 const (
-	base    = "https://localhost"
-	secrets = "../../secrets/"
-	compose = "../../deploy/compose.yaml"
+	base     = "https://localhost"
+	idp      = "https://localhost:8444"
+	issuer   = idp + "/realms/nugget"
+	secrets  = "../../secrets/"
+	compose  = "../../deploy/compose.yaml"
+	httpWait = time.Minute
 )
 
-var client = newClient()
+var (
+	keycloak = newLogin()
+	client   = keycloak.HTTP()
+)
 
-func newClient() *http.Client {
-	pem, err := os.ReadFile(secrets + "tls_ca.pem")
+func newLogin() *devlogin.Client {
+	c, err := devlogin.New(issuer, secrets)
 	if err != nil {
 		panic("run `just secrets` and `just up` first: " + err.Error())
 	}
-	pool := x509.NewCertPool()
-	pool.AppendCertsFromPEM(pem)
-	return &http.Client{
-		Timeout:   time.Minute,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
-	}
+	return c
 }
 
-// newCustomer creates a customer with no history, so the quota does not depend
-// on the seed or on other tests.
-func newCustomer(t *testing.T) string {
+// login gets a real access token from Keycloak. Customer C is reserved for the
+// quota test, so that its count does not depend on the other tests.
+func login(t *testing.T, a devlogin.Account) string {
 	t.Helper()
-	key, err := devtoken.LoadKey(secrets + "devtoken_ed25519.pem")
-	if err != nil {
-		t.Fatal(err)
-	}
-	token, err := devtoken.Sign(key, uuid.New(), 15*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), httpWait)
+	defer cancel()
+	token, err := keycloak.Token(ctx, a)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +162,7 @@ func dockerCompose(t *testing.T, args ...string) string {
 // TS01 with the whole system: upload, processing by the worker and download
 // through Garage.
 func TestFullFlowFromUploadToDownload(t *testing.T) {
-	token := newCustomer(t)
+	token := login(t, devlogin.CustomerA)
 	data := fakestl.Box(10, 20, 30)
 	id := upload(t, token, data)
 
@@ -186,7 +184,7 @@ func TestFullFlowFromUploadToDownload(t *testing.T) {
 
 // TS02: another customer gets 403 on the status and on the download.
 func TestAnotherCustomerGets403(t *testing.T) {
-	owner, other := newCustomer(t), newCustomer(t)
+	owner, other := login(t, devlogin.CustomerA), login(t, devlogin.CustomerB)
 	id := upload(t, owner, fakestl.Box(1, 1, 1))
 
 	for _, path := range []string{"/api/v1/files/" + id, "/api/v1/files/" + id + "/download"} {
@@ -197,7 +195,7 @@ func TestAnotherCustomerGets403(t *testing.T) {
 // TS05 and C03: the bucket only delivers with a valid signature and only
 // accepts reads through the public address.
 func TestGarageOnlyDeliversWithValidSignature(t *testing.T) {
-	token := newCustomer(t)
+	token := login(t, devlogin.CustomerA)
 	signed := downloadURL(t, token, upload(t, token, fakestl.Box(2, 2, 2)))
 
 	u, err := url.Parse(signed)
@@ -231,7 +229,7 @@ func TestGarageOnlyDeliversWithValidSignature(t *testing.T) {
 // API.
 func TestFileOf150MBGets413(t *testing.T) {
 	const size = 150 << 20
-	resp := do(t, http.MethodPost, base+"/api/v1/files", newCustomer(t), io.LimitReader(zeros{}, size), size)
+	resp := do(t, http.MethodPost, base+"/api/v1/files", login(t, devlogin.CustomerA), io.LimitReader(zeros{}, size), size)
 	wantStatus(t, resp, http.StatusRequestEntityTooLarge)
 }
 
@@ -242,10 +240,55 @@ func (zeros) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// E5.3 and D02: a staff account logs in only with TOTP, and its valid token
+// still gets 403 on the customer API.
+func TestStaffNeedsTOTPAndCannotUseCustomerAPI(t *testing.T) {
+	form := url.Values{
+		"grant_type":    {"password"},
+		"client_id":     {"e2e"},
+		"client_secret": {readSecret(t, "keycloak_e2e_client_secret")},
+		"username":      {devlogin.Support.Username},
+		"password":      {readSecret(t, "keycloak_demo_password")},
+	}
+	resp, err := client.PostForm(issuer+"/protocol/openid-connect/token", form)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body struct {
+		Error       string `json:"error"`
+		AccessToken string `json:"access_token"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&body)
+	resp.Body.Close()
+	// OAuth 2.0 answers rejected credentials with 400 invalid_grant.
+	if err != nil || resp.StatusCode != http.StatusBadRequest || body.Error != "invalid_grant" || body.AccessToken != "" {
+		t.Errorf("login without TOTP got %d %q, want 400 \"invalid_grant\"", resp.StatusCode, body.Error)
+	}
+
+	staff := login(t, devlogin.Support)
+	wantStatus(t, do(t, http.MethodGet, base+"/api/v1/files/"+uuid.NewString(), staff, nil, -1), http.StatusForbidden)
+}
+
+// The admin console and the master realm are not published (E5.3).
+func TestKeycloakAdminIsNotPublic(t *testing.T) {
+	for _, path := range []string{"/admin/", "/admin/master/console/", "/realms/master/protocol/openid-connect/token"} {
+		wantStatus(t, do(t, http.MethodGet, idp+path, "", nil, -1), http.StatusNotFound)
+	}
+}
+
+func readSecret(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(secrets + name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return strings.TrimSpace(string(data))
+}
+
 // E4.3 and E4.5: without a worker nothing is released, the account's fourth
 // task waits, and all of them finish once the worker is back.
 func TestQuotaAndFailSafeWithoutWorker(t *testing.T) {
-	token := newCustomer(t)
+	token := login(t, devlogin.CustomerC)
 	dockerCompose(t, "stop", "worker")
 	t.Cleanup(func() { dockerCompose(t, "start", "worker") })
 
@@ -300,7 +343,7 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 // C02: files keep UUIDv4, which the customer sees. Tasks and events are
 // internal and use UUIDv7, which keeps the index ordered.
 func TestIDVersions(t *testing.T) {
-	token := newCustomer(t)
+	token := login(t, devlogin.CustomerA)
 	waitFor(t, token, upload(t, token, fakestl.Box(3, 3, 3)), "done")
 	wantStatus(t, do(t, http.MethodGet, base+"/api/v1/files/"+uuid.NewString(), token, nil, -1), http.StatusForbidden)
 

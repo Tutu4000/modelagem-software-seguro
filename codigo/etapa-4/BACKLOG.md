@@ -17,7 +17,7 @@ Os IDs RS, D, FC e os números de seção vêm da [Etapa 3](../../docs/etapa-3-a
 |-|-|-|
 |API back-end (monólito modular)|Go + Gin|Dois binários do mesmo código: `api`, com as rotas do cliente, e `panel`, com as rotas internas (seção 1.1)|
 |Balanceador de carga|nginx|TLS, limite de requisições e de tamanho, N réplicas da API|
-|Identidade|JWT Ed25519 emitido pelo `cmd/devtoken`|A API guarda só a chave pública. Keycloak no P3|
+|Identidade|Keycloak, com tokens assinados em EdDSA|A API confere os tokens pelo JWKS e não guarda nenhuma chave privada|
 |Banco principal e réplica|PostgreSQL com replicação por streaming|Um papel do banco por módulo|
 |Log de auditoria|Instância PostgreSQL separada|A aplicação só tem `INSERT`|
 |Estado compartilhado|Valkey|Cotas (C10) e tokens revogados (C08) valem para todas as réplicas|
@@ -53,7 +53,7 @@ codigo/etapa-4/
 │   ├── worker/               # consome a fila e processa os STL
 │   ├── garage-init/          # prepara layout, bucket e chave do Garage
 │   ├── gensecrets/           # gera os segredos e o certificado TLS local
-│   ├── devtoken/             # emite tokens de teste no lugar do IdP
+│   ├── token/                # login de uma conta fictícia pelo Keycloak
 │   └── seed/                 # envia STLs fictícios pela API
 ├── internal/
 │   ├── server/               # middlewares compartilhados
@@ -70,7 +70,7 @@ codigo/etapa-4/
 │   ├── processing/           # lógica do worker
 │   ├── review/               # revisão técnica, só no painel (E6)
 │   ├── audit/                # eventos de auditoria (auditdb gerado pelo sqlc)
-│   ├── devtoken/             # clientes fictícios e assinatura dos tokens de teste
+│   ├── devlogin/             # contas fictícias e login pelo cliente e2e, para testes e ferramentas
 │   └── problem/              # respostas de erro no formato RFC 9457
 ├── migrations/
 │   ├── main/                 # 01-roles.sh e 02-schema.sql do banco principal
@@ -245,7 +245,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |-|-|
 |Workers sem rede|Rede `processing`, sem internet, banco nem Valkey. Para não ter rede nenhuma, seria preciso o sandbox do E4.8|
 |Autoscaler com teto de custo|`--scale worker=N` manual (E4.7)|
-|IdP dos clientes e SSO com MFA|Tokens do `cmd/devtoken`. O Keycloak fica no E5.3|
+|IdP dos clientes e SSO com MFA|Keycloak no compose (E5.3). Um cliente `e2e` com login por usuário e senha existe só no realm local, para os testes e as ferramentas|
 |VPN do painel|Porta do nginx publicada só em `127.0.0.1`. A evolução prevista é o Cloudflare Access (E2.7)|
 |Cofre de segredos|Docker secrets|
 |Banco criptografado em repouso|Não implementado localmente. Em produção, disco criptografado do provedor|
@@ -254,7 +254,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |Docker Hardened Images|`golang` e `gcr.io/distroless/static-debian13:nonroot`, fixadas por digest. Continuam sem shell e sem root, e não exigem login com Docker ID|
 |Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey entra com o E5|
 |Migrações versionadas|SQL em `migrations/`, executado pelo Postgres só na criação do volume. Para mudar o esquema, `just reset`|
-|Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/devtoken`, `cmd/seed`), que rodam no Windows|
+|Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/token`, `cmd/seed`), que rodam no Windows|
 |TLS entre os serviços|Só na borda, no nginx. A rede interna fica sem TLS|
 |Admin API do Garage só para o init|Escuta também na rede de processamento. Exige o token, que o worker não tem|
 |Outbox transacional|A tarefa é publicada antes do commit, e o resultado só recebe ack depois dele. Se o commit falhar, nenhuma tarefa fica parada, mas o worker pode processar uma tarefa que não existe, ou a mesma duas vezes. A idempotência do E4.6 descarta o resultado extra|
@@ -275,3 +275,4 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |M1|Concluído|E0.1 e E1|
 |M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
 |M3|Pendente|E9.1 e os itens P2|
+|E5.3|Concluído|Keycloak com realm versionado, quatro perfis, TOTP obrigatório para a equipe, bloqueio por tentativas, tokens EdDSA de 5 minutos e clientes `web` e `panel-web` com PKCE. A API confere `iss`, `aud`, tipo e perfil, e um token válido da equipe recebe 403 na API do cliente|
