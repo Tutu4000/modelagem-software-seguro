@@ -8,8 +8,8 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
@@ -39,6 +39,8 @@ type generator struct {
 func main() {
 	dir := flag.String("dir", "secrets", "output directory")
 	force := flag.Bool("force", false, "regenerate secrets that already exist")
+	host := flag.String("host", "localhost", "public host name: certificate SAN and Keycloak redirect URIs")
+	realmTemplate := flag.String("realm", "deploy/keycloak/realm.json", "Keycloak realm template")
 	flag.Parse()
 
 	g := generator{dir: *dir, force: *force}
@@ -58,6 +60,10 @@ func main() {
 		"rabbitmq_api_password",
 		"rabbitmq_worker_password",
 		"garage_admin_token",
+		"db_keycloak_password",
+		"keycloak_demo_password",
+		"keycloak_totp_secret",
+		"keycloak_e2e_client_secret",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -74,15 +80,45 @@ func main() {
 			"s3_secret_access_key": randomHex(32),
 		}
 	})
-	g.once([]string{"devtoken_ed25519.pem", "auth_ed25519.pub.pem"}, ed25519Pair)
-	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, tlsChain)
+	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, func() map[string][]byte { return tlsChain(*host) })
 
-	// Derived from the passwords: always regenerated, so it never goes stale.
+	// Derived from the secrets above: always regenerated, so they never go
+	// stale.
 	users, err := rabbitUsers(g.read("rabbitmq_api_password"), g.read("rabbitmq_worker_password"))
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.write("rabbitmq_users.json", users)
+	realm, err := renderRealm(*realmTemplate, map[string][]byte{
+		"PUBLIC_HOST":       []byte(*host),
+		"DEMO_PASSWORD":     g.read("keycloak_demo_password"),
+		"TOTP_SECRET":       g.read("keycloak_totp_secret"),
+		"E2E_CLIENT_SECRET": g.read("keycloak_e2e_client_secret"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	g.write("keycloak_realm.json", realm)
+}
+
+// renderRealm fills the {{NAME}} placeholders of the realm template. The
+// values are base64url, hex or a host name, so they need no JSON escaping, and
+// a placeholder left unfilled is an error.
+func renderRealm(path string, values map[string][]byte) ([]byte, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path given by whoever runs the tool
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range values {
+		data = bytes.ReplaceAll(data, []byte("{{"+name+"}}"), value)
+	}
+	if i := bytes.Index(data, []byte("{{")); i >= 0 {
+		return nil, fmt.Errorf("%s: unfilled placeholder near %q", path, data[i:min(i+30, len(data))])
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("%s: the rendered realm is not valid JSON", path)
+	}
+	return data, nil
 }
 
 // once generates a group of files that depend on each other, such as the two
@@ -144,28 +180,9 @@ func randomHex(n int) []byte {
 	return []byte(hex.EncodeToString(randomBytes(n)))
 }
 
-func ed25519Pair() map[string][]byte {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		log.Fatal(err)
-	}
-	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubDER, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return map[string][]byte{
-		"devtoken_ed25519.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}),
-		"auth_ed25519.pub.pem": pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}),
-	}
-}
-
 // tlsChain generates a local CA and the nginx certificate. The CA key is
 // discarded: to renew, run again with -force.
-func tlsChain() map[string][]byte {
+func tlsChain(host string) map[string][]byte {
 	now := time.Now()
 	caKey := newECKey()
 	ca := &x509.Certificate{
@@ -183,12 +200,19 @@ func tlsChain() map[string][]byte {
 		log.Fatal(err)
 	}
 
+	dnsNames := []string{"localhost", "nginx"}
+	ips := []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+	if ip := net.ParseIP(host); ip != nil {
+		ips = append(ips, ip)
+	} else if host != "localhost" {
+		dnsNames = append(dnsNames, host)
+	}
 	key := newECKey()
 	leaf := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		DNSNames:     []string{"localhost", "nginx"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		Subject:      pkix.Name{CommonName: host},
+		DNSNames:     dnsNames,
+		IPAddresses:  ips,
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.AddDate(1, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,

@@ -34,9 +34,9 @@ ps:
 logs service="":
     {{ compose }} logs -f {{ service }}
 
-# Print a test token: who is "a", "b" or a UUID
-token who="a" ttl="15m":
-    go run ./cmd/devtoken -sub {{ who }} -ttl {{ ttl }}
+# Log a fictitious user in through Keycloak and print the token: "a", "b", "c", "technician", "support" or "admin"
+token who="a":
+    go run ./cmd/token -user {{ who }}
 
 # Upload fictitious STLs for customers A and B through the public API
 seed:
@@ -68,5 +68,5 @@ lint:
 
 # ZAP scan driven by openapi.yaml, authenticated as customer A (Stage 5)
 zap:
-    go run ./cmd/devtoken -sub a -ttl 2h -out secrets/zap_token
+    go run ./cmd/token -user a -out secrets/zap_token
     {{ compose }} --profile zap run --rm zap

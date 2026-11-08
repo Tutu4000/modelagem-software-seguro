@@ -25,8 +25,24 @@ just seed        # envia STLs fictícios dos clientes A e B
 |-|-|
 |`https://localhost`|API pública, pelo nginx|
 |`https://localhost:8443`|Downloads pelas URLs pré-assinadas do Garage. Só GET e HEAD|
+|`https://localhost:8444`|Keycloak, só o realm `nugget`. O console de administração e o realm `master` não são publicados|
 
 O certificado é de uma CA local. Para o `curl`, use `--cacert secrets/tls_ca.pem`. Para o navegador, importe esse arquivo ou aceite o aviso.
+
+No primeiro `just up`, o Keycloak leva cerca de um minuto para criar o banco e importar o realm. A API só sobe depois que ele fica pronto.
+
+### Contas fictícias
+
+O realm é gerado a partir de [deploy/keycloak/realm.json](deploy/keycloak/realm.json) pelo `just secrets`. Todas as contas usam a senha de `secrets/keycloak_demo_password`. As contas da equipe também pedem um código TOTP, gerado a partir de `secrets/keycloak_totp_secret`; para o navegador, cadastre esse segredo num app autenticador.
+
+|Conta|Perfil|TOTP|
+|-|-|-|
+|`customer-a`, `customer-b`, `customer-c`|`customer`|Não|
+|`technician`|`technician`|Sim|
+|`support`|`support`|Sim|
+|`admin`|`admin`|Sim|
+
+O `customer-c` fica reservado para o teste de cota do e2e. O `just token <conta>` faz o login pelo cliente `e2e`, que só existe no realm local e aceita usuário e senha, e imprime o token. Os front-ends vão usar os clientes `web` e `panel-web`, com authorization code e PKCE.
 
 ```sh
 TOKEN=$(just token a)
@@ -42,7 +58,8 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 |Serviço|Rede|Papel|
 |-|-|-|
 |`nginx`|`public` e `internal`|Único com portas publicadas. Faz o TLS, limita requisições por IP (429) e o corpo a 100 MB (413), e distribui entre as réplicas da API|
-|`api`|`internal`|Rotas do cliente. Valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados|
+|`keycloak`|`internal`|Login dos clientes e SSO da equipe, com TOTP obrigatório para a equipe e bloqueio por tentativas. Assina os tokens com EdDSA. Usa o banco `keycloak`, com papel próprio, na instância `postgres`|
+|`api`|`internal`|Rotas do cliente. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`), valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
 |`postgres`|`internal`|Banco principal (`nugget`). Os papéis `files` e `queue` só alcançam as próprias tabelas, `files` e `tasks`|
 |`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|
@@ -72,7 +89,7 @@ O `just test-e2e` cobre:
 * os papéis do banco;
 * o 429.
 
-O `just zap` gera um token do cliente A válido por 2 horas e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
+O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
 
 ## Outros comandos
 

@@ -3,7 +3,6 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nuggetmachine/internal/audit"
@@ -38,7 +36,9 @@ func run(log *slog.Logger) error {
 	var env config.Env
 	addr := env.String("API_ADDR", ":8080")
 	trusted := env.List("TRUSTED_PROXIES")
-	pubPEM := env.Secret("AUTH_PUBLIC_KEY")
+	issuer := env.Required("OIDC_ISSUER")
+	jwksURL := env.Required("OIDC_JWKS_URL")
+	audience := env.String("OIDC_AUDIENCE", "api")
 	mainDB := dbConfig{host: env.Required("DB_HOST"), name: env.String("DB_NAME", "nugget")}
 	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "audit")}
 	s3cfg := storage.S3Config{
@@ -59,13 +59,13 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	pub, err := jwt.ParseEdPublicKeyFromPEM(pubPEM)
-	if err != nil {
-		return fmt.Errorf("AUTH_PUBLIC_KEY: %w", err)
-	}
-
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	keys, err := auth.JWKS(ctx, jwksURL)
+	if err != nil {
+		return err
+	}
 
 	filesPool, err := mainDB.open(ctx, "files", filesPassword)
 	if err != nil {
@@ -96,7 +96,7 @@ func run(log *slog.Logger) error {
 
 	gin.SetMode(gin.ReleaseMode)
 	router, err := customer.New(customer.Deps{
-		Verifier:       auth.NewVerifier(pub.(ed25519.PublicKey), time.Now),
+		Verifier:       auth.NewVerifier(auth.VerifierConfig{Keys: keys, Issuer: issuer, Audience: audience, Now: time.Now}),
 		Files:          files.NewPostgresRepo(filesPool),
 		Store:          store,
 		Queue:          tasks,

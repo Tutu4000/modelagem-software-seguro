@@ -81,13 +81,18 @@ func newEnv(t *testing.T) *env {
 		clock: clk,
 	}
 	router, err := customer.New(customer.Deps{
-		Verifier: auth.NewVerifier(pub, clk.Now),
-		Files:    e.repo,
-		Store:    e.store,
-		Queue:    e.queue,
-		Tasks:    e.queue,
-		Audit:    audit.New(e.audit),
-		Log:      slog.New(slog.NewJSONHandler(e.app, nil)),
+		Verifier: auth.NewVerifier(auth.VerifierConfig{
+			Keys:     auth.StaticKey(pub),
+			Issuer:   testIssuer,
+			Audience: "api",
+			Now:      clk.Now,
+		}),
+		Files: e.repo,
+		Store: e.store,
+		Queue: e.queue,
+		Tasks: e.queue,
+		Audit: audit.New(e.audit),
+		Log:   slog.New(slog.NewJSONHandler(e.app, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -96,16 +101,32 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+const testIssuer = "https://idp.test/realms/nugget"
+
 func newUser() auth.UserID { return auth.UserID(uuid.New()) }
 
+// claims has the shape of a Keycloak access token for the API.
 func (e *env) claims(user auth.UserID, validity time.Duration) jwt.MapClaims {
 	now := e.clock.Now()
 	return jwt.MapClaims{
-		"sub":  user.String(),
-		"role": string(auth.RoleCustomer),
-		"iat":  now.Unix(),
-		"exp":  now.Add(validity).Unix(),
+		"iss":          testIssuer,
+		"aud":          []string{"api"},
+		"typ":          "Bearer",
+		"sub":          user.String(),
+		"realm_access": map[string]any{"roles": []string{string(auth.RoleCustomer)}},
+		"iat":          now.Unix(),
+		"exp":          now.Add(validity).Unix(),
 	}
+}
+
+// with returns a copy of the claims with one field replaced.
+func with(c jwt.MapClaims, key string, value any) jwt.MapClaims {
+	out := jwt.MapClaims{}
+	for k, v := range c {
+		out[k] = v
+	}
+	out[key] = value
+	return out
 }
 
 func sign(t *testing.T, key ed25519.PrivateKey, claims jwt.MapClaims) string {

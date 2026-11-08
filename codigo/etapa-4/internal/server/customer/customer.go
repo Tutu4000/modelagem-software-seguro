@@ -42,7 +42,7 @@ func New(d Deps) (*gin.Engine, error) {
 	}))
 
 	h := &files.Handler{Repo: d.Files, Store: d.Store, Queue: d.Queue, Tasks: d.Tasks, Audit: d.Audit}
-	api := r.Group("/api/v1", auth.RequireUser(d.Verifier))
+	api := r.Group("/api/v1", auth.Require(d.Verifier, auth.RoleCustomer))
 	api.GET("/files/:id", h.Status)
 	api.GET("/files/:id/download", h.Download)
 	api.POST("/files", h.Upload)
