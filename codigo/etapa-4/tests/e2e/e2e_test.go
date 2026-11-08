@@ -297,6 +297,31 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 	}
 }
 
+// C02: files keep UUIDv4, which the customer sees. Tasks and events are
+// internal and use UUIDv7, which keeps the index ordered.
+func TestIDVersions(t *testing.T) {
+	token := newCustomer(t)
+	waitFor(t, token, upload(t, token, fakestl.Box(3, 3, 3)), "done")
+	wantStatus(t, do(t, http.MethodGet, base+"/api/v1/files/"+uuid.NewString(), token, nil, -1), http.StatusForbidden)
+
+	cases := []struct {
+		service, db, table, want string
+	}{
+		{"postgres", "nugget", "files", "4"},
+		{"postgres", "nugget", "tasks", "7"},
+		{"postgres-audit", "audit", "events", "7"},
+	}
+	for _, c := range cases {
+		t.Run(c.table, func(t *testing.T) {
+			out := dockerCompose(t, "exec", "-T", c.service, "psql", "-U", "postgres", "-d", c.db, "-tAc",
+				"SELECT string_agg(DISTINCT uuid_extract_version(id)::text, ',') FROM "+c.table)
+			if got := strings.TrimSpace(out); got != c.want {
+				t.Errorf("%s IDs are version %q, want %q", c.table, got, c.want)
+			}
+		})
+	}
+}
+
 // RS03 and E2.3: a burst from one IP gets 429. It runs last because it
 // exhausts the IP's limit for a few seconds.
 func TestBurstGets429(t *testing.T) {

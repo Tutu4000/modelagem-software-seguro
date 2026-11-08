@@ -73,7 +73,13 @@ func (q *Rabbit) Enqueue(ctx context.Context, f files.File, model stl.Validated)
 	if err != nil {
 		return err
 	}
-	t := task{id: uuid.New(), file: uuid.UUID(f.ID), sha256: f.SHA256[:]}
+	// Task IDs never reach the customer, so UUIDv7 is fine here: it keeps the
+	// primary key index ordered. File IDs stay v4 (C02).
+	id, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	t := task{id: id, file: uuid.UUID(f.ID), sha256: f.SHA256[:]}
 	status := StatusProcessing
 	if active >= MaxActive {
 		status = StatusWaiting

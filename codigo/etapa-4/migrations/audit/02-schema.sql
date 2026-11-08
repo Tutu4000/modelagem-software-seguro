@@ -4,9 +4,10 @@ GRANT CONNECT ON DATABASE audit TO audit_app;
 GRANT USAGE ON SCHEMA public TO audit_app;
 
 -- Fields from section 3.2 of Stage 3: actor, target, action, UTC time, origin
--- and result (E7.1).
+-- and result (E7.1). The ID is a UUIDv7: events are internal, and the key
+-- follows insertion order.
 CREATE TABLE events (
-	id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	id          uuid PRIMARY KEY DEFAULT uuidv7(),
 	occurred_at timestamptz NOT NULL,
 	name        text NOT NULL,
 	actor       text NOT NULL,

@@ -6,7 +6,28 @@ import (
 	"bytes"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+// C02: the ID the customer sees is a UUIDv4, with no creation time in it.
+func TestFileIDIsUUIDv4(t *testing.T) {
+	e := newEnv(t)
+
+	rec := e.upload(e.token(newUser()), bytes.NewReader(binarySTL(1)), -1)
+	wantStatus(t, rec, http.StatusAccepted)
+	var created struct {
+		ID string `json:"id"`
+	}
+	decode(t, rec, &created)
+	id, err := uuid.Parse(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id.Version() != 4 {
+		t.Errorf("file ID %s is version %d, want 4", id, id.Version())
+	}
+}
 
 func TestCustomerSeesStatusOfOwnFileOnly(t *testing.T) {
 	e := newEnv(t)

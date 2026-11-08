@@ -27,7 +27,8 @@ var ErrNotFound = errors.New("file not found")
 
 const downloadTTL = 5 * time.Minute // RS01
 
-// FileID is also the object key in the storage.
+// FileID is also the object key in the storage. It is a UUIDv4 because the
+// customer sees it: a v7 would reveal when each design was uploaded (C02).
 type FileID uuid.UUID
 
 func NewFileID() FileID { return FileID(uuid.New()) }
