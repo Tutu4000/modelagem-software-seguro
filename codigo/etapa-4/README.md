@@ -229,6 +229,14 @@ just web-e2e            # Playwright contra o compose, na imagem oficial
 
 No `just web-dev`, a página `/_design` mostra todas as primitivas. Ela não existe no build de produção.
 
+Para orçar pelo app, entre como cliente e abra "Orçar" (`https://localhost/orcar`):
+
+1. Escolha ou arraste um STL binário. O app lê o arquivo no navegador e mostra a peça em 3D antes do upload terminar.
+2. Espere o "Pronto" do processamento.
+3. Configure a peça e o endereço.
+4. "Calcular orçamento" traz o preço do servidor, com o alerta de DFM quando a peça não cabe na impressora.
+5. "Enviar para revisão técnica" encerra o fluxo. Uma recarga no meio do caminho retoma do arquivo enviado.
+
 O TypeScript é estrito, sem `any`. O ESLint também barra `dangerouslySetInnerHTML`, `innerHTML` e o uso de `localStorage` e `sessionStorage`. Os tipos da API saem do `openapi.yaml` e do `panel-openapi.yaml` (`npm run gen`), e o `just web-lint` falha se estiverem desatualizados.
 
 Todas as portas mandam os cabeçalhos de segurança:

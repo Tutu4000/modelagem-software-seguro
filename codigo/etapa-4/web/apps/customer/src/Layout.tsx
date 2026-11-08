@@ -3,9 +3,9 @@ import { useSession } from "@nugget/auth";
 import { AccountMenu, AppShell, Button, Stack } from "@nugget/ui";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
-// The sections arrive with the next phases: quote (FE2), orders (FE3) and
-// support (FE4). Until then they show, disabled, to whoever is logged in.
-const upcoming = ["Orçar", "Pedidos", "Suporte"];
+// The sections still to come: orders (FE3) and support (FE4). Until then they
+// show, disabled, to whoever is logged in.
+const upcoming = ["Pedidos", "Suporte"];
 
 function Account() {
   const session = useSession();
@@ -39,6 +39,7 @@ export function Layout() {
           <NavLink to="/" end>
             Início
           </NavLink>
+          {signedIn && <NavLink to="/orcar">Orçar</NavLink>}
           {signedIn &&
             upcoming.map((label) => (
               <a key={label} aria-disabled="true">

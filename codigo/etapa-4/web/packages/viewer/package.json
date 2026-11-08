@@ -1,0 +1,18 @@
+{
+  "name": "@nugget/viewer",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./StlViewer": "./src/StlViewer.tsx"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0"
+  },
+  "peerDependencies": {
+    "react": "19.3.1"
+  }
+}

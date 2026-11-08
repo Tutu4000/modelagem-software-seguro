@@ -987,55 +987,57 @@ export interface components {
              */
             status: "waiting" | "processing" | "done" | "failed" | "purged";
             result?: {
-                volume_mm3?: number;
-                bbox_mm?: number[];
+                volume_mm3: number;
+                bbox_mm: number[];
             };
         };
         PriceRules: {
-            materials?: {
+            materials: {
                 [key: string]: {
-                    name?: string;
-                    cents_per_cm3?: number;
-                    colors?: string[];
+                    name: string;
+                    cents_per_cm3: number;
+                    colors: string[];
                 };
             };
             /** @description Multiplier in per mille (1000 keeps the material price) */
-            qualities?: {
+            qualities: {
                 [key: string]: number;
             };
             /** @description Cents per unit */
-            finishings?: {
+            finishings: {
                 [key: string]: number;
             };
-            setup_cents?: number;
-            discounts?: {
-                min_quantity?: number;
-                percent_off?: number;
+            setup_cents: number;
+            discounts: {
+                min_quantity: number;
+                percent_off: number;
             }[];
         };
         Order: {
             /** Format: uuid */
-            id?: string;
+            id: string;
             /** Format: uuid */
-            file_id?: string;
-            material?: string;
-            color?: string;
-            quality?: string;
-            finishing?: string;
-            quantity?: number;
-            price_table_version?: number;
-            unit_cents?: number;
-            discount_cents?: number;
+            file_id: string;
+            material: string;
+            color: string;
+            quality: string;
+            finishing: string;
+            quantity: number;
+            price_table_version: number;
+            unit_cents: number;
+            discount_cents: number;
             /** @description Carrier quote, added after the discount */
-            shipping_cents?: number;
-            total_cents?: number;
-            currency?: string;
+            shipping_cents: number;
+            total_cents: number;
+            currency: string;
             /** @enum {string} */
-            status?: "quoted" | "awaiting_review" | "awaiting_payment" | "rejected" | "paid" | "in_production" | "shipped" | "delivered" | "cancelled";
+            status: "quoted" | "awaiting_review" | "awaiting_payment" | "rejected" | "paid" | "in_production" | "shipped" | "delivered" | "cancelled";
             /** Format: date-time */
-            quote_expires_at?: string;
+            quote_expires_at: string;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
+            /** @description Manufacturability warnings (RF19), such as exceeds_build_volume */
+            dfm_flags: "exceeds_build_volume"[];
             shipping?: components["schemas"]["Address"];
             tracking_code?: string;
             payment?: components["schemas"]["Payment"];

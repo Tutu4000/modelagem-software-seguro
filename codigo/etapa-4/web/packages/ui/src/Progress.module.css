@@ -1,0 +1,10 @@
+.track {
+  height: 8px;
+  background: var(--gray-100);
+  border: 1px solid var(--line);
+}
+.bar {
+  height: 100%;
+  background: var(--signal-600);
+  transition: width 0.2s linear;
+}

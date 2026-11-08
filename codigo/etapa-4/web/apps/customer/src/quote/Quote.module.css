@@ -1,0 +1,48 @@
+.layout {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(0, 1fr);
+}
+/* Phones: a compact bar with the total and the next action stays at the
+   bottom; the full summary is at the end of the page. */
+.bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  margin: 0 calc(-1 * var(--space-4));
+  border-top: 3px solid var(--signal-600);
+  background: var(--surface);
+}
+.barTotal {
+  font-family: var(--font-mono);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  color: var(--navy-900);
+}
+@media (min-width: 600px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .summary {
+    grid-column: 1 / -1;
+  }
+  .bar {
+    display: none;
+  }
+}
+@media (min-width: 1024px) {
+  .layout {
+    grid-template-columns: minmax(0, 5fr) minmax(0, 4fr) minmax(0, 3fr);
+    align-items: start;
+  }
+  .summary {
+    grid-column: auto;
+    position: sticky;
+    top: calc(var(--shell-height) + var(--space-4));
+  }
+}

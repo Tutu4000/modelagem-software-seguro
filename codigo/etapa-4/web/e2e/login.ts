@@ -3,7 +3,7 @@
 import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 
-import type { Page } from "@playwright/test";
+import type { APIRequestContext, Page } from "@playwright/test";
 
 const secrets = process.env.SECRETS_DIR ?? "../secrets";
 
@@ -57,4 +57,24 @@ export async function storedTokens(page: Page): Promise<string> {
     const dump = (s: Storage) => Object.keys(s).map((k) => `${k}=${s.getItem(k) ?? ""}`).join("\n");
     return [dump(window.localStorage), dump(window.sessionStorage)].join("\n");
   });
+}
+
+/** apiToken logs in through the realm's e2e client (password grant), to check
+ * from the test what the app did, with the customer's own token. */
+export async function apiToken(request: APIRequestContext, username: string): Promise<string> {
+  const res = await request.post("https://localhost:8444/realms/nugget/protocol/openid-connect/token", {
+    form: {
+      grant_type: "password",
+      client_id: "e2e",
+      client_secret: secret("keycloak_e2e_client_secret"),
+      username,
+      password: secret("keycloak_demo_password"),
+      scope: "openid",
+    },
+  });
+  const body: unknown = await res.json();
+  if (typeof body !== "object" || body === null || !("access_token" in body) || typeof body.access_token !== "string") {
+    throw new Error(`no token for ${username}: ${String(res.status())}`);
+  }
+  return body.access_token;
 }

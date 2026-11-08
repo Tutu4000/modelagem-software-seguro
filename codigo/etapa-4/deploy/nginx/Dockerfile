@@ -6,7 +6,9 @@ FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d
 WORKDIR /web
 COPY web/package.json web/package-lock.json web/.npmrc ./
 COPY web/packages/api/package.json packages/api/
+COPY web/packages/auth/package.json packages/auth/
 COPY web/packages/ui/package.json packages/ui/
+COPY web/packages/viewer/package.json packages/viewer/
 COPY web/apps/customer/package.json apps/customer/
 COPY web/apps/panel/package.json apps/panel/
 RUN npm ci --ignore-scripts
