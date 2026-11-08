@@ -16,14 +16,15 @@ x-hardened: &hardened
   tmpfs: ["/tmp:size=16m"]
 
 services:
+  # nginx with the two web apps built in (deploy/nginx/Dockerfile).
   nginx:
     <<: *hardened
-    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+    build:
+      context: ..
+      dockerfile: deploy/nginx/Dockerfile
     # The panel listens only on the host's loopback: reaching it from another
     # machine takes an SSH tunnel, which stands for the VPN (FC2).
     ports: ["443:8443", "8443:9443", "8444:10443", "127.0.0.1:9445:11443", "127.0.0.1:9446:12443"]
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     tmpfs: ["/tmp:size=128m"]
     secrets: [tls_crt, tls_key]
     networks:
@@ -742,7 +743,7 @@ services:
   # Stage 5 verification (`just zap`): only starts with the profile, and sits
   # on the public network, like a customer. The token belongs to a test
   # customer with a short validity, and the reports go to
-  # evidencias/etapa-5/relatorios-zap.
+  # evidencias/etapa-5/$ZAP_OUT (relatorios-zap by default).
   zap:
     image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
     profiles: [zap]
@@ -751,13 +752,34 @@ services:
     volumes:
       - ../openapi.yaml:/zap/api/openapi.yaml:ro
       - ../secrets/zap_token:/zap/token:ro
-      - ../../../evidencias/etapa-5/relatorios-zap:/zap/wrk
+      - ../../../evidencias/etapa-5/${ZAP_OUT:-relatorios-zap}:/zap/wrk
     entrypoint: ["bash", "-c"]
     command:
       - >-
         ZAP_AUTH_HEADER_VALUE="Bearer $$(cat /zap/token)"
         exec zap-api-scan.py -t /zap/api/openapi.yaml -f openapi -O https://nginx:8443
         -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
+
+  # Baseline of the customer app (FE0): spider and passive checks, the ones
+  # the security headers answer.
+  zap-front:
+    image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
+    profiles: [zap]
+    networks: [public]
+    depends_on: [nginx]
+    volumes:
+      - ../../../evidencias/etapa-5/${ZAP_OUT:-relatorios-zap}:/zap/wrk
+    command:
+      - zap-baseline.py
+      - -t
+      - https://nginx:8443/
+      - -r
+      - zap-front-relatorio.html
+      - -J
+      - zap-front-relatorio.json
+      - -w
+      - zap-front-relatorio.md
+      - -I
 
 networks:
   # The only network with published ports besides the Mailpit inbox. The fixed
