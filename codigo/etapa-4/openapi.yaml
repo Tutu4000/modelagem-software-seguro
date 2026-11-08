@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.6.0
+  version: 0.7.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -118,7 +118,8 @@ paths:
         The price is computed only on the server, from the model volume and
         the active price table (CA03). The body has no price field, and any
         unknown field (such as total_cents or status) is refused with 400.
-        The quote holds for 24 hours.
+        The shipping price is quoted by the carrier for the address and
+        added after the volume discount. The quote holds for 24 hours.
       requestBody:
         required: true
         content:
@@ -126,7 +127,7 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [file_id, material, color, quality, finishing, quantity]
+              required: [file_id, material, color, quality, finishing, quantity, shipping]
               properties:
                 file_id:
                   type: string
@@ -143,6 +144,8 @@ paths:
                   type: integer
                   minimum: 1
                   maximum: 1000
+                shipping:
+                  $ref: "#/components/schemas/Address"
       responses:
         "201":
           description: Order quoted
@@ -164,6 +167,8 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/PartnerUnavailable"
     get:
       summary: The customer's orders, newest first (RF09)
       responses:
@@ -184,7 +189,7 @@ paths:
           $ref: "#/components/responses/RateLimited"
   /api/v1/orders/{id}:
     get:
-      summary: One of the customer's orders, with its history and review (RF12, RF20)
+      summary: One of the customer's orders, with its history, review, payment and tracking (RF12, RF20)
       parameters:
         - $ref: "#/components/parameters/OrderID"
       responses:
@@ -224,6 +229,93 @@ paths:
                 $ref: "#/components/schemas/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/payment:
+    post:
+      summary: Pay an approved order through the gateway (RF08)
+      description: >
+        Creates the charge for the order total computed on the server. The
+        answer is pending: the order becomes paid only when the gateway's
+        signed notification arrives (see the callback). Calling again while
+        the charge is live returns the same charge.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "202":
+          description: Charge pending at the gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order is not awaiting payment (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/PartnerUnavailable"
+      callbacks:
+        paymentSucceeded:
+          "https://localhost/api/v1/webhooks/payments":
+            post:
+              $ref: "#/paths/~1api~1v1~1webhooks~1payments/post"
+  /api/v1/webhooks/payments:
+    post:
+      summary: Payment notification from the gateway (C14)
+      description: >
+        Public route with no bearer token: the authentication is the
+        X-Nugget-Signature header. A replayed event ID answers 200 with
+        status duplicate and changes nothing. An event whose charge, order or
+        amount does not match the order answers 400 and is audited as
+        payment.rejected.
+      security:
+        - webhookSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentEvent"
+      responses:
+        "200":
+          $ref: "#/components/responses/WebhookAccepted"
+        "400":
+          description: Bad signature (invalid_signature) or an event that does not match (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/webhooks/shipping:
+    post:
+      summary: Pickup and delivery notifications from the carrier (C15)
+      description: >
+        Same scheme as the payments webhook, with the carrier's own secret.
+        shipment.picked_up moves the order from in_production to shipped and
+        shipment.delivered from shipped to delivered. The shipment must be
+        the one booked for the order.
+      security:
+        - webhookSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingEvent"
+      responses:
+        "200":
+          $ref: "#/components/responses/WebhookAccepted"
+        "400":
+          description: Bad signature (invalid_signature) or an event that does not match (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 components:
   securitySchemes:
     # Access token issued by Keycloak (realm "nugget") with audience "api"
@@ -233,6 +325,12 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    # t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>"> with the
+    # partner's secret. Timestamps more than 5 minutes off are refused.
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Nugget-Signature
     oidc:
       type: openIdConnect
       openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
@@ -274,7 +372,99 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    PartnerUnavailable:
+      description: >
+        The gateway or the carrier did not answer (partner_unavailable). The
+        order stays as it was (D03).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    WebhookAccepted:
+      description: Event applied, or a replay of one already applied
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [applied, duplicate]
   schemas:
+    Address:
+      type: object
+      description: >
+        The minimum to deliver (LGPD). Shown to the customer, support and
+        admin, never to the technician, and sent to the carrier only at
+        pickup.
+      additionalProperties: false
+      required: [recipient, street, number, city, state, postal_code]
+      properties:
+        recipient:
+          type: string
+          minLength: 1
+          maxLength: 120
+        street:
+          type: string
+          minLength: 1
+          maxLength: 120
+        number:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city:
+          type: string
+          minLength: 1
+          maxLength: 120
+        state:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        postal_code:
+          type: string
+          pattern: "^[0-9]{5}-?[0-9]{3}$"
+    Payment:
+      type: object
+      properties:
+        charge_id:
+          type: string
+        amount_cents:
+          type: integer
+        status:
+          type: string
+          enum: [pending, succeeded]
+        created_at:
+          type: string
+          format: date-time
+    PaymentEvent:
+      type: object
+      required: [event_id, type, charge_id, order_id, amount_cents]
+      properties:
+        event_id:
+          type: string
+        type:
+          type: string
+          enum: [payment.succeeded]
+        charge_id:
+          type: string
+        order_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+    ShippingEvent:
+      type: object
+      required: [event_id, type, shipment_id, order_id]
+      properties:
+        event_id:
+          type: string
+        type:
+          type: string
+          enum: [shipment.picked_up, shipment.delivered]
+        shipment_id:
+          type: string
+        order_id:
+          type: string
+          format: uuid
     UploadAccepted:
       type: object
       required: [id, status]
@@ -367,6 +557,9 @@ components:
           type: integer
         discount_cents:
           type: integer
+        shipping_cents:
+          type: integer
+          description: Carrier quote, added after the discount
         total_cents:
           type: integer
         currency:
@@ -380,6 +573,12 @@ components:
         created_at:
           type: string
           format: date-time
+        shipping:
+          $ref: "#/components/schemas/Address"
+        tracking_code:
+          type: string
+        payment:
+          $ref: "#/components/schemas/Payment"
         history:
           type: array
           items:

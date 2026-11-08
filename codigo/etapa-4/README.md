@@ -18,7 +18,7 @@ Todos os comandos são executados nesta pasta.
 just secrets     # gera chaves, senhas e o certificado TLS em secrets/ (fora do git)
 just up          # constrói as imagens e sobe tudo
 just scale 3     # opcional: três réplicas da API atrás do nginx
-just seed        # envia STLs fictícios dos clientes A e B
+just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento à produção
 ```
 
 |Endereço|O que é|
@@ -63,11 +63,16 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 ### Fluxo de um pedido
 
 1. **Cliente:** envia o STL (`POST /api/v1/files`) e espera o estado `done`.
-2. **Cliente:** consulta o catálogo (`GET /api/v1/catalog`) e pede o orçamento (`POST /api/v1/orders`). O preço é calculado só no servidor; o pedido nasce `quoted`, e o orçamento vale 24 horas.
+2. **Cliente:** consulta o catálogo (`GET /api/v1/catalog`) e pede o orçamento (`POST /api/v1/orders`), com o endereço de entrega. O preço é calculado só no servidor, e o frete, cotado na transportadora, é somado depois do desconto. O pedido nasce `quoted`, e o orçamento vale 24 horas.
 3. **Cliente:** confirma (`POST /api/v1/orders/{id}/submit`), e o pedido passa a `awaiting_review`.
 4. **Admin, no painel:** atribui o pedido a um técnico (`POST /panel/v1/orders/{id}/assign`).
 5. **Técnico atribuído, no painel:** abre o STL com justificativa (`POST /panel/v1/orders/{id}/file`) e registra o laudo e a decisão (`POST /panel/v1/orders/{id}/review`). Aprovado, o pedido vai para `awaiting_payment`; reprovado, para `rejected`.
-6. **Cliente:** acompanha o pedido, o histórico e o resultado da revisão (`GET /api/v1/orders/{id}`).
+6. **Cliente:** paga (`POST /api/v1/orders/{id}/payment`). A resposta é a cobrança pendente; o pedido só passa a `paid` quando chega a notificação assinada do gateway em `POST /api/v1/webhooks/payments`.
+7. **Técnico atribuído, no painel:** inicia a impressão (`POST /panel/v1/orders/{id}/production`, para `in_production`) e agenda a coleta (`POST /panel/v1/orders/{id}/ship`). O painel manda o endereço para a transportadora sem mostrá-lo ao técnico e recebe o código de rastreio.
+8. **Transportadora:** avisa a coleta e a entrega em `POST /api/v1/webhooks/shipping`, e o pedido passa a `shipped` e depois a `delivered`.
+9. **Cliente:** acompanha o pedido, o histórico, a revisão, o pagamento e o rastreio (`GET /api/v1/orders/{id}`).
+
+Os webhooks são rotas públicas, sem token: valem pela assinatura `X-Nugget-Signature: t=<unix>,v1=<HMAC-SHA256 de "t.corpo">`, com um segredo por parceiro, e recusam timestamps com mais de 5 minutos. Um evento repetido responde 200 sem efeito, e um evento cujo valor não bate com o pedido responde 400 e fica registrado como `payment.rejected`. Com um parceiro fora do ar, o orçamento e o pagamento respondem 502 `partner_unavailable`, e o pedido não muda.
 
 Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/price-tables`) e aprovada por outro (`POST /panel/v1/price-tables/{versão}/approve`). Os pedidos já orçados mantêm o preço que tinham.
 
@@ -78,14 +83,15 @@ Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/pri
 |`nginx`|`public` e `internal`|Único com portas publicadas. Faz o TLS, limita requisições por IP (429) e o corpo a 100 MB (413), e distribui entre as réplicas da API|
 |`keycloak`|`internal`|Login dos clientes e SSO da equipe, com TOTP obrigatório para a equipe e bloqueio por tentativas. Assina os tokens com EdDSA. Usa o banco `keycloak`, com papel próprio, na instância `postgres`. No logout, avisa a API pelo back-channel|
 |`valkey`|`internal`|Estado compartilhado entre as réplicas da API: sessões revogadas e limite de 60 requisições por minuto por usuário. O usuário `default` fica desligado, e o `api` e o `panel` só alcançam as chaves `session:*` e `ratelimit:*`. Se o Valkey cair, a API responde 503|
-|`panel`|`internal`|Painel interno, em binário próprio. Só aceita tokens do `panel-web` com TOTP (`acr=2`) e perfis da equipe, e grava `panel.access` em toda requisição. A operação crítica "revogar usuário" (só `admin`) exige um login de no máximo 5 minutos e uma justificativa. Grava no banco de auditoria com o papel `panel_audit`, e usa uma service account própria no Keycloak|
-|`api`|`internal`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
+|`panel`|`internal` e `partners`|Painel interno, em binário próprio. Só aceita tokens do `panel-web` com TOTP (`acr=2`) e perfis da equipe, e grava `panel.access` em toda requisição. A operação crítica "revogar usuário" (só `admin`) exige um login de no máximo 5 minutos e uma justificativa. Grava no banco de auditoria com o papel `panel_audit`, e usa uma service account própria no Keycloak|
+|`api`|`internal` e `partners`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
 |`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, e `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL|
 |`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|
 |`rabbitmq`|`internal` e `processing`|Filas quorum `tasks` (até 3 entregas), `tasks.failed` e `results`. Os usuários `api` e `worker` não declaram nada|
 |`garage`|`internal` e `processing`|Bucket privado `files`. Só se lê com URL pré-assinada|
 |`garage-init`|`internal`|Executa uma vez e prepara o layout, o bucket e a chave da API|
+|`partnersim`|`public` e `partners`|Simula o gateway de pagamento (porta 8100) e a transportadora (porta 8200). Exige chave de API, responde de forma assíncrona e avisa a plataforma por webhooks assinados, enviados ao endereço público do nginx. O atraso entre os eventos é o `SIM_DELAY`. A rede `partners` não tem internet e só liga a `api` e o `panel` a ele|
 
 Os estados de uma tarefa são `waiting`, `processing`, `done` e `failed`.
 
@@ -107,7 +113,11 @@ O `just test-e2e` cobre:
 * o 413 do nginx;
 * a cota de 3 tarefas e a falha segura sem worker (o teste para o worker e depois o religa);
 * os papéis do banco;
-* o 429.
+* o 429;
+* o pedido do pagamento até a entrega, com os webhooks do `partnersim`;
+* webhooks forjados, alterados, velhos, repetidos e com valor errado;
+* o parceiro fora do ar (o teste para o `partnersim` e depois o religa);
+* o endereço escondido do técnico.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
 

@@ -30,7 +30,11 @@ const (
 	// Conflict: the resource is not in the status the operation needs.
 	Conflict     Code = "conflict"
 	QuoteExpired Code = "quote_expired"
-	Internal     Code = "internal"
+	// PartnerUnavailable: the gateway or the carrier did not answer (D03).
+	PartnerUnavailable Code = "partner_unavailable"
+	// InvalidSignature: a webhook without a valid signature (C14, C15).
+	InvalidSignature Code = "invalid_signature"
+	Internal         Code = "internal"
 )
 
 var catalog = map[Code]struct {
@@ -51,6 +55,8 @@ var catalog = map[Code]struct {
 	IdPUnavailable:        {http.StatusBadGateway, "Identity provider unavailable"},
 	Conflict:              {http.StatusConflict, "Conflict with the current status"},
 	QuoteExpired:          {http.StatusConflict, "Quote expired"},
+	PartnerUnavailable:    {http.StatusBadGateway, "Partner unavailable"},
+	InvalidSignature:      {http.StatusBadRequest, "Invalid signature"},
 	Internal:              {http.StatusInternalServerError, "Internal error"},
 }
 

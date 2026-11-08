@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — internal panel API
-  version: 0.2.0
+  version: 0.3.0
   description: >
     Staff routes (technician, support, admin), served by the panel binary on
     an address of its own, reachable only from the host's loopback or an SSH
@@ -249,6 +249,58 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/production:
+    post:
+      summary: Start printing a paid order (assigned technician)
+      description: Only from paid, to in_production. Otherwise 409.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order in production
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/ship:
+    post:
+      summary: Book the pickup with the carrier (assigned technician)
+      description: >
+        Only in production and once per order. The panel sends the delivery
+        address to the carrier without showing it to the technician. The
+        order becomes shipped when the carrier's signed pickup notification
+        arrives at the public API.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "202":
+          description: Pickup booked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  shipment_id:
+                    type: string
+                  tracking_code:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "502":
+          description: The carrier did not answer (partner_unavailable); nothing changed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /panel/v1/price-tables:
     get:
       summary: Price table versions (admin)
@@ -365,7 +417,10 @@ components:
   schemas:
     StaffOrder:
       type: object
-      description: The customer view of the order (see openapi.yaml) plus the review data
+      description: >
+        The customer view of the order (see openapi.yaml) plus the review
+        data. The payment and the tracking code come for every staff role;
+        the shipping address only for support and admin.
       properties:
         id:
           type: string
@@ -377,6 +432,35 @@ components:
           type: string
         total_cents:
           type: integer
+        shipping_cents:
+          type: integer
+        tracking_code:
+          type: string
+        payment:
+          type: object
+          properties:
+            charge_id:
+              type: string
+            amount_cents:
+              type: integer
+            status:
+              type: string
+        shipping:
+          type: object
+          description: Only for support and admin
+          properties:
+            recipient:
+              type: string
+            street:
+              type: string
+            number:
+              type: string
+            city:
+              type: string
+            state:
+              type: string
+            postal_code:
+              type: string
         volume_mm3:
           type: number
         bbox_mm:

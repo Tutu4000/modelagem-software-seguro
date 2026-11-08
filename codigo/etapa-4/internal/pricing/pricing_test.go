@@ -27,15 +27,15 @@ func TestQuoteByHand(t *testing.T) {
 		want   Quote
 	}{
 		// 6 cm3 x 15 = 90 cents per unit; 2 units = 180; + setup 1000.
-		{"PLA standard", 6000, Choice{"pla", "black", "standard", "none", 2}, Quote{90, 0, 1180}},
+		{"PLA standard", 6000, Choice{"pla", "black", "standard", "none", 2}, Quote{UnitCents: 90, TotalCents: 1180}},
 		// 6 cm3 x 15 x 1.5 = 135 + painted 1500 = 1635 per unit.
-		{"PLA fine painted", 6000, Choice{"pla", "white", "fine", "painted", 1}, Quote{1635, 0, 2635}},
+		{"PLA fine painted", 6000, Choice{"pla", "white", "fine", "painted", 1}, Quote{UnitCents: 1635, TotalCents: 2635}},
 		// 1.234 cm3 x 20 x 0.8 = 19.744, rounded up to 20.
-		{"rounds up to the cent", 1234, Choice{"petg", "clear", "draft", "none", 1}, Quote{20, 0, 1020}},
+		{"rounds up to the cent", 1234, Choice{"petg", "clear", "draft", "none", 1}, Quote{UnitCents: 20, TotalCents: 1020}},
 		// 10 units: 900, 5% off = 45.
-		{"first discount tier", 6000, Choice{"pla", "black", "standard", "none", 10}, Quote{90, 45, 1855}},
+		{"first discount tier", 6000, Choice{"pla", "black", "standard", "none", 10}, Quote{UnitCents: 90, DiscountCents: 45, TotalCents: 1855}},
 		// 50 units: 4500, 10% off = 450.
-		{"second discount tier", 6000, Choice{"pla", "black", "standard", "none", 50}, Quote{90, 450, 5050}},
+		{"second discount tier", 6000, Choice{"pla", "black", "standard", "none", 50}, Quote{UnitCents: 90, DiscountCents: 450, TotalCents: 5050}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,6 +47,18 @@ func TestQuoteByHand(t *testing.T) {
 				t.Errorf("quote %+v, want %+v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The volume discount does not apply to shipping.
+func TestShippingComesAfterTheDiscount(t *testing.T) {
+	q, err := rules().Quote(6000, Choice{"pla", "black", "standard", "none", 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := q.WithShipping(2500)
+	if got != (Quote{UnitCents: 90, DiscountCents: 45, ShippingCents: 2500, TotalCents: 1855 + 2500}) {
+		t.Errorf("quote %+v", got)
 	}
 }
 

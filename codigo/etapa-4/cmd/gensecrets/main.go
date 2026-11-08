@@ -71,6 +71,11 @@ func main() {
 		"keycloak_panel_admin_secret",
 		"db_orders_password",
 		"db_panel_orders_password",
+		"partner_payments_api_key",
+		"partner_carrier_api_key_api",
+		"partner_carrier_api_key_panel",
+		"partner_payments_webhook_secret",
+		"partner_shipping_webhook_secret",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}

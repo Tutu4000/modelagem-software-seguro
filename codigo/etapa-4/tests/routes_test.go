@@ -34,8 +34,15 @@ func TestEveryRouteDeclaresItsRoles(t *testing.T) {
 			i := slices.IndexFunc(r.Registered, func(reg server.Route) bool {
 				return reg.Method == route.Method && reg.Path == route.Path
 			})
-			if i < 0 || len(r.Registered[i].Roles) == 0 {
-				t.Errorf("%s: %s %s was added without a declared role", name, route.Method, route.Path)
+			if i < 0 {
+				t.Errorf("%s: %s %s was added outside the registry", name, route.Method, route.Path)
+				continue
+			}
+			reg := r.Registered[i]
+			bearer := reg.Auth == "bearer" && len(reg.Roles) > 0
+			signed := strings.HasPrefix(reg.Auth, "hmac:") && len(reg.Roles) == 0
+			if !bearer && !signed {
+				t.Errorf("%s: %s %s declares neither roles nor a signature scheme", name, route.Method, route.Path)
 			}
 		}
 	}
@@ -44,6 +51,12 @@ func TestEveryRouteDeclaresItsRoles(t *testing.T) {
 func TestRoutersDoNotMix(t *testing.T) {
 	rs := routers(t)
 	for _, route := range rs["customer"].Registered {
+		if route.Auth != "bearer" {
+			if !strings.HasPrefix(route.Path, "/api/v1/webhooks/") {
+				t.Errorf("signed route %s %s outside /api/v1/webhooks/", route.Method, route.Path)
+			}
+			continue
+		}
 		if strings.HasPrefix(route.Path, "/panel") || !slices.Equal(route.Roles, []auth.Role{auth.RoleCustomer}) {
 			t.Errorf("public API route %s %s with roles %v", route.Method, route.Path, route.Roles)
 		}

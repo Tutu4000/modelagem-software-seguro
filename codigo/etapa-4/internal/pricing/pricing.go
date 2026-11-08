@@ -91,7 +91,16 @@ type Choice struct {
 type Quote struct {
 	UnitCents     int64
 	DiscountCents int64
+	ShippingCents int64
 	TotalCents    int64
+}
+
+// WithShipping adds the carrier's price (RF07). It comes after the discount:
+// the volume discount does not apply to shipping.
+func (q Quote) WithShipping(cents int64) Quote {
+	q.ShippingCents = cents
+	q.TotalCents += cents
+	return q
 }
 
 // Quote prices one order: per unit, material by volume times the quality

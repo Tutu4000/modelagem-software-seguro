@@ -62,6 +62,8 @@ services:
       VALKEY_PASSWORD_FILE: /run/secrets/valkey_panel_password
       KEYCLOAK_ADMIN_URL: http://keycloak:8080
       KEYCLOAK_PANEL_ADMIN_SECRET_FILE: /run/secrets/keycloak_panel_admin_secret
+      CARRIER_URL: http://partnersim:8200
+      CARRIER_API_KEY_FILE: /run/secrets/partner_carrier_api_key_panel
       RATE_LIMIT_PER_MINUTE: "60"
       PANEL_STEP_UP_MAX_AGE: 5m
       INTERNAL_ADDR: ":8090"
@@ -73,7 +75,8 @@ services:
       - keycloak_panel_admin_secret
       - s3_panel_access_key_id
       - s3_panel_secret_access_key
-    networks: [internal]
+      - partner_carrier_api_key_panel
+    networks: [internal, partners]
     depends_on:
       garage-init: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
@@ -145,6 +148,12 @@ services:
       DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
       DB_ORDERS_PASSWORD_FILE: /run/secrets/db_orders_password
       BUILD_VOLUME_MM: "250,250,250"
+      PAYMENTS_URL: http://partnersim:8100
+      PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
+      CARRIER_URL: http://partnersim:8200
+      CARRIER_API_KEY_FILE: /run/secrets/partner_carrier_api_key_api
+      PAYMENTS_WEBHOOK_SECRET_FILE: /run/secrets/partner_payments_webhook_secret
+      SHIPPING_WEBHOOK_SECRET_FILE: /run/secrets/partner_shipping_webhook_secret
       DB_QUEUE_PASSWORD_FILE: /run/secrets/db_queue_password
       AUDIT_DB_HOST: postgres-audit
       DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
@@ -164,12 +173,16 @@ services:
       - valkey_api_password
       - db_files_password
       - db_orders_password
+      - partner_payments_api_key
+      - partner_carrier_api_key_api
+      - partner_payments_webhook_secret
+      - partner_shipping_webhook_secret
       - db_queue_password
       - db_audit_password
       - s3_access_key_id
       - s3_secret_access_key
       - rabbitmq_api_password
-    networks: [internal]
+    networks: [internal, partners]
     depends_on:
       garage-init: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
@@ -180,6 +193,38 @@ services:
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # The payment gateway and the carrier (FC5), simulated. The API and the
+  # panel call it on the partners network; it calls back the platform's public
+  # address, like a third party on the internet would, with signed webhooks.
+  partnersim:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: partnersim
+    environment:
+      WEBHOOK_BASE_URL: https://nginx:8443
+      WEBHOOK_CA_FILE: /run/secrets/tls_ca
+      PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
+      CARRIER_API_KEY_API_FILE: /run/secrets/partner_carrier_api_key_api
+      CARRIER_API_KEY_PANEL_FILE: /run/secrets/partner_carrier_api_key_panel
+      PAYMENTS_WEBHOOK_SECRET_FILE: /run/secrets/partner_payments_webhook_secret
+      SHIPPING_WEBHOOK_SECRET_FILE: /run/secrets/partner_shipping_webhook_secret
+      # Long enough for the e2e webhook attacks to land before the
+      # simulator's own notification.
+      SIM_DELAY: 3s
+    secrets:
+      - tls_ca
+      - partner_payments_api_key
+      - partner_carrier_api_key_api
+      - partner_carrier_api_key_panel
+      - partner_payments_webhook_secret
+      - partner_shipping_webhook_secret
+    networks: [public, partners]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 64m, pids: 64 }
 
   # Only on the processing network: no database, Valkey or internet, and no
   # Garage key. It reads the files through the message's presigned URL (FC3,
@@ -373,6 +418,9 @@ networks:
   # Worker, queue and storage. The worker reaches no database or internet (FC3).
   processing:
     internal: true
+  # API and panel to the partners (FC5), with no way out to the internet.
+  partners:
+    internal: true
 
 volumes:
   main: {}
@@ -383,6 +431,12 @@ volumes:
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
+  tls_ca: { file: ../secrets/tls_ca.pem }
+  partner_payments_api_key: { file: ../secrets/partner_payments_api_key }
+  partner_carrier_api_key_api: { file: ../secrets/partner_carrier_api_key_api }
+  partner_carrier_api_key_panel: { file: ../secrets/partner_carrier_api_key_panel }
+  partner_payments_webhook_secret: { file: ../secrets/partner_payments_webhook_secret }
+  partner_shipping_webhook_secret: { file: ../secrets/partner_shipping_webhook_secret }
   tls_key: { file: ../secrets/tls.key }
   db_keycloak_password: { file: ../secrets/db_keycloak_password }
   keycloak_realm: { file: ../secrets/keycloak_realm.json }

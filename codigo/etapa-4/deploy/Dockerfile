@@ -23,6 +23,10 @@ FROM base AS panel
 COPY --from=build /out/panel /panel
 ENTRYPOINT ["/panel"]
 
+FROM base AS partnersim
+COPY --from=build /out/partnersim /partnersim
+ENTRYPOINT ["/partnersim"]
+
 FROM base AS garage-init
 COPY --from=build /out/garage-init /garage-init
 ENTRYPOINT ["/garage-init"]

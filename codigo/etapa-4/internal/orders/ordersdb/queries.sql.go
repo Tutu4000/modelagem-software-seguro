@@ -66,7 +66,7 @@ func (q *Queries) AssignOrder(ctx context.Context, arg AssignOrderParams) (int64
 }
 
 const getOrder = `-- name: GetOrder :one
-SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at FROM orders WHERE id = $1
+SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at, shipping_cents, ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, shipment_id, tracking_code FROM orders WHERE id = $1
 `
 
 // For the panel, which checks the role and the assignment in authz.
@@ -94,12 +94,21 @@ func (q *Queries) GetOrder(ctx context.Context, id uuid.UUID) (Order, error) {
 		&i.QuoteExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ShippingCents,
+		&i.ShipRecipient,
+		&i.ShipStreet,
+		&i.ShipNumber,
+		&i.ShipCity,
+		&i.ShipState,
+		&i.ShipPostalCode,
+		&i.ShipmentID,
+		&i.TrackingCode,
 	)
 	return i, err
 }
 
 const getOrderForOwner = `-- name: GetOrderForOwner :one
-SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at FROM orders WHERE id = $1 AND owner_id = $2
+SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at, shipping_cents, ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, shipment_id, tracking_code FROM orders WHERE id = $1 AND owner_id = $2
 `
 
 type GetOrderForOwnerParams struct {
@@ -133,6 +142,15 @@ func (q *Queries) GetOrderForOwner(ctx context.Context, arg GetOrderForOwnerPara
 		&i.QuoteExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ShippingCents,
+		&i.ShipRecipient,
+		&i.ShipStreet,
+		&i.ShipNumber,
+		&i.ShipCity,
+		&i.ShipState,
+		&i.ShipPostalCode,
+		&i.ShipmentID,
+		&i.TrackingCode,
 	)
 	return i, err
 }
@@ -157,12 +175,14 @@ func (q *Queries) GetReview(ctx context.Context, orderID uuid.UUID) (Review, err
 const insertOrder = `-- name: InsertOrder :exec
 INSERT INTO orders (
 	id, owner_id, file_id, material, color, quality, finishing, quantity,
-	price_table_version, unit_cents, discount_cents, total_cents,
-	volume_mm3, bbox_mm, dfm_flags, status, quote_expires_at
+	price_table_version, unit_cents, discount_cents, shipping_cents, total_cents,
+	volume_mm3, bbox_mm, dfm_flags, status, quote_expires_at,
+	ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code
 ) VALUES (
 	$1, $2, $3, $4, $5, $6, $7, $8,
-	$9, $10, $11, $12,
-	$13, $14, $15, $16, $17
+	$9, $10, $11, $12, $13,
+	$14, $15, $16, $17, $18,
+	$19, $20, $21, $22, $23, $24
 )
 `
 
@@ -178,12 +198,19 @@ type InsertOrderParams struct {
 	PriceTableVersion int64
 	UnitCents         int64
 	DiscountCents     int64
+	ShippingCents     int64
 	TotalCents        int64
 	VolumeMm3         float64
 	BboxMm            []float64
 	DfmFlags          []string
 	Status            string
 	QuoteExpiresAt    time.Time
+	ShipRecipient     string
+	ShipStreet        string
+	ShipNumber        string
+	ShipCity          string
+	ShipState         string
+	ShipPostalCode    string
 }
 
 func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) error {
@@ -199,13 +226,36 @@ func (q *Queries) InsertOrder(ctx context.Context, arg InsertOrderParams) error 
 		arg.PriceTableVersion,
 		arg.UnitCents,
 		arg.DiscountCents,
+		arg.ShippingCents,
 		arg.TotalCents,
 		arg.VolumeMm3,
 		arg.BboxMm,
 		arg.DfmFlags,
 		arg.Status,
 		arg.QuoteExpiresAt,
+		arg.ShipRecipient,
+		arg.ShipStreet,
+		arg.ShipNumber,
+		arg.ShipCity,
+		arg.ShipState,
+		arg.ShipPostalCode,
 	)
+	return err
+}
+
+const insertPayment = `-- name: InsertPayment :exec
+INSERT INTO payments (charge_id, order_id, amount_cents, status)
+VALUES ($1, $2, $3, 'pending')
+`
+
+type InsertPaymentParams struct {
+	ChargeID    string
+	OrderID     uuid.UUID
+	AmountCents int64
+}
+
+func (q *Queries) InsertPayment(ctx context.Context, arg InsertPaymentParams) error {
+	_, err := q.db.Exec(ctx, insertPayment, arg.ChargeID, arg.OrderID, arg.AmountCents)
 	return err
 }
 
@@ -272,7 +322,7 @@ func (q *Queries) InsertStatusHistory(ctx context.Context, arg InsertStatusHisto
 }
 
 const listOrdersAssigned = `-- name: ListOrdersAssigned :many
-SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at FROM orders WHERE assigned_technician = $1 ORDER BY created_at DESC LIMIT 200
+SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at, shipping_cents, ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, shipment_id, tracking_code FROM orders WHERE assigned_technician = $1 ORDER BY created_at DESC LIMIT 200
 `
 
 func (q *Queries) ListOrdersAssigned(ctx context.Context, technician *uuid.UUID) ([]Order, error) {
@@ -305,6 +355,15 @@ func (q *Queries) ListOrdersAssigned(ctx context.Context, technician *uuid.UUID)
 			&i.QuoteExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ShippingCents,
+			&i.ShipRecipient,
+			&i.ShipStreet,
+			&i.ShipNumber,
+			&i.ShipCity,
+			&i.ShipState,
+			&i.ShipPostalCode,
+			&i.ShipmentID,
+			&i.TrackingCode,
 		); err != nil {
 			return nil, err
 		}
@@ -317,7 +376,7 @@ func (q *Queries) ListOrdersAssigned(ctx context.Context, technician *uuid.UUID)
 }
 
 const listOrdersByStatus = `-- name: ListOrdersByStatus :many
-SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at FROM orders
+SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at, shipping_cents, ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, shipment_id, tracking_code FROM orders
 WHERE ($1::text = '' OR status = $1::text)
 ORDER BY created_at DESC
 LIMIT 200
@@ -353,6 +412,15 @@ func (q *Queries) ListOrdersByStatus(ctx context.Context, status string) ([]Orde
 			&i.QuoteExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ShippingCents,
+			&i.ShipRecipient,
+			&i.ShipStreet,
+			&i.ShipNumber,
+			&i.ShipCity,
+			&i.ShipState,
+			&i.ShipPostalCode,
+			&i.ShipmentID,
+			&i.TrackingCode,
 		); err != nil {
 			return nil, err
 		}
@@ -365,7 +433,7 @@ func (q *Queries) ListOrdersByStatus(ctx context.Context, status string) ([]Orde
 }
 
 const listOrdersForOwner = `-- name: ListOrdersForOwner :many
-SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at FROM orders WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 100
+SELECT id, owner_id, file_id, material, color, quality, finishing, quantity, price_table_version, unit_cents, discount_cents, total_cents, volume_mm3, bbox_mm, dfm_flags, status, assigned_technician, quote_expires_at, created_at, updated_at, shipping_cents, ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, shipment_id, tracking_code FROM orders WHERE owner_id = $1 ORDER BY created_at DESC LIMIT 100
 `
 
 func (q *Queries) ListOrdersForOwner(ctx context.Context, ownerID uuid.UUID) ([]Order, error) {
@@ -398,6 +466,15 @@ func (q *Queries) ListOrdersForOwner(ctx context.Context, ownerID uuid.UUID) ([]
 			&i.QuoteExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ShippingCents,
+			&i.ShipRecipient,
+			&i.ShipStreet,
+			&i.ShipNumber,
+			&i.ShipCity,
+			&i.ShipState,
+			&i.ShipPostalCode,
+			&i.ShipmentID,
+			&i.TrackingCode,
 		); err != nil {
 			return nil, err
 		}
@@ -474,6 +551,50 @@ func (q *Queries) ListStatusHistory(ctx context.Context, orderID uuid.UUID) ([]L
 	return items, nil
 }
 
+const livePayment = `-- name: LivePayment :one
+SELECT charge_id, order_id, amount_cents, status, created_at, updated_at
+FROM payments
+WHERE order_id = $1 AND status IN ('pending', 'succeeded')
+`
+
+func (q *Queries) LivePayment(ctx context.Context, orderID uuid.UUID) (Payment, error) {
+	row := q.db.QueryRow(ctx, livePayment, orderID)
+	var i Payment
+	err := row.Scan(
+		&i.ChargeID,
+		&i.OrderID,
+		&i.AmountCents,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockPayment = `-- name: LockPayment :one
+SELECT charge_id, order_id, amount_cents, status FROM payments WHERE charge_id = $1 FOR UPDATE
+`
+
+type LockPaymentRow struct {
+	ChargeID    string
+	OrderID     uuid.UUID
+	AmountCents int64
+	Status      string
+}
+
+// Locks the charge until the end of the webhook transaction.
+func (q *Queries) LockPayment(ctx context.Context, chargeID string) (LockPaymentRow, error) {
+	row := q.db.QueryRow(ctx, lockPayment, chargeID)
+	var i LockPaymentRow
+	err := row.Scan(
+		&i.ChargeID,
+		&i.OrderID,
+		&i.AmountCents,
+		&i.Status,
+	)
+	return i, err
+}
+
 const lockPriceTable = `-- name: LockPriceTable :one
 SELECT version, status, created_by FROM price_tables WHERE version = $1 FOR UPDATE
 `
@@ -492,6 +613,26 @@ func (q *Queries) LockPriceTable(ctx context.Context, version int64) (LockPriceT
 	return i, err
 }
 
+const recordPartnerEvent = `-- name: RecordPartnerEvent :execrows
+INSERT INTO partner_events (event_id, partner, type) VALUES ($1, $2, $3)
+ON CONFLICT (event_id) DO NOTHING
+`
+
+type RecordPartnerEventParams struct {
+	EventID string
+	Partner string
+	Type    string
+}
+
+// A replayed event conflicts with the primary key and inserts nothing.
+func (q *Queries) RecordPartnerEvent(ctx context.Context, arg RecordPartnerEventParams) (int64, error) {
+	result, err := q.db.Exec(ctx, recordPartnerEvent, arg.EventID, arg.Partner, arg.Type)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retireActivePriceTable = `-- name: RetireActivePriceTable :exec
 UPDATE price_tables SET status = 'retired' WHERE status = 'active'
 `
@@ -499,6 +640,37 @@ UPDATE price_tables SET status = 'retired' WHERE status = 'active'
 func (q *Queries) RetireActivePriceTable(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, retireActivePriceTable)
 	return err
+}
+
+const setShipment = `-- name: SetShipment :execrows
+UPDATE orders SET shipment_id = $1, tracking_code = $2, updated_at = now()
+WHERE id = $3 AND status = 'in_production' AND shipment_id IS NULL
+`
+
+type SetShipmentParams struct {
+	ShipmentID   *string
+	TrackingCode *string
+	ID           uuid.UUID
+}
+
+func (q *Queries) SetShipment(ctx context.Context, arg SetShipmentParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setShipment, arg.ShipmentID, arg.TrackingCode, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const succeedPayment = `-- name: SucceedPayment :execrows
+UPDATE payments SET status = 'succeeded', updated_at = now() WHERE charge_id = $1 AND status = 'pending'
+`
+
+func (q *Queries) SucceedPayment(ctx context.Context, chargeID string) (int64, error) {
+	result, err := q.db.Exec(ctx, succeedPayment, chargeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const transitionOrder = `-- name: TransitionOrder :execrows
