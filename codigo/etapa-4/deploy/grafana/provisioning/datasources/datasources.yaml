@@ -1,0 +1,45 @@
+# Three read-only sources (E7.4, C19). The passwords come from Docker
+# secrets; the database roles cannot write, and the main one sees no
+# personal data.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      timeInterval: 15s
+
+  - name: Auditoria
+    uid: audit
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres-audit:5432
+    user: grafana_reader
+    editable: false
+    jsonData:
+      database: audit
+      sslmode: disable
+      postgresVersion: 1800
+      maxOpenConns: 5
+    secureJsonData:
+      password: $__file{/run/secrets/db_grafana_reader_password}
+
+  - name: Negócio
+    uid: main
+    type: grafana-postgresql-datasource
+    access: proxy
+    url: postgres:5432
+    user: grafana_main
+    editable: false
+    jsonData:
+      database: nugget
+      sslmode: disable
+      postgresVersion: 1800
+      maxOpenConns: 5
+    secureJsonData:
+      password: $__file{/run/secrets/db_grafana_main_password}

@@ -1,0 +1,85 @@
+{
+  "uid": "nugget-business",
+  "title": "Negócio",
+  "description": "Pedidos, pagamentos, chamados e retenção, lidos do banco principal por um papel que não vê dados pessoais.",
+  "tags": ["nugget-machine"],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": { "from": "now-7d", "to": "now" },
+  "refresh": "1m",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1, "type": "bargauge", "title": "Pedidos por estado",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "options": { "orientation": "horizontal", "displayMode": "basic", "reduceOptions": { "calcs": ["lastNotNull"], "values": true } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT status AS \"estado\", count(*) AS \"pedidos\" FROM orders GROUP BY status ORDER BY 2 DESC" }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Receita paga no período (R$)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "fieldConfig": { "defaults": { "unit": "currencyBRL", "decimals": 2 }, "overrides": [] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT coalesce(sum(amount_cents), 0) / 100.0 AS \"receita\" FROM payments WHERE status = 'succeeded' AND $__timeFilter(created_at)" }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Estornos no período (R$)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "fieldConfig": { "defaults": { "unit": "currencyBRL", "decimals": 2 }, "overrides": [] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT coalesce(sum(amount_cents), 0) / 100.0 AS \"estornos\" FROM payments WHERE status IN ('refund_pending', 'refunded') AND $__timeFilter(updated_at)" }]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Tempo médio do pagamento à entrega",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT coalesce(avg(extract(epoch FROM d.at - p.at)), 0) AS \"tempo\" FROM order_status_history p JOIN order_status_history d ON d.order_id = p.order_id AND d.to_status = 'delivered' WHERE p.to_status = 'paid' AND $__timeFilter(d.at)" }]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Ticket médio pago (R$)",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "fieldConfig": { "defaults": { "unit": "currencyBRL", "decimals": 2 }, "overrides": [] },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT coalesce(avg(amount_cents), 0) / 100.0 AS \"médio\" FROM payments WHERE status = 'succeeded' AND $__timeFilter(created_at)" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Orçamentos, pagamentos, entregas e cancelamentos por dia",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [{ "refId": "A", "format": "time_series", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT $__timeGroupAlias(at, '1d'), to_status AS metric, count(*) AS value FROM order_status_history WHERE to_status IN ('quoted', 'paid', 'delivered', 'cancelled', 'rejected') AND $__timeFilter(at) GROUP BY 1, 2 ORDER BY 1" }]
+    },
+    {
+      "id": 7, "type": "bargauge", "title": "Pedidos por material",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 18 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "options": { "orientation": "horizontal", "displayMode": "basic", "reduceOptions": { "calcs": ["lastNotNull"], "values": true } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT material AS \"material\", count(*) AS \"pedidos\" FROM orders WHERE $__timeFilter(created_at) GROUP BY material ORDER BY 2 DESC" }]
+    },
+    {
+      "id": 8, "type": "bargauge", "title": "Chamados por estado",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 18 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "options": { "orientation": "horizontal", "displayMode": "basic", "reduceOptions": { "calcs": ["lastNotNull"], "values": true } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT status AS \"estado\", count(*) AS \"chamados\" FROM tickets GROUP BY status ORDER BY 2 DESC" }]
+    },
+    {
+      "id": 9, "type": "stat", "title": "Arquivos (retenção, E8.5)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 18 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "main" },
+      "options": { "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } },
+      "targets": [{ "refId": "A", "format": "table", "rawQuery": true, "editorMode": "code",
+        "rawSql": "SELECT count(*) FILTER (WHERE purged_at IS NULL) AS \"guardados\", count(*) FILTER (WHERE purged_at IS NOT NULL) AS \"apagados\", coalesce(sum(size_bytes) FILTER (WHERE purged_at IS NULL), 0) / 1048576.0 AS \"MB guardados\" FROM files" }]
+    }
+  ]
+}

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/metrics"
 	"nuggetmachine/internal/problem"
 )
 
@@ -38,6 +39,7 @@ func NewRouter(trustedProxies []string, log *slog.Logger) (*Router, error) {
 	if err := e.SetTrustedProxies(trustedProxies); err != nil {
 		return nil, fmt.Errorf("trusted proxies: %w", err)
 	}
+	e.Use(metrics.Middleware())
 	if log != nil {
 		e.Use(RequestLog(log))
 	}

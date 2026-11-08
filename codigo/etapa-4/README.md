@@ -28,8 +28,40 @@ just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento �
 |`https://localhost:8444`|Keycloak, só o realm `nugget`. O console de administração e o realm `master` não são publicados|
 |`https://localhost:9445`|Painel interno, publicado só no loopback do host. As rotas do painel não existem nas outras portas|
 |`http://127.0.0.1:8026`|Caixa do Mailpit, com os e-mails enviados aos clientes. Publicada só no loopback do host|
+|`https://localhost:9446`|Grafana, publicado só no loopback do host. Usuário `admin`, com a senha em `secrets/grafana_admin_password` (`just grafana`)|
 
-Numa VM, o painel só é alcançado por túnel SSH, que faz o papel da VPN: `ssh -L 9445:127.0.0.1:9445 <vm>`.
+Numa VM, o painel e o Grafana só são alcançados por túnel SSH, que faz o papel da VPN: `ssh -L 9445:127.0.0.1:9445 -L 9446:127.0.0.1:9446 <vm>`.
+
+### Monitoramento
+
+O Grafana tem três dashboards, na pasta `nugget-machine`:
+
+* **Segurança:** lê o banco de auditoria. Mostra negações e as contas com mais negações, uploads recusados, limite de requisições, tokens revogados, acessos ao painel (inclusive fora do horário), operações críticas com a justificativa, webhooks rejeitados por motivo, trocas de endereço e o estado dos alertas.
+* **Operação:** lê o Prometheus. Mostra os serviços de pé, as réplicas da API, as requisições e a latência por rota, os 4xx e 5xx, os eventos de auditoria por tipo, as filas, os dois Postgres, o Valkey, o Garage, o Keycloak, o nginx e o runtime Go.
+* **Negócio:** lê o banco principal por um papel que não vê dados pessoais. Mostra os pedidos por estado e por dia, a receita, os estornos, o tempo até a entrega, os chamados e os arquivos guardados e apagados.
+
+Os alertas ficam só no Grafana (Alerting e o painel de alertas do dashboard de segurança):
+
+|Alerta|Dispara quando|
+|-|-|
+|Enumeração de IDs|Uma conta recebe mais de 9 negações em 5 minutos|
+|Abuso de upload por uma conta|Uma conta tem mais de 9 uploads recusados ou esperas de cota em 10 minutos|
+|Acesso ao painel fora do horário|Alguém acessa o painel entre 20h e 7h, horário de Brasília|
+|Operações críticas em série no painel|Uma conta faz mais de 4 operações críticas em 10 minutos|
+|Webhooks com assinatura inválida|Mais de 4 notificações forjadas de um parceiro em 10 minutos|
+|Serviço fora do ar|Um alvo do Prometheus fica fora por 1 minuto|
+|Erros 5xx acima de 5%|A API ou o painel respondem 5xx em mais de 5% das requisições por 2 minutos|
+|Mensagens na fila de falhas|`tasks.failed` ou `notifications.failed` têm mensagens|
+
+Para ver o de enumeração disparar, peça uns 15 arquivos que não são seus:
+
+```sh
+TOKEN=$(just token e)
+for i in $(seq 15); do
+  curl -s -o /dev/null --cacert secrets/tls_ca.pem -H "Authorization: Bearer $TOKEN" \
+       https://localhost/api/v1/files/$(cat /proc/sys/kernel/random/uuid)
+done
+```
 
 O certificado é de uma CA local. Para o `curl`, use `--cacert secrets/tls_ca.pem`. Para o navegador, importe esse arquivo ou aceite o aviso.
 
@@ -95,10 +127,13 @@ Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/pri
 |`api`|`internal` e `partners`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
 |`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL, `support` e `panel_support` alcançam os chamados, e `retention` só lê as datas e apaga o que expirou|
-|`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). Os papéis `audit_app`, `panel_audit` e `retention_audit` só têm `INSERT`|
+|`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). Os papéis `audit_app`, `panel_audit` e `retention_audit` só têm `INSERT`, e o `grafana_reader` só tem `SELECT`|
 |`rabbitmq`|`internal`, `processing` e `notify`|Filas quorum `tasks` (até 3 entregas), `tasks.failed`, `results`, `notifications` (até 5 entregas) e `notifications.failed`. Nenhum usuário declara nada: o `panel` só publica avisos, e o `notifier` só os consome|
 |`garage`|`internal` e `processing`|Bucket privado `files`. Só se lê com URL pré-assinada|
 |`garage-init`|`internal`|Executa uma vez e prepara o layout, o bucket, as chaves da API, do painel e da retenção, e a regra de ciclo de vida do bucket|
+|`prometheus`|`internal`|Raspa a API (todas as réplicas, por DNS), o painel, os exporters, o RabbitMQ, o Garage e o Keycloak a cada 15 segundos. Não tem porta publicada. O `/metrics` da API e do painel fica na porta interna 8090, que o nginx não encaminha|
+|`grafana`|`internal`|Dashboards e alertas, provisionados por arquivo e só de leitura na interface. Lê o Prometheus e, com os papéis `grafana_reader` e `grafana_main`, os dois bancos|
+|`postgres-exporter`, `postgres-audit-exporter`, `valkey-exporter` e `nginx-exporter`|`internal`|Exportam as métricas de cada serviço, com papéis e usuários que só leem estatísticas: `exporter` com `pg_monitor`, o usuário `metrics` do Valkey sem nenhuma chave e o `stub_status` do nginx numa porta só da rede interna|
 |`notifier`|`notify`|Consome a fila `notifications` e envia os e-mails por SMTP ao Mailpit. Recebe só o destinatário e o texto: não alcança banco nem Garage, e o log traz só o ID da mensagem|
 |`mailpit`|`notify` e `mailui`|Faz o papel do provedor de e-mail. A caixa fica em `127.0.0.1:8026`|
 |`retention`|`internal`|Aplica a retenção de hora em hora, com papel de banco, papel de auditoria e chave do Garage próprios. É o único que apaga objetos|
@@ -134,7 +169,10 @@ O `just test-e2e` cobre:
 * os chamados de suporte;
 * a troca de endereço só com o código do e-mail;
 * a retenção (o teste recua as datas no banco);
-* o isolamento do `notifier`.
+* o isolamento do `notifier`;
+* o `/metrics` fora das portas públicas e o Prometheus alcançando todos os serviços;
+* o login do Grafana, os dashboards e a consulta à auditoria pelo papel só de leitura;
+* os alertas de enumeração e de abuso de upload disparando para a conta certa.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
 

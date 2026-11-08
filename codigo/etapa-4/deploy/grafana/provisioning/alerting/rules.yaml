@@ -1,0 +1,268 @@
+# Alert rules (E7.5, C19), evaluated by Grafana every 10 seconds and shown
+# only in Grafana. The security rules read the audit database, where the
+# account is known; the operational ones read Prometheus. They are the rules
+# of Stage 6.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: security
+    folder: nugget-machine
+    interval: 10s
+    rules:
+      # CA01, D01: someone walking through IDs that are not theirs.
+      - uid: id-enumeration
+        title: Enumeração de IDs
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: high, stage6: "true" }
+        annotations:
+          summary: "A conta {{ $labels.actor }} recebeu {{ $values.A }} negações em 5 minutos."
+          description: Possível enumeração de arquivos, pedidos ou chamados de outros clientes (CA01, D01).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: audit
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT actor, count(*)::float8 AS value FROM events
+                WHERE name = 'authz.denied' AND occurred_at > now() - interval '5 minutes'
+                GROUP BY actor
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [9] }
+
+      # T19, RS03: one account pushing bad files or flooding the queue.
+      - uid: upload-abuse
+        title: Abuso de upload por uma conta
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: high, stage6: "true" }
+        annotations:
+          summary: "A conta {{ $labels.actor }} teve {{ $values.A }} uploads recusados ou esperas de cota em 10 minutos."
+          description: Uploads inválidos em série ou a cota de processamento esgotada de propósito (T19, RS03).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: audit
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT actor, count(*)::float8 AS value FROM events
+                WHERE name IN ('upload.rejected', 'quota.waiting') AND occurred_at > now() - interval '10 minutes'
+                GROUP BY actor
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [9] }
+
+      # D02: the staff works from 7h to 20h (Brasília). A panel access outside
+      # that window is out of the pattern.
+      - uid: panel-off-hours
+        title: Acesso ao painel fora do horário
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: medium, stage6: "true" }
+        annotations:
+          summary: "A conta {{ $labels.actor }} acessou o painel {{ $values.A }} vezes fora do horário nos últimos 10 minutos."
+          description: Acesso ao painel interno entre 20h e 7h, horário de Brasília (D02).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: audit
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT actor, count(*)::float8 AS value FROM events
+                WHERE name = 'panel.access' AND occurred_at > now() - interval '10 minutes'
+                  AND extract(hour FROM occurred_at AT TIME ZONE 'America/Sao_Paulo') NOT BETWEEN 7 AND 19
+                GROUP BY actor
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }
+
+      # D02, E6.4: many critical operations from one account in a short time.
+      - uid: panel-critical-burst
+        title: Operações críticas em série no painel
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: high, stage6: "true" }
+        annotations:
+          summary: "A conta {{ $labels.actor }} fez {{ $values.A }} operações críticas em 10 minutos."
+          description: Revogações, downloads de STL, aprovações de tabela ou trocas de endereço em série (D02, E6.4).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: audit
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT actor, count(*)::float8 AS value FROM events
+                WHERE name = 'panel.critical' AND occurred_at > now() - interval '10 minutes'
+                GROUP BY actor
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [4] }
+
+      # C14, C15: notifications with a bad signature at the public webhooks.
+      - uid: forged-webhooks
+        title: Webhooks com assinatura inválida
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: high, stage6: "true" }
+        annotations:
+          summary: "{{ $values.A }} notificações de {{ $labels.name }} com assinatura inválida em 10 minutos."
+          description: Alguém tenta forjar o gateway ou a transportadora (C14, C15).
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: audit
+            model:
+              refId: A
+              format: table
+              rawQuery: true
+              editorMode: code
+              rawSql: >-
+                SELECT name, count(*)::float8 AS value FROM events
+                WHERE name IN ('payment.rejected', 'shipment.rejected') AND reason LIKE 'invalid_signature%'
+                  AND occurred_at > now() - interval '10 minutes'
+                GROUP BY name
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [4] }
+
+  - orgId: 1
+    name: operations
+    folder: nugget-machine
+    interval: 20s
+    rules:
+      - uid: target-down
+        title: Serviço fora do ar
+        condition: C
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        labels: { severity: high }
+        annotations:
+          summary: "O Prometheus não alcança {{ $labels.job }}."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: min by (job) (up)
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [1] }
+
+      - uid: server-errors
+        title: Erros 5xx acima de 5%
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: medium }
+        annotations:
+          summary: "{{ $labels.job }} responde 5xx em {{ $values.A }} das requisições."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: >-
+                sum by (job) (rate(nugget_http_requests_total{status=~"5.."}[5m]))
+                / clamp_min(sum by (job) (rate(nugget_http_requests_total[5m])), 1e-9)
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0.05] }
+
+      # A task or a notification that failed every delivery attempt.
+      - uid: failed-queues
+        title: Mensagens na fila de falhas
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels: { severity: medium }
+        annotations:
+          summary: "A fila {{ $labels.queue }} tem {{ $values.A }} mensagens."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              expr: max by (queue) (rabbitmq_detailed_queue_messages{queue=~"tasks.failed|notifications.failed"})
+              instant: true
+              range: false
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: gt, params: [0] }

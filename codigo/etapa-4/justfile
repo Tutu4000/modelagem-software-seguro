@@ -34,7 +34,7 @@ ps:
 logs service="":
     {{ compose }} logs -f {{ service }}
 
-# Log a fictitious user in through Keycloak and print the token: "a", "b", "c", "technician", "support" or "admin"
+# Log a fictitious user in through Keycloak and print the token: "a" to "f", "technician", "support" or "admin"
 token who="a":
     go run ./cmd/token -user {{ who }}
 
@@ -45,6 +45,11 @@ panel-token who="admin":
 # Upload fictitious STLs for customers A and B and walk their orders up to production
 seed:
     go run ./cmd/seed
+
+# Where the Grafana is and where its admin password lives
+grafana:
+    @echo "Grafana: https://localhost:9446 (user admin)"
+    @echo "Password: secrets/grafana_admin_password"
 
 # Run one pass of the retention rules now, instead of waiting for the hourly one
 retention:

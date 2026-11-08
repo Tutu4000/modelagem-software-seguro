@@ -9,6 +9,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"nuggetmachine/internal/metrics"
 )
 
 type Event struct {
@@ -45,6 +47,7 @@ const storeTimeout = 3 * time.Second
 // Record writes one line per event, with the time in UTC.
 func (l *Logger) Record(e Event) error {
 	e.Time = time.Now().UTC()
+	metrics.AuditEvent(e.Name, e.Result)
 	line, err := json.Marshal(e)
 	if err != nil {
 		return err

@@ -21,7 +21,7 @@ services:
     image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
     # The panel listens only on the host's loopback: reaching it from another
     # machine takes an SSH tunnel, which stands for the VPN (FC2).
-    ports: ["443:8443", "8443:9443", "8444:10443", "127.0.0.1:9445:11443"]
+    ports: ["443:8443", "8443:9443", "8444:10443", "127.0.0.1:9445:11443", "127.0.0.1:9446:12443"]
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     tmpfs: ["/tmp:size=128m"]
@@ -30,7 +30,7 @@ services:
       public: {}
       internal:
         ipv4_address: 172.28.10.10
-    depends_on: [api, panel, garage, keycloak]
+    depends_on: [api, panel, garage, keycloak, grafana]
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m, pids: 128 }
@@ -305,6 +305,115 @@ services:
       resources:
         limits: { cpus: "0.25", memory: 64m, pids: 64 }
 
+  # Monitoring (C19). Prometheus scrapes on the internal network only and is
+  # not published; Grafana is reached through nginx on the host's loopback.
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    secrets: [garage_metrics_token]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512m, pids: 128 }
+
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SERVER_ROOT_URL: https://localhost:9446/
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      # No internet on the internal network: nothing to download.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_UNIFIED_ALERTING_MIN_INTERVAL: 10s
+      GF_LOG_MODE: console
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    tmpfs: ["/tmp:size=64m"]
+    secrets: [grafana_admin_password, db_grafana_reader_password, db_grafana_main_password]
+    networks: [internal]
+    depends_on: [prometheus, postgres, postgres-audit]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  postgres-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres:5432/nugget?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
+    secrets: [db_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  postgres-audit-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres-audit:5432/audit?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_audit_exporter_password
+    secrets: [db_audit_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  # The password is read from the secret inside the container, so it never
+  # shows in the compose file or in `docker inspect`.
+  valkey-exporter:
+    <<: *hardened
+    image: oliver006/redis_exporter:v1.95.0-alpine@sha256:19bb5c732f5812d5b60b2e0af3c6d82c5b3e418cd020068d65f588a56df4a118
+    environment:
+      REDIS_ADDR: redis://valkey:6379
+      REDIS_USER: metrics
+    entrypoint: ["sh", "-c"]
+    command:
+      - REDIS_PASSWORD="$$(cat /run/secrets/valkey_metrics_password)" exec /redis_exporter
+    secrets: [valkey_metrics_password]
+    networks: [internal]
+    depends_on:
+      valkey: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  nginx-exporter:
+    <<: *hardened
+    image: nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d
+    command: ["--nginx.scrape-uri=http://nginx:8081/stub_status"]
+    networks: [internal]
+    depends_on: [nginx]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 32m, pids: 32 }
+
   # Only on the processing network: no database, Valkey or internet, and no
   # Garage key. It reads the files through the message's presigned URL (FC3,
   # E4.2).
@@ -390,7 +499,7 @@ services:
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage:/var/lib/garage
-    secrets: [garage_rpc_secret, garage_admin_token]
+    secrets: [garage_rpc_secret, garage_admin_token, garage_metrics_token]
     networks: [internal, processing]
     deploy:
       resources:
@@ -446,6 +555,8 @@ services:
       - db_support_password
       - db_panel_support_password
       - db_retention_password
+      - db_grafana_main_password
+      - db_exporter_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
@@ -467,7 +578,13 @@ services:
     volumes:
       - audit:/var/lib/postgresql
       - ../migrations/audit:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_audit_password, db_audit_password, db_panel_audit_password, db_retention_audit_password]
+    secrets:
+      - postgres_audit_password
+      - db_audit_password
+      - db_panel_audit_password
+      - db_retention_audit_password
+      - db_grafana_reader_password
+      - db_audit_exporter_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
@@ -546,6 +663,8 @@ volumes:
   garage: {}
   rabbitmq: {}
   valkey: {}
+  prometheus: {}
+  grafana: {}
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
@@ -588,3 +707,10 @@ secrets:
   db_retention_audit_password: { file: ../secrets/db_retention_audit_password }
   s3_retention_access_key_id: { file: ../secrets/s3_retention_access_key_id }
   s3_retention_secret_access_key: { file: ../secrets/s3_retention_secret_access_key }
+  grafana_admin_password: { file: ../secrets/grafana_admin_password }
+  db_grafana_main_password: { file: ../secrets/db_grafana_main_password }
+  db_grafana_reader_password: { file: ../secrets/db_grafana_reader_password }
+  db_exporter_password: { file: ../secrets/db_exporter_password }
+  db_audit_exporter_password: { file: ../secrets/db_audit_exporter_password }
+  valkey_metrics_password: { file: ../secrets/valkey_metrics_password }
+  garage_metrics_token: { file: ../secrets/garage_metrics_token }
