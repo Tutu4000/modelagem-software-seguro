@@ -13,7 +13,9 @@ rpc_secret_file = "/run/secrets/garage_rpc_secret"
 s3_region = "garage"
 api_bind_addr = "[::]:3900"
 
-# Used by garage-init only.
+# Used by garage-init, and by Prometheus for /metrics.
 [admin]
 api_bind_addr = "[::]:3903"
 admin_token_file = "/run/secrets/garage_admin_token"
+# Prometheus reads /metrics with its own token, which cannot administer.
+metrics_token_file = "/run/secrets/garage_metrics_token"

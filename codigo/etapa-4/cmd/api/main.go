@@ -19,6 +19,7 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/metrics"
 	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
@@ -165,6 +166,8 @@ func run(log *slog.Logger) error {
 	// The internal listener is reachable only on the internal network: nginx
 	// never forwards to it. Keycloak calls it for the back-channel logout.
 	internal := http.NewServeMux()
+	// Prometheus scrapes on the internal network: nginx never forwards here.
+	internal.Handle("GET /metrics", metrics.Handler())
 	internal.Handle("POST /oidc/backchannel-logout", session.LogoutHandler{
 		Verifier: verifier,
 		Clients:  []string{"web", "panel-web", "e2e"},

@@ -1,0 +1,190 @@
+{
+  "uid": "nugget-operations",
+  "title": "Operação",
+  "description": "Métricas do Prometheus (C19): API e painel, filas, bancos, Valkey, Garage, Keycloak, nginx e o runtime Go.",
+  "tags": ["nugget-machine", "C19"],
+  "editable": false,
+  "schemaVersion": 39,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "30s",
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Serviços de pé",
+      "gridPos": { "h": 6, "w": 16, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {
+        "mappings": [{ "type": "value", "options": { "0": { "text": "fora", "color": "red" }, "1": { "text": "de pé", "color": "green" } } }],
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+      }, "overrides": [] },
+      "options": { "colorMode": "background", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "min by (job) (up)", "legendFormat": "{{job}}", "instant": true }]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Réplicas da API",
+      "gridPos": { "h": 6, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "count(up{job=\"api\"} == 1)", "instant": true }]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Respostas 5xx (5 min)",
+      "gridPos": { "h": 6, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percentunit",
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.05 }] } }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum(rate(nugget_http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(nugget_http_requests_total[5m])), 1e-9)", "instant": true }]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Requisições por rota (API)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum by (method, route) (rate(nugget_http_requests_total{job=\"api\"}[5m]))", "legendFormat": "{{method}} {{route}}" }]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Requisições por rota (painel)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum by (method, route) (rate(nugget_http_requests_total{job=\"panel\"}[5m]))", "legendFormat": "{{method}} {{route}}" }]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Latência (p50, p95, p99)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "histogram_quantile(0.50, sum by (le, job) (rate(nugget_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p50 {{job}}" },
+        { "refId": "B", "expr": "histogram_quantile(0.95, sum by (le, job) (rate(nugget_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p95 {{job}}" },
+        { "refId": "C", "expr": "histogram_quantile(0.99, sum by (le, job) (rate(nugget_http_request_duration_seconds_bucket[5m])))", "legendFormat": "p99 {{job}}" }
+      ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Respostas 4xx e 5xx",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum by (job, status) (rate(nugget_http_requests_total{status=~\"4..|5..\"}[5m]))", "legendFormat": "{{job}} {{status}}" }]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Eventos de auditoria por tipo",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 22 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum by (event, result) (rate(nugget_audit_events_total[5m]))", "legendFormat": "{{event}} ({{result}})" }]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Filas: mensagens prontas",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (queue) (rabbitmq_detailed_queue_messages_ready)", "legendFormat": "{{queue}}" }]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Filas: em processamento (sem ack)",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (queue) (rabbitmq_detailed_queue_messages_unacked)", "legendFormat": "{{queue}}" }]
+    },
+    {
+      "id": 11, "type": "stat", "title": "Filas de falhas",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 30 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": {
+        "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 1 }] } }, "overrides": [] },
+      "options": { "colorMode": "background", "textMode": "value_and_name", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [{ "refId": "A", "expr": "max by (queue) (rabbitmq_detailed_queue_messages{queue=~\"tasks.failed|notifications.failed\"})", "legendFormat": "{{queue}}", "instant": true }]
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Postgres: conexões",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 38 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (job, datname) (pg_stat_database_numbackends{datname=~\"nugget|audit|keycloak\"})", "legendFormat": "{{job}} {{datname}}" }]
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Postgres: transações por segundo",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 38 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "sum by (job, datname) (rate(pg_stat_database_xact_commit{datname=~\"nugget|audit|keycloak\"}[5m]))", "legendFormat": "{{job}} {{datname}}" }]
+    },
+    {
+      "id": 14, "type": "timeseries", "title": "Postgres: tamanho dos bancos",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 38 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "pg_database_size_bytes{datname=~\"nugget|audit|keycloak\"}", "legendFormat": "{{datname}}" }]
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Valkey: memória",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 46 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "redis_memory_used_bytes", "legendFormat": "usada" }]
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "Valkey: comandos por segundo",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 46 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "ops" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "rate(redis_commands_processed_total[5m])", "legendFormat": "comandos" }]
+    },
+    {
+      "id": 17, "type": "timeseries", "title": "Valkey: chaves (revogações e limites)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 46 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum(redis_db_keys)", "legendFormat": "chaves" }]
+    },
+    {
+      "id": 18, "type": "timeseries", "title": "Garage: requisições S3 por operação",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "sum by (api_endpoint) (rate(api_s3_request_counter[5m]))", "legendFormat": "{{api_endpoint}}" },
+        { "refId": "B", "expr": "sum by (api_endpoint) (rate(api_s3_error_counter[5m]))", "legendFormat": "erro {{api_endpoint}}" }
+      ]
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "Keycloak: eventos de login",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 54 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "sum by (event, error) (increase(keycloak_user_events_total[5m]))", "legendFormat": "{{event}} {{error}}" }]
+    },
+    {
+      "id": 20, "type": "timeseries", "title": "nginx: conexões ativas",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 62 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        { "refId": "A", "expr": "nginx_connections_active", "legendFormat": "ativas" },
+        { "refId": "B", "expr": "nginx_connections_waiting", "legendFormat": "esperando" }
+      ]
+    },
+    {
+      "id": 21, "type": "timeseries", "title": "nginx: requisições por segundo",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 62 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "rate(nginx_http_requests_total[5m])", "legendFormat": "requisições" }]
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Go: goroutines",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [{ "refId": "A", "expr": "go_goroutines{job=~\"api|panel\"}", "legendFormat": "{{job}} {{instance}}" }]
+    },
+    {
+      "id": 23, "type": "timeseries", "title": "Go: heap em uso",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "go_memstats_heap_inuse_bytes{job=~\"api|panel\"}", "legendFormat": "{{job}} {{instance}}" }]
+    },
+    {
+      "id": 24, "type": "timeseries", "title": "Memória residente dos binários",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 70 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [{ "refId": "A", "expr": "process_resident_memory_bytes{job=~\"api|panel|prometheus\"}", "legendFormat": "{{job}} {{instance}}" }]
+    }
+  ]
+}

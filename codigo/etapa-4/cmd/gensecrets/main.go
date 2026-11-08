@@ -81,6 +81,13 @@ func main() {
 		"db_panel_support_password",
 		"db_retention_password",
 		"db_retention_audit_password",
+		"grafana_admin_password",
+		"db_grafana_main_password",
+		"db_grafana_reader_password",
+		"db_exporter_password",
+		"db_audit_exporter_password",
+		"valkey_metrics_password",
+		"garage_metrics_token",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -111,7 +118,8 @@ func main() {
 		log.Fatal(err)
 	}
 	g.write("rabbitmq_users.json", users)
-	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_panel_password"), g.read("valkey_health_password")))
+	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_panel_password"),
+		g.read("valkey_health_password"), g.read("valkey_metrics_password")))
 	realm, err := renderRealm(*realmTemplate, map[string][]byte{
 		"PUBLIC_HOST":        []byte(*host),
 		"DEMO_PASSWORD":      g.read("keycloak_demo_password"),
@@ -319,8 +327,9 @@ func rabbitUsers(passwords map[string][]byte) ([]byte, error) {
 // off, the API reaches only its own key prefixes with the commands it uses,
 // and the health check user can only PING (E5.1). The panel has a user of its
 // own with the same keys: it reads the revocations and writes the per-user
-// cut of an incident.
-func valkeyACL(apiPassword, panelPassword, healthPassword []byte) []byte {
+// cut of an incident. The metrics user only reads the server statistics,
+// with no key at all.
+func valkeyACL(apiPassword, panelPassword, healthPassword, metricsPassword []byte) []byte {
 	hash := func(p []byte) string {
 		sum := sha256.Sum256(bytes.TrimSpace(p))
 		return hex.EncodeToString(sum[:])
@@ -332,6 +341,8 @@ func valkeyACL(apiPassword, panelPassword, healthPassword []byte) []byte {
 		"user api on #" + hash(apiPassword) + app,
 		"user panel on #" + hash(panelPassword) + app,
 		"user healthcheck on #" + hash(healthPassword) + " resetkeys resetchannels -@all +ping",
+		"user metrics on #" + hash(metricsPassword) + " resetkeys resetchannels -@all" +
+			" +ping +info +hello +client|setinfo +config|get +latency|latest +slowlog|get +slowlog|len +memory|stats",
 		"",
 	}, "\n"))
 }

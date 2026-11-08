@@ -339,6 +339,10 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 		{"retention cannot read tickets", "postgres", "nugget", "retention", "db_retention_password", "SELECT 1 FROM tickets LIMIT 1"},
 		{"retention cannot read prices", "postgres", "nugget", "retention", "db_retention_password", "SELECT total_cents FROM orders LIMIT 1"},
 		{"retention audit cannot read events", "postgres-audit", "audit", "retention_audit", "db_retention_audit_password", "SELECT 1 FROM events LIMIT 1"},
+		{"grafana_reader cannot write the trail", "postgres-audit", "audit", "grafana_reader", "db_grafana_reader_password", "INSERT INTO events (occurred_at, name, actor, action, target, result, reason, origin) VALUES (now(), 'x', 'x', 'x', 'x', 'x', 'x', 'x')"},
+		{"grafana_main cannot read addresses", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT ship_street FROM orders LIMIT 1"},
+		{"grafana_main cannot read e-mails", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT contact_email FROM orders LIMIT 1"},
+		{"grafana_main cannot read tickets", "postgres", "nugget", "grafana_main", "db_grafana_main_password", "SELECT body FROM ticket_messages LIMIT 1"},
 		{"audit cannot update events", "postgres-audit", "audit", "audit_app", "db_audit_password", "UPDATE events SET result = 'x'"},
 		{"audit cannot delete events", "postgres-audit", "audit", "audit_app", "db_audit_password", "DELETE FROM events"},
 	}
@@ -1400,6 +1404,232 @@ func TestNotifierIsIsolated(t *testing.T) {
 			t.Errorf("RabbitMQ permissions without %q:\n%s", want, perms)
 		}
 	}
+}
+
+const grafanaBase = "https://localhost:9446"
+
+// grafana calls the Grafana API as the local admin and decodes the answer.
+func grafana(t *testing.T, method, path, body string, want int, out any) {
+	t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, grafanaBase+path, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.SetBasicAuth("admin", readSecret(t, "grafana_admin_password"))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != want {
+		t.Fatalf("%s %s: status %d, want %d (%s)", method, path, resp.StatusCode, want, data)
+	}
+	if out != nil {
+		if err := json.Unmarshal(data, out); err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+	}
+}
+
+// promQuery asks Prometheus through Grafana, which is the only way in: the
+// Prometheus port is not published.
+func promQuery(t *testing.T, query string) map[string]float64 {
+	t.Helper()
+	var out struct {
+		Data struct {
+			Result []struct {
+				Metric map[string]string `json:"metric"`
+				Value  [2]any            `json:"value"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	grafana(t, http.MethodGet, "/api/datasources/proxy/uid/prometheus/api/v1/query?query="+url.QueryEscape(query), "", http.StatusOK, &out)
+	got := map[string]float64{}
+	for _, r := range out.Data.Result {
+		v, _ := strconv.ParseFloat(fmt.Sprint(r.Value[1]), 64)
+		got[r.Metric["job"]] += v
+	}
+	return got
+}
+
+// C19: /metrics lives on the internal listener only.
+func TestMetricsAreNotPublic(t *testing.T) {
+	for _, u := range []string{base + "/metrics", base + "/api/v1/../metrics", panelBase + "/metrics", idp + "/metrics"} {
+		resp := do(t, http.MethodGet, u, "", nil, -1)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("GET %s: %d, want 404", u, resp.StatusCode)
+		}
+	}
+}
+
+// C19: Prometheus reaches every service, and the API's own counters move.
+func TestPrometheusScrapesEverything(t *testing.T) {
+	up := promQuery(t, "min by (job) (up)")
+	for _, job := range []string{"api", "panel", "postgres", "postgres-audit", "valkey", "rabbitmq", "rabbitmq-queues", "garage", "keycloak", "nginx", "prometheus"} {
+		if v, ok := up[job]; !ok || v != 1 {
+			t.Errorf("job %s: up = %v (present %v), want 1", job, v, ok)
+		}
+	}
+	const q = `sum by (job) (nugget_http_requests_total{job="api", route="/api/v1/catalog"})`
+	before := promQuery(t, q)["api"]
+	token := login(t, devlogin.CustomerE)
+	for range 3 {
+		wantStatus(t, apiJSON(t, http.MethodGet, "/api/v1/catalog", token, ""), http.StatusOK)
+	}
+	deadline := time.Now().Add(45 * time.Second)
+	for promQuery(t, q)["api"] < before+3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("the catalog counter stayed at %v after 3 requests", promQuery(t, q)["api"])
+		}
+		time.Sleep(3 * time.Second)
+	}
+}
+
+// E7.4: Grafana needs its login, and shows the trail through a read-only role.
+func TestGrafanaShowsTheAuditTrail(t *testing.T) {
+	resp := do(t, http.MethodGet, grafanaBase+"/api/search", "", nil, -1)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Grafana without login: %d, want 401", resp.StatusCode)
+	}
+	req, _ := http.NewRequest(http.MethodGet, grafanaBase+"/api/search", nil)
+	req.SetBasicAuth("admin", "wrong-password")
+	wrong, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusUnauthorized {
+		t.Errorf("Grafana with a wrong password: %d, want 401", wrong.StatusCode)
+	}
+
+	var dashboards []struct {
+		UID string `json:"uid"`
+	}
+	grafana(t, http.MethodGet, "/api/search?type=dash-db", "", http.StatusOK, &dashboards)
+	var datasources []struct {
+		UID string `json:"uid"`
+	}
+	grafana(t, http.MethodGet, "/api/datasources", "", http.StatusOK, &datasources)
+	for _, uid := range []string{"nugget-security", "nugget-operations", "nugget-business"} {
+		if !slices.ContainsFunc(dashboards, func(d struct {
+			UID string `json:"uid"`
+		}) bool {
+			return d.UID == uid
+		}) {
+			t.Errorf("dashboard %s missing", uid)
+		}
+	}
+	if len(datasources) != 3 {
+		t.Errorf("%d datasources, want 3", len(datasources))
+	}
+
+	// The "denials per hour" panel of the security dashboard, as Grafana
+	// runs it: the suite already produced denials.
+	body := `{"from":"now-24h","to":"now","queries":[{"refId":"A","datasource":{"type":"grafana-postgresql-datasource","uid":"audit"},` +
+		`"format":"table","rawQuery":true,"rawSql":"SELECT count(*) AS denials FROM events WHERE name = 'authz.denied' AND $__timeFilter(occurred_at)"}]}`
+	var res struct {
+		Results map[string]struct {
+			Frames []struct {
+				Data struct {
+					Values [][]float64 `json:"values"`
+				} `json:"data"`
+			} `json:"frames"`
+		} `json:"results"`
+	}
+	grafana(t, http.MethodPost, "/api/ds/query", body, http.StatusOK, &res)
+	if frames := res.Results["A"].Frames; len(frames) == 0 || len(frames[0].Data.Values) == 0 || frames[0].Data.Values[0][0] < 1 {
+		t.Errorf("no denials through Grafana: %+v", res)
+	}
+}
+
+type alertRule struct {
+	Name   string `json:"name"`
+	Health string `json:"health"`
+	Alerts []struct {
+		Labels map[string]string `json:"labels"`
+		State  string            `json:"state"`
+	} `json:"alerts"`
+}
+
+func alertRules(t *testing.T) map[string]alertRule {
+	t.Helper()
+	var out struct {
+		Data struct {
+			Groups []struct {
+				Rules []alertRule `json:"rules"`
+			} `json:"groups"`
+		} `json:"data"`
+	}
+	grafana(t, http.MethodGet, "/api/prometheus/grafana/api/v1/rules", "", http.StatusOK, &out)
+	rules := map[string]alertRule{}
+	for _, g := range out.Data.Groups {
+		for _, r := range g.Rules {
+			rules[r.Name] = r
+		}
+	}
+	return rules
+}
+
+// waitAlert waits for the rule to fire for the account.
+func waitAlert(t *testing.T, rule string, a devlogin.Account) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		for _, alert := range alertRules(t)[rule].Alerts {
+			if alert.Labels["actor"] == a.ID.String() && alert.State == "Alerting" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%q did not fire for %s: %+v", rule, a.Username, alertRules(t)[rule])
+		}
+		time.Sleep(5 * time.Second)
+	}
+}
+
+// E7.5: the rules of Stage 6 are loaded and evaluate without errors.
+func TestAlertRulesAreLoaded(t *testing.T) {
+	rules := alertRules(t)
+	for _, name := range []string{"Enumeração de IDs", "Abuso de upload por uma conta", "Acesso ao painel fora do horário",
+		"Operações críticas em série no painel", "Webhooks com assinatura inválida", "Serviço fora do ar",
+		"Erros 5xx acima de 5%", "Mensagens na fila de falhas"} {
+		r, ok := rules[name]
+		if !ok {
+			t.Errorf("rule %q missing", name)
+			continue
+		}
+		if r.Health == "error" {
+			t.Errorf("rule %q: health %q", name, r.Health)
+		}
+	}
+}
+
+// E7.5, CA01: a script walking through IDs fires the enumeration alert for
+// its account.
+func TestEnumerationFiresTheAlert(t *testing.T) {
+	token := login(t, devlogin.CustomerE)
+	for range 15 {
+		time.Sleep(150 * time.Millisecond)
+		wantStatus(t, do(t, http.MethodGet, base+"/api/v1/files/"+uuid.NewString(), token, nil, -1), http.StatusForbidden)
+	}
+	waitAlert(t, "Enumeração de IDs", devlogin.CustomerE)
+}
+
+// E7.5, T19: invalid uploads in a row fire the upload abuse alert.
+func TestUploadAbuseFiresTheAlert(t *testing.T) {
+	token := login(t, devlogin.CustomerF)
+	for i := range 10 {
+		time.Sleep(150 * time.Millisecond)
+		junk := []byte(fmt.Sprintf("not an STL %d", i))
+		wantStatus(t, do(t, http.MethodPost, base+"/api/v1/files", token, bytes.NewReader(junk), int64(len(junk))), http.StatusUnprocessableEntity)
+	}
+	waitAlert(t, "Abuso de upload por uma conta", devlogin.CustomerF)
 }
 
 // RF19: a part bigger than the printer shows up flagged in the review.

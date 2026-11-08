@@ -7,6 +7,7 @@ FROM quay.io/keycloak/keycloak:26.8.0@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a4
 ENV KC_DB=postgres \
     KC_HEALTH_ENABLED=true \
     KC_METRICS_ENABLED=true \
+    KC_EVENT_METRICS_USER_ENABLED=true \
     KC_FEATURES=step-up-authentication
 RUN /opt/keycloak/bin/kc.sh build
 

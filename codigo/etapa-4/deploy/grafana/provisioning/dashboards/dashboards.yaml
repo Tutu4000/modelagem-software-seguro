@@ -1,0 +1,13 @@
+# The dashboards are versioned in deploy/grafana/dashboards and cannot be
+# changed from the interface.
+apiVersion: 1
+
+providers:
+  - name: nugget
+    folder: nugget-machine
+    folderUid: nugget
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/dashboards

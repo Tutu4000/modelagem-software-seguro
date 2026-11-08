@@ -1,0 +1,62 @@
+# Operational metrics (C19). Everything is scraped on the internal network:
+# no target is published, and the API and the panel expose /metrics only on
+# their internal listener, which nginx never forwards.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Docker DNS returns one address per replica, so `just scale` shows up
+  # without touching this file.
+  - job_name: api
+    dns_sd_configs:
+      - names: [api]
+        type: A
+        port: 8090
+        refresh_interval: 15s
+
+  - job_name: panel
+    static_configs:
+      - targets: ["panel:8090"]
+
+  - job_name: postgres
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+
+  - job_name: postgres-audit
+    static_configs:
+      - targets: ["postgres-audit-exporter:9187"]
+
+  - job_name: valkey
+    static_configs:
+      - targets: ["valkey-exporter:9121"]
+
+  # The aggregated endpoint plus the per-queue depth, including the failed
+  # queues.
+  - job_name: rabbitmq
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+  - job_name: rabbitmq-queues
+    metrics_path: /metrics/detailed
+    params:
+      family: [queue_coarse_metrics]
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+
+  - job_name: garage
+    authorization:
+      credentials_file: /run/secrets/garage_metrics_token
+    static_configs:
+      - targets: ["garage:3903"]
+
+  - job_name: keycloak
+    static_configs:
+      - targets: ["keycloak:9000"]
+
+  - job_name: nginx
+    static_configs:
+      - targets: ["nginx-exporter:9113"]
