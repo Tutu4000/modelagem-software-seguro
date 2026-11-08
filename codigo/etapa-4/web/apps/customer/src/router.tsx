@@ -8,6 +8,8 @@ import { Layout } from "./Layout";
 import { Account } from "./pages/Account";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
+import { OrderPage } from "./orders/OrderPage";
+import { OrdersPage } from "./orders/OrdersPage";
 import { QuotePage } from "./quote/QuotePage";
 
 function Protected({ children }: { children: ReactNode }) {
@@ -50,6 +52,8 @@ const routes: RouteObject[] = [
   },
   { path: "conta", element: <Protected><Account /></Protected> },
   { path: "orcar", element: <Protected><QuotePage /></Protected> },
+  { path: "pedidos", element: <Protected><OrdersPage /></Protected> },
+  { path: "pedidos/:id", element: <Protected><OrderPage /></Protected> },
 ];
 
 // The component gallery exists only in development: the production build

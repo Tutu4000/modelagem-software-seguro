@@ -1,13 +1,8 @@
 import { ChipGroup, Field, Grid, money, Panel, Select, Stack, Stepper, TextInput } from "@nugget/ui";
 
 import { maskPostalCode, states, type AddressErrors } from "./address";
+import { colorLabel, finishingLabel, qualityLabel } from "./labels";
 import type { Address, Choice, Rules } from "./types";
-
-const qualityLabel: Record<string, string> = { draft: "Rascunho", standard: "Padrão", fine: "Fina" };
-const finishingLabel: Record<string, string> = { none: "Sem acabamento", sanded: "Lixado", painted: "Pintado" };
-const colorLabel: Record<string, string> = { black: "Preto", white: "Branco", gray: "Cinza", red: "Vermelho", blue: "Azul", clear: "Transparente" };
-
-const label = (names: Record<string, string>, key: string) => names[key] ?? key;
 
 export interface ConfigFormProps {
   rules: Rules;
@@ -47,14 +42,14 @@ export function ConfigForm({ rules, choice, onChoice, address, onAddress, errors
             legend="Cor"
             disabled={disabled}
             value={choice.color}
-            options={(material?.colors ?? []).map((c) => ({ value: c, label: label(colorLabel, c) }))}
+            options={(material?.colors ?? []).map((c) => ({ value: c, label: colorLabel(c) }))}
             onChange={(color) => { set({ color }); }}
           />
           <ChipGroup
             legend="Qualidade"
             disabled={disabled}
             value={choice.quality}
-            options={Object.keys(rules.qualities).map((q) => ({ value: q, label: label(qualityLabel, q) }))}
+            options={Object.keys(rules.qualities).map((q) => ({ value: q, label: qualityLabel(q) }))}
             onChange={(quality) => { set({ quality }); }}
           />
           <ChipGroup
@@ -63,7 +58,7 @@ export function ConfigForm({ rules, choice, onChoice, address, onAddress, errors
             value={choice.finishing}
             options={Object.entries(rules.finishings).map(([f, cents]) => ({
               value: f,
-              label: label(finishingLabel, f),
+              label: finishingLabel(f),
               detail: cents > 0 ? `+ ${money(cents)}/un.` : undefined,
             }))}
             onChange={(finishing) => { set({ finishing }); }}

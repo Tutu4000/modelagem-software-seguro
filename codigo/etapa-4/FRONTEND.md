@@ -45,6 +45,16 @@ O item do backlog é o E8.6, aplicação web e visualizador 3D com CSP (C09).
     - o `frame-ancestors` dos apps passou de `'none'` para `'self'`.
 - **Trusted Types com uma política só:** a CSP permite a política `nugget-worker`, e nenhuma outra. Ela transforma em `TrustedScriptURL` apenas os workers do próprio bundle, na mesma origem e em `/assets/`, sem query nem fragmento. O motivo é que o `new Worker(url)` é um destino de Trusted Types, e o leitor de STL roda num worker. Qualquer outra string continua bloqueada (`packages/viewer/src/trustedWorker.ts`).
 - **O preço só vem do servidor (CA03).** O configurador não estima nada: "Calcular orçamento" cria o pedido `quoted`, e a tela mostra a composição que a API devolveu. A preparação é o que sobra do total, para as linhas sempre somarem o valor do servidor.
+- **Atualização dos pedidos sem o cliente:** o detalhe só consulta a API enquanto o pedido anda sozinho:
+
+  | Situação | Intervalo |
+  |-|-|
+  | Cobrança pendente | 2 s |
+  | Pago, em produção ou enviado | 5 s |
+  | Em revisão técnica | 30 s |
+  | Qualquer outro estado | Não consulta |
+
+  O pagamento é o do gateway simulado: "Pagar" cria a cobrança, e a tela espera a confirmação assinada do webhook.
 - **Step-up do painel num popup** (`prompt=login` e `acr_values=2`), para a tela não perder a justificativa digitada. Por isso o painel usa COOP `same-origin-allow-popups`; o app do cliente continua em `same-origin`. O painel confere o `auth_time` antes da operação crítica e, se a API ainda pedir step-up, repete uma vez.
 - **Testes:**
   - unidade com Vitest e Testing Library;
@@ -114,4 +124,5 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 |FE0|Concluída: os dois apps servidos pelo nginx, os tipos dos OpenAPI, o design system com a página `/_design` no build de desenvolvimento, todos os cabeçalhos de segurança, o Playwright e o ZAP de novo|
 |FE1|Concluída: login com PKCE nos dois apps (`packages/auth`), tokens em memória, sessão de volta depois da recarga, saída, recuperação de 401, banner de 429, 503 e parceiro fora, `/conta` do cliente, `/me` do painel com a navegação pelo papel e o `CriticalActionDialog`, pronto para a FE5 e a FE6|
 |FE2|Concluída: `/orcar` com o STL lido no navegador (worker, só binário), o visualizador 3D (three.js, carregado sob demanda, toque e mouse), o upload com progresso, o processamento acompanhado e a retomada pela URL depois de uma recarga (o arquivo vem pela URL pré-assinada do Garage). Também o configurador montado pelo catálogo, o endereço com as regras da API, o orçamento do servidor com o alerta de DFM e o envio para a revisão. O alerta de DFM passou a fazer parte da visão do cliente na API|
-|FE3 a FE7|Pendentes|
+|FE3|Concluída: `/pedidos` com filtros, que vira cartões no celular. `/pedidos/:id` com a linha do tempo, o laudo, o alerta de DFM, o endereço, o rastreio, os valores e o pagamento, além das ações pelo estado (pagar, enviar, cancelar com motivo, orçar de novo e concluir estorno). Também a confirmação da troca de endereço com o código do e-mail (C21) e "Pedido não encontrado" para pedido alheio (D01)|
+|FE4 a FE7|Pendentes|

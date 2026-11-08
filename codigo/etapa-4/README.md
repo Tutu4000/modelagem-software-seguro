@@ -237,6 +237,12 @@ Para orçar pelo app, entre como cliente e abra "Orçar" (`https://localhost/orc
 4. "Calcular orçamento" traz o preço do servidor, com o alerta de DFM quando a peça não cabe na impressora.
 5. "Enviar para revisão técnica" encerra o fluxo. Uma recarga no meio do caminho retoma do arquivo enviado.
 
+Em "Pedidos" (`https://localhost/pedidos`), o cliente:
+
+* acompanha cada pedido pela linha do tempo e lê o laudo da revisão;
+* paga pelo gateway simulado (a página espera a confirmação), vê o rastreio e cancela até o pagamento, com estorno;
+* confirma uma troca de endereço proposta pelo suporte com o código que chegou no e-mail (Mailpit).
+
 O TypeScript é estrito, sem `any`. O ESLint também barra `dangerouslySetInnerHTML`, `innerHTML` e o uso de `localStorage` e `sessionStorage`. Os tipos da API saem do `openapi.yaml` e do `panel-openapi.yaml` (`npm run gen`), e o `just web-lint` falha se estiverem desatualizados.
 
 Todas as portas mandam os cabeçalhos de segurança:
