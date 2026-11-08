@@ -1731,6 +1731,46 @@ func TestBackupAndRestore(t *testing.T) {
 	}
 }
 
+// C09 (FE0): every public answer carries the security headers once, and the
+// API answers get the CSP of a JSON document.
+func TestSecurityHeaders(t *testing.T) {
+	common := map[string]string{
+		"Strict-Transport-Security": "max-age=31536000",
+		"X-Content-Type-Options":    "nosniff",
+		"Referrer-Policy":           "no-referrer",
+	}
+	const jsonCSP = "default-src 'none'; frame-ancestors 'none'"
+	for _, c := range []struct {
+		url, csp string
+	}{
+		{base + "/", ""},
+		{base + "/api/v1/catalog", jsonCSP},
+		{base + "/api/v1/webhooks/payments", jsonCSP},
+		{panelBase + "/panel/v1/me", jsonCSP},
+		{idp + "/realms/nugget/", "-"},
+		{"https://localhost:8443/files", jsonCSP},
+	} {
+		resp := do(t, http.MethodGet, c.url, "", nil, -1)
+		for name, want := range common {
+			if got := resp.Header.Values(name); len(got) != 1 || got[0] != want {
+				t.Errorf("%s: %s = %q, want once %q", c.url, name, got, want)
+			}
+		}
+		csp := resp.Header.Get("Content-Security-Policy")
+		switch c.csp {
+		case "":
+			if !strings.Contains(csp, "script-src 'self'") || !strings.Contains(csp, "require-trusted-types-for 'script'") {
+				t.Errorf("%s: app CSP %q", c.url, csp)
+			}
+		case "-":
+		default:
+			if csp != c.csp {
+				t.Errorf("%s: CSP %q, want %q", c.url, csp, c.csp)
+			}
+		}
+	}
+}
+
 // RF19: a part bigger than the printer shows up flagged in the review.
 func TestDFMFlagInThePanel(t *testing.T) {
 	customer := login(t, devlogin.CustomerA)

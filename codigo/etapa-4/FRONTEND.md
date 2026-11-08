@@ -103,4 +103,5 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 
 |Fase|Estado|
 |-|-|
-|FE0 a FE7|Pendentes|
+|FE0|Concluída: os dois apps servidos pelo nginx, os tipos dos OpenAPI, o design system com a página `/_design` no build de desenvolvimento, todos os cabeçalhos de segurança, o Playwright e o ZAP de novo|
+|FE1 a FE7|Pendentes|

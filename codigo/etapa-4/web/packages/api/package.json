@@ -1,0 +1,13 @@
+{
+  "name": "@nugget/api",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.ts" },
+  "scripts": {
+    "gen": "openapi-typescript ../../../openapi.yaml -o src/customer.gen.ts && openapi-typescript ../../../panel-openapi.yaml -o src/panel.gen.ts"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "5.104.5",
+    "openapi-fetch": "0.17.0"
+  }
+}

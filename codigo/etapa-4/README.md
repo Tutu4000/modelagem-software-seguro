@@ -168,7 +168,7 @@ Os binários Go rodam em imagens distroless, como não root, com sistema de arqu
 just test        # testes de unidade e de segurança (TS01 a TS09), sem Docker
 just test-e2e    # ponta a ponta contra o compose: precisa de `just up`
 just lint        # go vet, gosec, govulncheck e gitleaks
-just zap         # varredura do OWASP ZAP pelo openapi.yaml (Etapa 5)
+just zap         # varredura do OWASP ZAP da API e do app (Etapa 5; just zap <pasta> muda a saída)
 ```
 
 O `just test-e2e` cobre:
@@ -197,6 +197,43 @@ O `just test-e2e` cobre:
 * o backup criptografado, fora do alcance da chave da API, e o restore-test.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
+
+## Front-end
+
+Os dois apps ficam em `web/`, um workspace npm descrito em [FRONTEND.md](FRONTEND.md):
+
+|Pasta|O que é|
+|-|-|
+|`web/apps/customer`|App do cliente, servido pelo nginx em `https://localhost/`|
+|`web/apps/panel`|App do painel, servido em `https://localhost:9445/`|
+|`web/packages/ui`|Design system: tokens (bordas retas) e primitivas que se combinam|
+|`web/packages/api`|Tipos gerados dos dois OpenAPI, o cliente tipado e os erros em Problem Details|
+|`web/e2e`|Testes do Playwright contra o compose|
+
+O nginx constrói os apps na própria imagem (`deploy/nginx/Dockerfile`), então `just up` já os serve. Para desenvolver:
+
+```sh
+just web-install        # npm ci --ignore-scripts, a partir do lockfile
+just web-dev            # Vite em http://localhost:5173, com a API do compose por proxy
+just web-dev panel      # o painel em http://localhost:5174
+just web-lint           # tipos gerados em dia, tsc, eslint, vitest e npm audit
+just web-e2e            # Playwright contra o compose, na imagem oficial
+```
+
+No `just web-dev`, a página `/_design` mostra todas as primitivas. Ela não existe no build de produção.
+
+O TypeScript é estrito, sem `any`. O ESLint também barra `dangerouslySetInnerHTML`, `innerHTML` e o uso de `localStorage` e `sessionStorage`. Os tipos da API saem do `openapi.yaml` e do `panel-openapi.yaml` (`npm run gen`), e o `just web-lint` falha se estiverem desatualizados.
+
+Todas as portas mandam os cabeçalhos de segurança:
+
+* CSP estrita, sem `unsafe-inline` nem `unsafe-eval` e com Trusted Types;
+* HSTS;
+* `nosniff`;
+* `Referrer-Policy`;
+* `Permissions-Policy`;
+* COOP e CORP.
+
+O `just zap relatorios-zap-fe0` refaz a varredura da API e do app do cliente.
 
 ## Backup e restauração
 

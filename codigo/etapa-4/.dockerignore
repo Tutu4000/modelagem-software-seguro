@@ -1,5 +1,9 @@
 secrets/
 deploy/
+!deploy/nginx/
 migrations/
 tests/
 *.md
+web/**/node_modules/
+web/**/dist/
+web/e2e/
