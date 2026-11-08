@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -323,6 +324,10 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 	}{
 		{"files cannot read tasks", "postgres", "nugget", "files", "db_files_password", "SELECT 1 FROM tasks LIMIT 1"},
 		{"queue cannot read files", "postgres", "nugget", "queue", "db_queue_password", "SELECT 1 FROM files LIMIT 1"},
+		{"orders cannot change a price", "postgres", "nugget", "orders", "db_orders_password", "UPDATE orders SET total_cents = 0"},
+		{"panel_orders cannot change a price", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "UPDATE orders SET total_cents = 0"},
+		{"orders cannot read tasks", "postgres", "nugget", "orders", "db_orders_password", "SELECT 1 FROM tasks LIMIT 1"},
+		{"panel_orders cannot read files", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "SELECT 1 FROM files LIMIT 1"},
 		{"audit cannot update events", "postgres-audit", "audit", "audit_app", "db_audit_password", "UPDATE events SET result = 'x'"},
 		{"audit cannot delete events", "postgres-audit", "audit", "audit_app", "db_audit_password", "DELETE FROM events"},
 	}
@@ -482,6 +487,299 @@ func TestPanelRefusesOtherAddresses(t *testing.T) {
 	}
 	if code := strings.TrimSpace(string(out)); code != "403" {
 		t.Errorf("panel from another container got %s, want 403", code)
+	}
+}
+
+type cachedToken struct {
+	token string
+	at    time.Time
+}
+
+var staffTokens = map[string]cachedToken{}
+
+// staff returns a panel token of the account, reused for 4 minutes: every new
+// staff login waits for a fresh TOTP code. Critical operations accept a login
+// up to 5 minutes old.
+func staff(t *testing.T, a devlogin.Account) string {
+	t.Helper()
+	if c, ok := staffTokens[a.Username]; ok && time.Since(c.at) < 4*time.Minute {
+		return c.token
+	}
+	token := panelLogin(t, a, 0)
+	staffTokens[a.Username] = cachedToken{token: token, at: time.Now()}
+	return token
+}
+
+func panelDo(t *testing.T, method, path, token, body string) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	return do(t, method, panelBase+path, token, r, -1)
+}
+
+func apiJSON(t *testing.T, method, path, token, body string) *http.Response {
+	t.Helper()
+	var r io.Reader
+	if body != "" {
+		r = strings.NewReader(body)
+	}
+	return do(t, method, base+path, token, r, -1)
+}
+
+type orderView struct {
+	ID                string `json:"id"`
+	Status            string `json:"status"`
+	UnitCents         int64  `json:"unit_cents"`
+	TotalCents        int64  `json:"total_cents"`
+	PriceTableVersion int64  `json:"price_table_version"`
+	History           []struct {
+		To string `json:"to"`
+	} `json:"history"`
+	Review *struct {
+		Decision string `json:"decision"`
+		Report   string `json:"report"`
+	} `json:"review"`
+	DFMFlags []string `json:"dfm_flags"`
+}
+
+type catalog struct {
+	Version int64 `json:"version"`
+	Rules   struct {
+		Materials map[string]struct {
+			CentsPerCM3 int64 `json:"cents_per_cm3"`
+		} `json:"materials"`
+		Qualities  map[string]int64 `json:"qualities"`
+		Finishings map[string]int64 `json:"finishings"`
+		SetupCents int64            `json:"setup_cents"`
+	} `json:"rules"`
+}
+
+func getCatalog(t *testing.T, token string) catalog {
+	t.Helper()
+	resp := apiJSON(t, http.MethodGet, "/api/v1/catalog", token, "")
+	wantStatus(t, resp, http.StatusOK)
+	var c catalog
+	decode(t, resp, &c)
+	return c
+}
+
+// processedFile uploads a box and waits for the worker.
+func processedFile(t *testing.T, token string, x, y, z float32) string {
+	t.Helper()
+	id := upload(t, token, fakestl.Box(x, y, z))
+	waitFor(t, token, id, "done")
+	return id
+}
+
+const plaOrder = `{"file_id":%q,"material":"pla","color":"black","quality":"standard","finishing":"none","quantity":2}`
+
+func createOrder(t *testing.T, token, fileID string) orderView {
+	t.Helper()
+	resp := apiJSON(t, http.MethodPost, "/api/v1/orders", token, fmt.Sprintf(plaOrder, fileID))
+	wantStatus(t, resp, http.StatusCreated)
+	var o orderView
+	decode(t, resp, &o)
+	return o
+}
+
+func submittedOrder(t *testing.T, token, fileID string) orderView {
+	t.Helper()
+	o := createOrder(t, token, fileID)
+	resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/submit", token, "")
+	wantStatus(t, resp, http.StatusOK)
+	decode(t, resp, &o)
+	return o
+}
+
+// E8.1: the quote is computed on the server from the active price table. The
+// test recomputes it from the published catalog: a 10 x 20 x 30 mm box is 6
+// cm3, two units of black standard PLA without finishing.
+func TestOrderQuoteFollowsTheCatalog(t *testing.T) {
+	token := login(t, devlogin.CustomerA)
+	cat := getCatalog(t, token)
+	file := processedFile(t, token, 10, 20, 30)
+
+	o := createOrder(t, token, file)
+
+	unit := (6*cat.Rules.Materials["pla"].CentsPerCM3*cat.Rules.Qualities["standard"]+999)/1000 + cat.Rules.Finishings["none"]
+	if o.Status != "quoted" || o.UnitCents != unit || o.TotalCents != 2*unit+cat.Rules.SetupCents || o.PriceTableVersion != cat.Version {
+		t.Errorf("order %+v, want unit %d, total %d and table %d", o, unit, 2*unit+cat.Rules.SetupCents, cat.Version)
+	}
+	resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/submit", token, "")
+	wantStatus(t, resp, http.StatusOK)
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/submit", token, ""), http.StatusConflict)
+}
+
+// CA03 and D01: the customer cannot set the price, use someone else's file,
+// order an unprocessed file or read someone else's order.
+func TestOrderAttacks(t *testing.T) {
+	a, b := login(t, devlogin.CustomerA), login(t, devlogin.CustomerB)
+	fileA := processedFile(t, a, 5, 5, 5)
+
+	invalid := func(body string) {
+		t.Helper()
+		resp := apiJSON(t, http.MethodPost, "/api/v1/orders", a, body)
+		wantStatus(t, resp, http.StatusBadRequest)
+		var p struct {
+			Code string `json:"code"`
+		}
+		decode(t, resp, &p)
+		if p.Code != "invalid_request" {
+			t.Errorf("code %q, want invalid_request", p.Code)
+		}
+	}
+	for _, extra := range []string{`"total_cents":1`, `"status":"paid"`, `"price_table_version":1`, `"unit_cents":0`} {
+		invalid(strings.TrimSuffix(fmt.Sprintf(plaOrder, fileA), "}") + "," + extra + "}")
+	}
+	invalid(strings.Replace(fmt.Sprintf(plaOrder, fileA), `"pla"`, `"gold"`, 1))
+
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders", b, fmt.Sprintf(plaOrder, fileA)), http.StatusForbidden)
+
+	orderA := createOrder(t, a, fileA)
+	for _, path := range []string{"/api/v1/orders/" + orderA.ID, "/api/v1/orders/" + uuid.NewString()} {
+		wantStatus(t, apiJSON(t, http.MethodGet, path, b, ""), http.StatusForbidden)
+	}
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+orderA.ID+"/submit", b, ""), http.StatusForbidden)
+
+	dockerCompose(t, "stop", "worker")
+	t.Cleanup(func() { dockerCompose(t, "start", "worker") })
+	pending := upload(t, b, fakestl.Box(4, 4, 4))
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders", b, fmt.Sprintf(plaOrder, pending)), http.StatusConflict)
+}
+
+// E6.3, CA05 and CA08: only the assigned technician opens the design and
+// reviews it, once; the customer then sees the decision and the report.
+func TestTechnicalReview(t *testing.T) {
+	customer := login(t, devlogin.CustomerA)
+	data := fakestl.Box(12, 12, 12)
+	fileID := upload(t, customer, data)
+	waitFor(t, customer, fileID, "done")
+	o := submittedOrder(t, customer, fileID)
+	orderPath := "/panel/v1/orders/" + o.ID
+
+	admin := staff(t, devlogin.Admin)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/assign", admin,
+		`{"technician_id":"`+devlogin.Support.ID.String()+`"}`), http.StatusBadRequest)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/assign", admin,
+		`{"technician_id":"`+devlogin.Technician.ID.String()+`"}`), http.StatusOK)
+
+	const justification = `{"justification":"e2e: DFM review of the order"}`
+	const approval = `{"decision":"approved","report":"e2e: walls thick enough, fits the printer"}`
+	other := staff(t, devlogin.Technician2)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/file", other, justification), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/review", other, approval), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodGet, orderPath, other, ""), http.StatusForbidden)
+	support := staff(t, devlogin.Support)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/file", support, justification), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/review", admin, approval), http.StatusForbidden)
+
+	tech := staff(t, devlogin.Technician)
+	resp := panelDo(t, http.MethodPost, orderPath+"/file", tech, justification)
+	wantStatus(t, resp, http.StatusOK)
+	var file struct {
+		URL string `json:"url"`
+	}
+	decode(t, resp, &file)
+	got := do(t, http.MethodGet, file.URL, "", nil, -1)
+	wantStatus(t, got, http.StatusOK)
+	if body, _ := io.ReadAll(got.Body); !bytes.Equal(body, data) {
+		t.Error("the technician's URL did not deliver the design")
+	}
+
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/review", tech, approval), http.StatusOK)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/review", tech, approval), http.StatusConflict)
+
+	resp = apiJSON(t, http.MethodGet, "/api/v1/orders/"+o.ID, customer, "")
+	wantStatus(t, resp, http.StatusOK)
+	var seen orderView
+	decode(t, resp, &seen)
+	if seen.Status != "awaiting_payment" || seen.Review == nil || seen.Review.Decision != "approved" || len(seen.History) != 3 {
+		t.Errorf("the customer sees %+v", seen)
+	}
+
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT DISTINCT name FROM events WHERE target = '"+o.ID+"' ORDER BY name")
+	for _, want := range []string{"file.staff_download", "order.assigned", "order.created", "order.submitted", "panel.critical", "review.approved"} {
+		if !slices.Contains(strings.Fields(out), want) {
+			t.Errorf("audit event %s missing for the order: %v", want, strings.Fields(out))
+		}
+	}
+}
+
+// D02: a new price table only applies after another admin approves it, and
+// orders keep the price they were quoted with.
+func TestPriceTableNeedsTwoAdmins(t *testing.T) {
+	customer := login(t, devlogin.CustomerA)
+	before := getCatalog(t, customer)
+	fileID := processedFile(t, customer, 10, 20, 30)
+	old := createOrder(t, customer, fileID)
+
+	admin := staff(t, devlogin.Admin)
+	resp := panelDo(t, http.MethodGet, "/panel/v1/price-tables", admin, "")
+	wantStatus(t, resp, http.StatusOK)
+	var tables struct {
+		PriceTables []struct {
+			Version int64           `json:"version"`
+			Status  string          `json:"status"`
+			Rules   json.RawMessage `json:"rules"`
+		} `json:"price_tables"`
+	}
+	decode(t, resp, &tables)
+	var rules map[string]any
+	for _, pt := range tables.PriceTables {
+		if pt.Status == "active" {
+			if err := json.Unmarshal(pt.Rules, &rules); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	pla := rules["materials"].(map[string]any)["pla"].(map[string]any)
+	pla["cents_per_cm3"] = pla["cents_per_cm3"].(float64) + 5
+	proposal, _ := json.Marshal(map[string]any{"rules": rules})
+	resp = panelDo(t, http.MethodPost, "/panel/v1/price-tables", admin, string(proposal))
+	wantStatus(t, resp, http.StatusCreated)
+	var draft struct {
+		Version int64 `json:"version"`
+	}
+	decode(t, resp, &draft)
+
+	if c := getCatalog(t, customer); c.Version != before.Version {
+		t.Errorf("the draft changed the active table to %d", c.Version)
+	}
+	approve := fmt.Sprintf("/panel/v1/price-tables/%d/approve", draft.Version)
+	const justification = `{"justification":"e2e: PLA supplier raised the price"}`
+	wantStatus(t, panelDo(t, http.MethodPost, approve, admin, justification), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodPost, approve, staff(t, devlogin.Admin2), justification), http.StatusOK)
+
+	if c := getCatalog(t, customer); c.Version != draft.Version {
+		t.Errorf("active table %d, want %d", c.Version, draft.Version)
+	}
+	fresh := createOrder(t, customer, fileID)
+	if fresh.PriceTableVersion != draft.Version || fresh.UnitCents <= old.UnitCents {
+		t.Errorf("new quote %+v should use table %d with a higher price than %d", fresh, draft.Version, old.UnitCents)
+	}
+	resp = apiJSON(t, http.MethodGet, "/api/v1/orders/"+old.ID, customer, "")
+	wantStatus(t, resp, http.StatusOK)
+	var kept orderView
+	decode(t, resp, &kept)
+	if kept.TotalCents != old.TotalCents || kept.PriceTableVersion != old.PriceTableVersion {
+		t.Errorf("the old order changed: %+v, was %+v", kept, old)
+	}
+}
+
+// RF19: a part bigger than the printer shows up flagged in the review.
+func TestDFMFlagInThePanel(t *testing.T) {
+	customer := login(t, devlogin.CustomerA)
+	o := createOrder(t, customer, processedFile(t, customer, 300, 10, 10))
+
+	resp := panelDo(t, http.MethodGet, "/panel/v1/orders/"+o.ID, staff(t, devlogin.Admin), "")
+	wantStatus(t, resp, http.StatusOK)
+	var seen orderView
+	decode(t, resp, &seen)
+	if !slices.Contains(seen.DFMFlags, "exceeds_build_volume") {
+		t.Errorf("DFM flags %v, want exceeds_build_volume", seen.DFMFlags)
 	}
 }
 

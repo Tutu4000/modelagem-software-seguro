@@ -35,8 +35,11 @@ func main() {
 		http:  &http.Client{Timeout: 10 * time.Second},
 	}
 	bucket := env.String("S3_BUCKET", "files")
-	keyID := string(env.Secret("S3_ACCESS_KEY_ID"))
-	secret := string(env.Secret("S3_SECRET_ACCESS_KEY"))
+	apiKey := key{name: "api", write: true,
+		id: string(env.Secret("S3_ACCESS_KEY_ID")), secret: string(env.Secret("S3_SECRET_ACCESS_KEY"))}
+	// The panel only opens designs for the assigned technician: read only (D02).
+	panelKey := key{name: "panel", write: false,
+		id: string(env.Secret("S3_PANEL_ACCESS_KEY_ID")), secret: string(env.Secret("S3_PANEL_SECRET_ACCESS_KEY"))}
 	if err := env.Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -52,19 +55,37 @@ func main() {
 	if err != nil {
 		log.Fatalf("bucket: %v", err)
 	}
-	if err := a.ensureKey(ctx, keyID, secret); err != nil {
-		log.Fatalf("key: %v", err)
+	for _, k := range []key{apiKey, panelKey} {
+		if err := a.grant(ctx, bucketID, k); err != nil {
+			log.Fatalf("key %s: %v", k.name, err)
+		}
+		log.Printf("Garage ready: bucket %q with key %s (%s), write=%v", bucket, k.id, k.name, k.write)
 	}
-	// No owner: the API key cannot change permissions or delete the bucket.
-	err = a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
-		"bucketId":    bucketID,
-		"accessKeyId": keyID,
-		"permissions": map[string]bool{"read": true, "write": true, "owner": false},
+}
+
+type key struct {
+	name, id, secret string
+	write            bool
+}
+
+// grant imports the key and sets exactly its permissions. No key is an owner:
+// none can change permissions or delete the bucket. AllowBucketKey only adds,
+// so what a key must not have is denied explicitly.
+func (a admin) grant(ctx context.Context, bucketID string, k key) error {
+	if err := a.ensureKey(ctx, k.id, k.secret, k.name); err != nil {
+		return err
+	}
+	err := a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.id,
+		"permissions": map[string]bool{"read": true, "write": k.write},
 	}, nil)
 	if err != nil {
-		log.Fatalf("key permission: %v", err)
+		return err
 	}
-	log.Printf("Garage ready: bucket %q with key %s (read and write)", bucket, keyID)
+	return a.call(ctx, http.MethodPost, "/v2/DenyBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.id,
+		"permissions": map[string]bool{"write": !k.write, "owner": true},
+	}, nil)
 }
 
 func (a admin) waitUp(ctx context.Context) error {
@@ -129,7 +150,7 @@ func (a admin) ensureBucket(ctx context.Context, alias string) (string, error) {
 	return info.ID, err
 }
 
-func (a admin) ensureKey(ctx context.Context, id, secret string) error {
+func (a admin) ensureKey(ctx context.Context, id, secret, name string) error {
 	err := a.call(ctx, http.MethodGet, "/v2/GetKeyInfo?id="+url.QueryEscape(id), nil, nil)
 	if !errors.Is(err, errNotFound) {
 		return err
@@ -137,7 +158,7 @@ func (a admin) ensureKey(ctx context.Context, id, secret string) error {
 	return a.call(ctx, http.MethodPost, "/v2/ImportKey", map[string]string{
 		"accessKeyId":     id,
 		"secretAccessKey": secret,
-		"name":            "api",
+		"name":            name,
 	}, nil)
 }
 

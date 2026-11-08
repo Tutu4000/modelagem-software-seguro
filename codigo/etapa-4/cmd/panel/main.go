@@ -20,9 +20,11 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/idpadmin"
+	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/pg"
 	"nuggetmachine/internal/server/panel"
 	"nuggetmachine/internal/session"
+	"nuggetmachine/internal/storage"
 )
 
 func main() {
@@ -43,6 +45,17 @@ func run(log *slog.Logger) error {
 	audience := env.String("OIDC_AUDIENCE", "panel")
 	auditHost, auditName := env.Required("AUDIT_DB_HOST"), env.String("AUDIT_DB_NAME", "audit")
 	auditPassword := env.Secret("DB_PANEL_AUDIT_PASSWORD")
+	mainHost, mainName := env.Required("DB_HOST"), env.String("DB_NAME", "nugget")
+	ordersPassword := env.Secret("DB_PANEL_ORDERS_PASSWORD")
+	// A read-only storage key: the panel only opens designs (D02).
+	s3cfg := storage.S3Config{
+		Bucket:         env.String("S3_BUCKET", "files"),
+		Region:         env.String("S3_REGION", "garage"),
+		Endpoint:       env.Required("S3_ENDPOINT"),
+		PublicEndpoint: env.Required("S3_PUBLIC_ENDPOINT"),
+		AccessKey:      string(env.Secret("S3_ACCESS_KEY_ID")),
+		SecretKey:      string(env.Secret("S3_SECRET_ACCESS_KEY")),
+	}
 	valkeyAddr := env.Required("VALKEY_ADDR")
 	valkeyUser := env.String("VALKEY_USER", "panel")
 	valkeyPassword := env.Secret("VALKEY_PASSWORD")
@@ -73,6 +86,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer auditPool.Close()
+	ordersPool, err := pg.Open(ctx, mainHost, mainName, "panel_orders", ordersPassword)
+	if err != nil {
+		return err
+	}
+	defer ordersPool.Close()
 	sessions, err := session.NewValkey(valkeyAddr, valkeyUser, valkeyPassword)
 	if err != nil {
 		return fmt.Errorf("Valkey at %s: %w", valkeyAddr, err)
@@ -90,6 +108,8 @@ func run(log *slog.Logger) error {
 		RatePerMinute:  ratePerMinute,
 		Audit:          auditLog,
 		IdP:            idpadmin.New(keycloakURL, realm, "panel-admin", adminSecret),
+		Orders:         orders.NewStore(ordersPool),
+		Files:          storage.NewS3(s3cfg),
 		StepUpMaxAge:   stepUp,
 		Now:            time.Now,
 		Log:            log,

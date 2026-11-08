@@ -5,10 +5,12 @@ package customer
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/server"
 	"nuggetmachine/internal/session"
 )
@@ -22,6 +24,10 @@ type Deps struct {
 	Audit    *audit.Logger
 	Sessions session.Store
 	Limiter  session.Limiter
+	Orders   *orders.Store
+	// BuildVolume is the printer's build volume, for the DFM check.
+	BuildVolume [3]float64
+	Now         func() time.Time
 	// RatePerMinute is the per-user request limit (E5.2).
 	RatePerMinute int
 	Log           *slog.Logger // nil turns off the request log
@@ -46,5 +52,12 @@ func New(d Deps) (*server.Router, error) {
 	api.Handle(http.MethodGet, "/files/:id", customer, h.Status)
 	api.Handle(http.MethodGet, "/files/:id/download", customer, h.Download)
 	api.Handle(http.MethodPost, "/files", customer, h.Upload)
+
+	o := &orders.Handler{Store: d.Orders, Files: d.Files, Tasks: d.Tasks, Audit: d.Audit, BuildVolume: d.BuildVolume, Now: d.Now}
+	api.Handle(http.MethodGet, "/catalog", customer, o.Catalog)
+	api.Handle(http.MethodPost, "/orders", customer, o.Create)
+	api.Handle(http.MethodGet, "/orders", customer, o.List)
+	api.Handle(http.MethodGet, "/orders/:id", customer, o.Get)
+	api.Handle(http.MethodPost, "/orders/:id/submit", customer, o.Submit)
 	return r, nil
 }

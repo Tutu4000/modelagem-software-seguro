@@ -42,13 +42,18 @@ var (
 	// CustomerD is revoked by the panel e2e test, so no other test uses it.
 	CustomerD  = Account{"customer-d", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04"), false}
 	Technician = Account{"technician", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01"), true}
-	Support    = Account{"support", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1b02"), true}
-	Admin      = Account{"admin", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c03"), true}
+	// Technician2 is never assigned in the tests: it checks that only the
+	// assigned technician works on an order.
+	Technician2 = Account{"technician-2", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a02"), true}
+	Support     = Account{"support", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1b02"), true}
+	Admin       = Account{"admin", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c03"), true}
+	// Admin2 approves the price tables that Admin proposes (two admins, D02).
+	Admin2 = Account{"admin-2", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c04"), true}
 )
 
-// Resolve accepts "a", "b", "c" or a username.
+// Resolve accepts "a" to "d" or a username.
 func Resolve(name string) (Account, error) {
-	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, Technician, Support, Admin} {
+	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, Technician, Technician2, Support, Admin, Admin2} {
 		if name == a.Username || "customer-"+name == a.Username {
 			return a, nil
 		}

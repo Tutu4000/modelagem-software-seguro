@@ -50,6 +50,13 @@ services:
       OIDC_AUDIENCE: panel
       AUDIT_DB_HOST: postgres-audit
       DB_PANEL_AUDIT_PASSWORD_FILE: /run/secrets/db_panel_audit_password
+      DB_HOST: postgres
+      DB_PANEL_ORDERS_PASSWORD_FILE: /run/secrets/db_panel_orders_password
+      # Read-only storage key: the panel only opens designs (D02).
+      S3_ENDPOINT: http://garage:3900
+      S3_PUBLIC_ENDPOINT: https://localhost:8443
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_panel_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
       VALKEY_ADDR: valkey:6379
       VALKEY_USER: panel
       VALKEY_PASSWORD_FILE: /run/secrets/valkey_panel_password
@@ -59,11 +66,19 @@ services:
       PANEL_STEP_UP_MAX_AGE: 5m
       INTERNAL_ADDR: ":8090"
       GOMEMLIMIT: 200MiB
-    secrets: [db_panel_audit_password, valkey_panel_password, keycloak_panel_admin_secret]
+    secrets:
+      - db_panel_audit_password
+      - db_panel_orders_password
+      - valkey_panel_password
+      - keycloak_panel_admin_secret
+      - s3_panel_access_key_id
+      - s3_panel_secret_access_key
     networks: [internal]
     depends_on:
+      garage-init: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
       valkey: { condition: service_healthy }
+      postgres: { condition: service_healthy }
       postgres-audit: { condition: service_healthy }
     deploy:
       resources:
@@ -128,6 +143,8 @@ services:
       OIDC_AUDIENCE: api
       DB_HOST: postgres
       DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
+      DB_ORDERS_PASSWORD_FILE: /run/secrets/db_orders_password
+      BUILD_VOLUME_MM: "250,250,250"
       DB_QUEUE_PASSWORD_FILE: /run/secrets/db_queue_password
       AUDIT_DB_HOST: postgres-audit
       DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
@@ -146,6 +163,7 @@ services:
     secrets:
       - valkey_api_password
       - db_files_password
+      - db_orders_password
       - db_queue_password
       - db_audit_password
       - s3_access_key_id
@@ -266,7 +284,9 @@ services:
       GARAGE_ADMIN_TOKEN_FILE: /run/secrets/garage_admin_token
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
-    secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key]
+      S3_PANEL_ACCESS_KEY_ID_FILE: /run/secrets/s3_panel_access_key_id
+      S3_PANEL_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
+    secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key, s3_panel_access_key_id, s3_panel_secret_access_key]
     networks: [internal]
     depends_on: [garage]
     deploy:
@@ -282,7 +302,7 @@ services:
     volumes:
       - main:/var/lib/postgresql
       - ../migrations/main:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_password, db_files_password, db_queue_password, db_keycloak_password]
+    secrets: [postgres_password, db_files_password, db_queue_password, db_orders_password, db_panel_orders_password, db_keycloak_password]
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
@@ -375,6 +395,10 @@ secrets:
   garage_admin_token: { file: ../secrets/garage_admin_token }
   s3_access_key_id: { file: ../secrets/s3_access_key_id }
   s3_secret_access_key: { file: ../secrets/s3_secret_access_key }
+  s3_panel_access_key_id: { file: ../secrets/s3_panel_access_key_id }
+  s3_panel_secret_access_key: { file: ../secrets/s3_panel_secret_access_key }
+  db_orders_password: { file: ../secrets/db_orders_password }
+  db_panel_orders_password: { file: ../secrets/db_panel_orders_password }
   rabbitmq_api_password: { file: ../secrets/rabbitmq_api_password }
   rabbitmq_worker_password: { file: ../secrets/rabbitmq_worker_password }
   rabbitmq_users: { file: ../secrets/rabbitmq_users.json }

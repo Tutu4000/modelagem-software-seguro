@@ -29,6 +29,8 @@ type fakeIdP struct {
 	err     error
 }
 
+func (f *fakeIdP) HasRealmRole(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
 func (f *fakeIdP) LogoutAndDisable(_ context.Context, user uuid.UUID) error {
 	if f.err != nil {
 		return f.err
