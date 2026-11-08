@@ -680,6 +680,7 @@ components:
           pattern: "^[0-9]{5}-?[0-9]{3}$"
     Payment:
       type: object
+      required: [charge_id, amount_cents, status, created_at]
       properties:
         charge_id:
           type: string
@@ -695,6 +696,7 @@ components:
           format: date-time
     Cancellation:
       type: object
+      required: [id, status, payment]
       properties:
         id:
           type: string
@@ -708,6 +710,7 @@ components:
           nullable: true
     AddressChange:
       type: object
+      required: [id, address, expires_at, status]
       properties:
         id:
           type: string
@@ -944,6 +947,7 @@ components:
           type: array
           items:
             type: object
+            required: [from, to, at]
             properties:
               from:
                 type: string
@@ -956,6 +960,7 @@ components:
         review:
           type: object
           nullable: true
+          required: [decision, report, reviewed_at]
           properties:
             decision:
               type: string

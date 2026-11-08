@@ -906,29 +906,29 @@ export interface components {
             postal_code: string;
         };
         Payment: {
-            charge_id?: string;
-            amount_cents?: number;
+            charge_id: string;
+            amount_cents: number;
             /** @enum {string} */
-            status?: "pending" | "succeeded" | "refund_pending" | "refunded";
+            status: "pending" | "succeeded" | "refund_pending" | "refunded";
             refund_id?: string;
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
         };
         Cancellation: {
             /** Format: uuid */
-            id?: string;
+            id: string;
             /** @enum {string} */
-            status?: "cancelled";
-            payment?: components["schemas"]["Payment"] | null;
+            status: "cancelled";
+            payment: components["schemas"]["Payment"] | null;
         };
         AddressChange: {
             /** Format: uuid */
-            id?: string;
-            address?: components["schemas"]["Address"];
+            id: string;
+            address: components["schemas"]["Address"];
             /** Format: date-time */
-            expires_at?: string;
+            expires_at: string;
             /** @enum {string} */
-            status?: "pending" | "confirmed";
+            status: "pending" | "confirmed";
         };
         Ticket: {
             /** Format: uuid */
@@ -1042,17 +1042,17 @@ export interface components {
             tracking_code?: string;
             payment?: components["schemas"]["Payment"];
             history?: {
-                from?: string | null;
-                to?: string;
+                from: string | null;
+                to: string;
                 /** Format: date-time */
-                at?: string;
+                at: string;
             }[];
             review?: {
                 /** @enum {string} */
-                decision?: "approved" | "rejected";
-                report?: string;
+                decision: "approved" | "rejected";
+                report: string;
                 /** Format: date-time */
-                reviewed_at?: string;
+                reviewed_at: string;
             } | null;
         };
         Problem: {

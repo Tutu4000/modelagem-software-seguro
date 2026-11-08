@@ -94,11 +94,12 @@ export function QuotePage() {
           <Stack gap={3}>
             <p>
               Pedido <code data-testid="order-id">{sent.id.slice(0, 8)}</code>. Um técnico confere a manufaturabilidade e registra o laudo. Você recebe um e-mail
-              quando a revisão terminar e, se aprovada, pode pagar.
+              quando a revisão terminar e, se aprovada, paga pela página do pedido.
             </p>
           </Stack>
         </Panel.Body>
         <Panel.Footer>
+          <Link to={`/pedidos/${sent.id}`}>Acompanhar o pedido</Link>
           <Link to="/orcar" onClick={() => {
             setSent(undefined);
             setOrder(undefined);

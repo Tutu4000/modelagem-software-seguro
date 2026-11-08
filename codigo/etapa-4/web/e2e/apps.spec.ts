@@ -28,7 +28,7 @@ test("the customer app loads with no CSP violation", async ({ page }) => {
 
 test("a deep link returns the app, and the panel API is not on the public port", async ({ page, request }) => {
   const problems = watch(page);
-  const res = await page.goto("https://localhost/pedidos/qualquer");
+  const res = await page.goto("https://localhost/caminho/que-nao-existe");
   expect(res?.status()).toBe(200);
   await expect(page.getByRole("heading", { name: "Página não encontrada" })).toBeVisible();
   expect((await request.get("https://localhost/panel/v1/me")).status()).toBe(404);
