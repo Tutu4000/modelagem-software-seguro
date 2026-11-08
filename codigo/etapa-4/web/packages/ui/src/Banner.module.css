@@ -1,0 +1,17 @@
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid currentColor;
+  border-left-width: 4px;
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
+.content {
+  flex: 1 1 auto;
+  color: var(--text);
+}
+.info { color: var(--tone-info); }
+.warning { color: var(--tone-warning); }
+.danger { color: var(--tone-danger); }

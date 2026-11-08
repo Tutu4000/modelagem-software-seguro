@@ -1,3 +1,4 @@
+import { useSession } from "@nugget/auth";
 import { Button, CheckIcon, CubeIcon, Grid, Panel, ShieldIcon, Stack, TruckIcon, UploadIcon } from "@nugget/ui";
 
 import styles from "./Home.module.css";
@@ -22,6 +23,8 @@ const guarantees = [
 ];
 
 export function Home() {
+  const session = useSession();
+  const signedIn = session.state.status === "authenticated";
   return (
     <Stack gap={4}>
       <section className={styles.hero} aria-labelledby="hero-title">
@@ -38,13 +41,19 @@ export function Home() {
             <div className={styles.drop}>
               <UploadIcon />
               <span>Arraste o arquivo STL aqui</span>
-              <small>Até 100 MB. Disponível depois do login.</small>
+              <small>{signedIn ? "Até 100 MB. O envio chega na próxima versão." : "Até 100 MB. Disponível depois do login."}</small>
             </div>
           </Panel.Body>
           <Panel.Footer>
-            <Button variant="primary" block disabled>
-              Entrar para orçar
-            </Button>
+            {signedIn ? (
+              <Button variant="primary" block disabled>
+                Orçar (em breve)
+              </Button>
+            ) : (
+              <Button variant="primary" block disabled={session.state.status === "loading"} onClick={() => void session.signIn("/")}>
+                Entrar para orçar
+              </Button>
+            )}
           </Panel.Footer>
         </Panel>
       </section>

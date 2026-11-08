@@ -98,7 +98,14 @@ O `technician-2` nunca recebe pedidos nos testes, para conferir que só o técni
 
 O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel. O `customer-e` e o `customer-f` servem aos testes de troca de endereço e de retenção, cada um com o próprio limite por usuário.
 
-O `just token <conta>` faz o login pelo cliente `e2e`, que só existe no realm local e aceita usuário e senha, e imprime o token. Esse token não serve para o painel: sem o fluxo de navegador, o Keycloak não comprova o TOTP. Para o painel, `just panel-token <conta>` faz o login pelo `panel-web`, preenchendo as telas de senha e de TOTP como um navegador. Os front-ends vão usar os clientes `web` e `panel-web`, com authorization code e PKCE. O contrato do painel está em [panel-openapi.yaml](panel-openapi.yaml).
+O `just token <conta>` faz o login pelo cliente `e2e`, que só existe no realm local e aceita usuário e senha, e imprime o token. Esse token não serve para o painel: sem o fluxo de navegador, o Keycloak não comprova o TOTP. Para o painel, `just panel-token <conta>` faz o login pelo `panel-web`, preenchendo as telas de senha e de TOTP como um navegador. Os apps web usam os clientes `web` e `panel-web`, com authorization code e PKCE. Para entrar pelo navegador:
+
+* **Cliente:** em `https://localhost`, clique em "Entrar" e use `customer-a` com a senha de `secrets/keycloak_demo_password`.
+* **Equipe:** em `https://localhost:9445`, use `admin`, `support` ou `technician` com a mesma senha e o código TOTP. Para o código, cadastre a chave num app autenticador (SHA-1, 6 dígitos, 30 segundos). O app pede a chave em base32, e o segredo do realm é texto, então converta antes:
+
+  ```sh
+  python3 -c "import base64; print(base64.b32encode(open('secrets/keycloak_totp_secret','rb').read().strip()).decode())"
+  ``` O contrato do painel está em [panel-openapi.yaml](panel-openapi.yaml).
 
 ```sh
 TOKEN=$(just token a)

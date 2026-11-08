@@ -73,3 +73,18 @@ code,
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+dl {
+  display: grid;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+}
+dt {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+dd {
+  margin: 0 0 var(--space-2);
+}

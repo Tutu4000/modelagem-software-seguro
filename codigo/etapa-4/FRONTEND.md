@@ -37,7 +37,13 @@ O item do backlog é o E8.6, aplicação web e visualizador 3D com CSP (C09).
 - **TanStack Query (React Query)** para os dados, o cache e o polling do processamento e dos webhooks.
 - **Tipos da API gerados dos dois OpenAPI** (`openapi-typescript`), incluindo as respostas de erro.
 - **Dois apps separados, cliente e painel,** e um pacote comum. O painel não compartilha bundle nem origem com o app do cliente, assim como o binário `panel` não está na API.
-- **Tokens só em memória,** nunca em `localStorage` ou `sessionStorage`. Ao recarregar a página, a sessão volta pelo SSO do Keycloak (`prompt=none`).
+- **Tokens só em memória,** nunca em `localStorage` ou `sessionStorage`. Ao recarregar a página, a sessão volta pelo SSO do Keycloak (`prompt=none`) num iframe oculto, que termina na página `oidc-callback.html` do próprio app.
+  - **Única exceção:** o `state` e o `code_verifier` do PKCE ficam no `sessionStorage` entre a ida ao Keycloak e a volta. Eles precisam sobreviver ao redirecionamento, quem os grava e apaga é o `oidc-client-ts`, e nenhum dos dois é um token. O nosso código continua proibido de usar web storage pelo ESLint, e o Playwright confere que nada com cara de JWT fica guardado.
+  - **Para o iframe funcionar:**
+    - o realm aceita ser enquadrado pelos dois apps (`frame-ancestors`, sem `X-Frame-Options`);
+    - a CSP dos apps libera `frame-src 'self' https://localhost:8444`;
+    - o `frame-ancestors` dos apps passou de `'none'` para `'self'`.
+- **Step-up do painel num popup** (`prompt=login` e `acr_values=2`), para a tela não perder a justificativa digitada. Por isso o painel usa COOP `same-origin-allow-popups`; o app do cliente continua em `same-origin`. O painel confere o `auth_time` antes da operação crítica e, se a API ainda pedir step-up, repete uma vez.
 - **Testes:**
   - unidade com Vitest e Testing Library;
   - ponta a ponta com Playwright contra o compose, usando as contas do `devlogin` e o `just seed`.
@@ -104,4 +110,5 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 |Fase|Estado|
 |-|-|
 |FE0|Concluída: os dois apps servidos pelo nginx, os tipos dos OpenAPI, o design system com a página `/_design` no build de desenvolvimento, todos os cabeçalhos de segurança, o Playwright e o ZAP de novo|
-|FE1 a FE7|Pendentes|
+|FE1|Concluída: login com PKCE nos dois apps (`packages/auth`), tokens em memória, sessão de volta depois da recarga, saída, recuperação de 401, banner de 429, 503 e parceiro fora, `/conta` do cliente, `/me` do painel com a navegação pelo papel e o `CriticalActionDialog`, pronto para a FE5 e a FE6|
+|FE2 a FE7|Pendentes|

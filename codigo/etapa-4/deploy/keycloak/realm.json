@@ -67,8 +67,15 @@
   ],
   "authenticatorConfig": [
     {"alias": "level-1", "config": {"loa-condition-level": "1", "loa-max-age": "36000"}},
-    {"alias": "level-2", "config": {"loa-condition-level": "2", "loa-max-age": "300"}}
+    {"alias": "level-2", "config": {"loa-condition-level": "2", "loa-max-age": "36000"}}
   ],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' https://{{PUBLIC_HOST}} https://{{PUBLIC_HOST}}:9445; object-src 'none';",
+    "xFrameOptions": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "strictTransportSecurity": "max-age=31536000"
+  },
   "otpPolicyType": "totp",
   "otpPolicyAlgorithm": "HmacSHA1",
   "otpPolicyDigits": 6,

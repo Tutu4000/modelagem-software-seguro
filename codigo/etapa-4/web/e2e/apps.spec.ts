@@ -47,10 +47,11 @@ test("the mobile menu opens and closes", async ({ page }) => {
   await expect(page.getByRole("navigation", { name: "Menu" })).toBeHidden();
 });
 
-test("the panel app loads with no CSP violation", async ({ page }) => {
+test("the panel sends to the staff login right away", async ({ page }) => {
   const problems = watch(page);
   await page.goto("https://localhost:9445/");
-  await expect(page.getByRole("heading", { level: 1, name: "Entre com sua conta da equipe" })).toBeVisible();
+  await page.waitForURL(/localhost:8444\/realms\/nugget\/.*client_id=panel-web/);
+  expect(new URL(page.url()).searchParams.get("acr_values")).toBe("2");
   expect(problems).toEqual([]);
 });
 
