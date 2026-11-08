@@ -1,14 +1,54 @@
+import { AuthCallback, RequireSession } from "@nugget/auth";
+import { Banner, Button, Panel, Spinner, Stack } from "@nugget/ui";
 import { lazy, Suspense } from "react";
-import { createBrowserRouter, type RouteObject } from "react-router";
+import { createBrowserRouter, Outlet, type RouteObject } from "react-router";
 
+import { manager } from "./auth";
 import { Layout } from "./Layout";
-import { SignIn } from "./pages/SignIn";
+import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 
-const routes: RouteObject[] = [{ index: true, element: <SignIn /> }];
+/** Everything in the panel needs a staff session with the second factor. */
+function Protected() {
+  return (
+    <RequireSession
+      roles={["technician", "support", "admin"]}
+      loading={<Spinner label="Conferindo a sessão…" />}
+      expired={(signIn) => (
+        <Banner tone="warning" action={<Button variant="primary" onClick={signIn}>Entrar de novo</Button>}>
+          Sua sessão expirou.
+        </Banner>
+      )}
+      forbidden={
+        <Panel>
+          <Panel.Body>
+            <Stack gap={2}>
+              <h1>Acesso negado</h1>
+              <p>O painel é só da equipe.</p>
+            </Stack>
+          </Panel.Body>
+        </Panel>
+      }
+    >
+      <Outlet />
+    </RequireSession>
+  );
+}
 
-// The component gallery exists only in development: the production build
-// drops this branch, and the gallery with it.
+const routes: RouteObject[] = [
+  {
+    path: "auth/callback",
+    element: (
+      <AuthCallback
+        manager={manager}
+        loading={<Spinner label="Entrando…" />}
+        failed={<Banner tone="danger">Não foi possível concluir o login. Tente de novo.</Banner>}
+      />
+    ),
+  },
+  { element: <Protected />, children: [{ index: true, element: <Home /> }] },
+];
+
 if (import.meta.env.DEV) {
   const DesignGallery = lazy(() => import("@nugget/ui/src/DesignGallery").then((m) => ({ default: m.DesignGallery })));
   routes.push({

@@ -60,3 +60,7 @@ export function TextInput({ className, ...rest }: ComponentPropsWithoutRef<"inpu
 export function Select({ className, ...rest }: ComponentPropsWithoutRef<"select">) {
   return <select className={cx(styles.control, className)} {...rest} />;
 }
+
+export function TextArea({ className, ...rest }: ComponentPropsWithoutRef<"textarea">) {
+  return <textarea className={cx(styles.control, className)} {...rest} />;
+}

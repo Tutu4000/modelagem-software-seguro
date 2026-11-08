@@ -122,4 +122,5 @@ web-lint:
 # official Playwright image on the host network
 web-e2e:
     docker run --rm --network host --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp \
-        -v "{{ justfile_directory() }}/web:/web" -w /web {{ playwright }} npx playwright test
+        -v "{{ justfile_directory() }}/web:/web" -v "{{ justfile_directory() }}/secrets:/secrets:ro" -e SECRETS_DIR=/secrets \
+        -w /web {{ playwright }} npx playwright test

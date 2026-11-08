@@ -11,9 +11,17 @@ export default defineConfig(({ command }) => ({
     // the CSP allows only 'self'.
     assetsInlineLimit: 0,
     sourcemap: false,
+    rolldownOptions: {
+      // The app, and the small page that answers the OIDC frame and popup.
+      input: {
+        main: new URL("index.html", import.meta.url).pathname,
+        callback: new URL("oidc-callback.html", import.meta.url).pathname,
+      },
+    },
   },
   // The dev server proxies the panel API of the compose, trusting its local CA.
-  // The build never reads the secrets.
+  // The build never reads the secrets. The login needs the compose's origin,
+  // so the dev server runs without it.
   server:
     command === "serve"
       ? {

@@ -40,3 +40,8 @@ select.control {
   background-size: 5px 5px;
   background-repeat: no-repeat;
 }
+textarea.control {
+  min-height: 96px;
+  padding: var(--space-2) var(--space-3);
+  resize: vertical;
+}
