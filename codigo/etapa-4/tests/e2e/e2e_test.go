@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -329,9 +330,15 @@ func TestDatabaseRolesAreRestricted(t *testing.T) {
 		{"orders cannot change a price", "postgres", "nugget", "orders", "db_orders_password", "UPDATE orders SET total_cents = 0"},
 		{"panel_orders cannot change a price", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "UPDATE orders SET total_cents = 0"},
 		{"orders cannot read tasks", "postgres", "nugget", "orders", "db_orders_password", "SELECT 1 FROM tasks LIMIT 1"},
-		{"panel_orders cannot read files", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "SELECT 1 FROM files LIMIT 1"},
+		{"panel_orders cannot read file owners", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "SELECT owner_id, sha256 FROM files LIMIT 1"},
 		{"panel_orders cannot mark a payment", "postgres", "nugget", "panel_orders", "db_panel_orders_password", "UPDATE payments SET status = 'succeeded'"},
 		{"orders cannot change a payment amount", "postgres", "nugget", "orders", "db_orders_password", "UPDATE payments SET amount_cents = 1"},
+		{"support cannot read order prices", "postgres", "nugget", "support", "db_support_password", "SELECT total_cents FROM orders LIMIT 1"},
+		{"panel_support cannot delete messages", "postgres", "nugget", "panel_support", "db_panel_support_password", "DELETE FROM ticket_messages"},
+		{"orders cannot change a confirmation code", "postgres", "nugget", "orders", "db_orders_password", "UPDATE address_changes SET code_hash = code_hash"},
+		{"retention cannot read tickets", "postgres", "nugget", "retention", "db_retention_password", "SELECT 1 FROM tickets LIMIT 1"},
+		{"retention cannot read prices", "postgres", "nugget", "retention", "db_retention_password", "SELECT total_cents FROM orders LIMIT 1"},
+		{"retention audit cannot read events", "postgres-audit", "audit", "retention_audit", "db_retention_audit_password", "SELECT 1 FROM events LIMIT 1"},
 		{"audit cannot update events", "postgres-audit", "audit", "audit_app", "db_audit_password", "UPDATE events SET result = 'x'"},
 		{"audit cannot delete events", "postgres-audit", "audit", "audit_app", "db_audit_password", "DELETE FROM events"},
 	}
@@ -534,6 +541,7 @@ func apiJSON(t *testing.T, method, path, token, body string) *http.Response {
 
 type orderView struct {
 	ID                string `json:"id"`
+	FileID            string `json:"file_id"`
 	Status            string `json:"status"`
 	UnitCents         int64  `json:"unit_cents"`
 	ShippingCents     int64  `json:"shipping_cents"`
@@ -855,6 +863,15 @@ func TestOrderFromPaymentToDelivery(t *testing.T) {
 	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/ship", tech, ""), http.StatusAccepted)
 	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/ship", tech, ""), http.StatusConflict)
 
+	// RF15: a problem on the way, signed by the carrier, is told to the
+	// customer and does not move the order.
+	waitOrder(t, customer, o.ID, "shipped")
+	shipment := strings.TrimSpace(dockerCompose(t, "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "nugget", "-tAc",
+		"SELECT shipment_id FROM orders WHERE id = '"+o.ID+"'"))
+	problemEvent, _ := json.Marshal(partners.ShippingEvent{EventID: "evt_e2e_" + uuid.NewString(), Type: partners.ShipmentException,
+		ShipmentID: shipment, OrderID: uuid.MustParse(o.ID)})
+	wantStatus(t, signedPost(t, "/api/v1/webhooks/shipping", []byte(readSecret(t, "partner_shipping_webhook_secret")), time.Now(), problemEvent), http.StatusOK)
+
 	done := waitOrder(t, customer, o.ID, "delivered")
 	var steps []string
 	for _, h := range done.History {
@@ -867,7 +884,7 @@ func TestOrderFromPaymentToDelivery(t *testing.T) {
 
 	// The audit record is written right after the commit that the status
 	// poll already sees, so it is polled too.
-	want = []string{"order.in_production", "payment.requested", "payment.succeeded", "shipment.delivered", "shipment.picked_up", "shipment.requested"}
+	want = []string{"order.in_production", "payment.requested", "payment.succeeded", "shipment.delivered", "shipment.exception", "shipment.picked_up", "shipment.requested"}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
@@ -881,7 +898,74 @@ func TestOrderFromPaymentToDelivery(t *testing.T) {
 		}
 		time.Sleep(500 * time.Millisecond)
 	}
+
+	// E8.4: each step reached the registered e-mail, and none of the notices
+	// carries the address.
+	short := o.ID[:8]
+	for _, subject := range []string{"Pedido " + short + " aprovado", "Pagamento do pedido " + short + " confirmado",
+		"Pedido " + short + " enviado", "Problema na entrega do pedido " + short, "Pedido " + short + " entregue"} {
+		text := mailTo(t, devlogin.CustomerA, subject)
+		if strings.Contains(text, "Paulista") || strings.Contains(text, "01310") {
+			t.Errorf("%q carries the address: %q", subject, text)
+		}
+	}
+	if text := mailTo(t, devlogin.CustomerA, "Pedido "+short+" enviado"); !strings.Contains(text, done.TrackingCode) {
+		t.Errorf("the shipping notice has no tracking code: %q", text)
+	}
+
+	// C21: no address change after the dispatch.
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/address-change", staff(t, devlogin.Support), newAddressBody), http.StatusConflict)
 }
+
+const mailpit = "http://127.0.0.1:8026"
+
+// mailTo waits for the newest message to the account with the subject and
+// returns its text, read from the Mailpit API as the customer's inbox.
+func mailTo(t *testing.T, a devlogin.Account, subject string) string {
+	t.Helper()
+	q := url.Values{"query": {fmt.Sprintf(`to:"%s@nugget.local" subject:"%s"`, a.Username, subject)}}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		var found struct {
+			Messages []struct {
+				ID      string `json:"ID"`
+				Subject string `json:"Subject"`
+			} `json:"messages"`
+		}
+		getJSON(t, mailpit+"/api/v1/search?"+q.Encode(), &found)
+		for _, m := range found.Messages {
+			if m.Subject == subject {
+				var msg struct {
+					Text string `json:"Text"`
+				}
+				getJSON(t, mailpit+"/api/v1/message/"+m.ID, &msg)
+				return msg.Text
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no e-mail %q to %s", subject, a.Username)
+		}
+		time.Sleep(time.Second)
+	}
+}
+
+func getJSON(t *testing.T, rawURL string, v any) {
+	t.Helper()
+	resp, err := http.Get(rawURL) // #nosec G107 -- the local Mailpit
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: %s", rawURL, resp.Status)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		t.Fatal(err)
+	}
+}
+
+const newAddressBody = `{"address":{"recipient":"Customer Test","street":"Rua Augusta","number":"500","city":"São Paulo",` +
+	`"state":"SP","postal_code":"01304-000"},"justification":"e2e: customer asked for a new delivery address"}`
 
 // signedPost sends a webhook to the public address as the partner would, or
 // as an attacker who does not have the secret. It keeps to the nginx rate per
@@ -1036,6 +1120,284 @@ func TestAddressVisibleOnlyToWhoNeedsIt(t *testing.T) {
 		decode(t, resp, &seen)
 		if (seen.Shipping != nil) != tc.sees {
 			t.Errorf("%s sees the address: %v, want %v", tc.who.Username, seen.Shipping != nil, tc.sees)
+		}
+	}
+}
+
+type cancelled struct {
+	Status  string `json:"status"`
+	Payment *struct {
+		Status   string `json:"status"`
+		RefundID string `json:"refund_id"`
+	} `json:"payment"`
+}
+
+func cancel(t *testing.T, customer, id string, want int) cancelled {
+	t.Helper()
+	resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+id+"/cancel", customer, `{"reason":"e2e: changed my mind"}`)
+	wantStatus(t, resp, want)
+	var c cancelled
+	decode(t, resp, &c)
+	return c
+}
+
+func paidOrder(t *testing.T, customer string) orderView {
+	t.Helper()
+	o := approvedOrder(t, customer)
+	pay(t, customer, o.ID)
+	return waitOrder(t, customer, o.ID, "paid")
+}
+
+// RF10, CA06 and T11: only the owner cancels, only up to paid; a paid order
+// is refunded at the gateway, and the trail keeps who, from where and why.
+func TestCancellation(t *testing.T) {
+	a, b := login(t, devlogin.CustomerA), login(t, devlogin.CustomerB)
+
+	review := submittedOrder(t, b, processedFile(t, b, 8, 8, 8))
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+review.ID+"/cancel", a, ""), http.StatusForbidden)
+	if st := orderOf(t, b, review.ID).Status; st != "awaiting_review" {
+		t.Fatalf("another customer's cancel moved the order to %q", st)
+	}
+	if c := cancel(t, b, review.ID, http.StatusOK); c.Status != "cancelled" || c.Payment != nil {
+		t.Errorf("cancel of an order in review: %+v", c)
+	}
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+review.ID+"/cancel", b, ""), http.StatusConflict)
+	mailTo(t, devlogin.CustomerB, "Pedido "+review.ID[:8]+" cancelado")
+
+	paid := paidOrder(t, b)
+	if c := cancel(t, b, paid.ID, http.StatusOK); c.Payment == nil || c.Payment.Status != "refunded" || c.Payment.RefundID == "" {
+		t.Errorf("cancel of a paid order: %+v", c.Payment)
+	}
+	if text := mailTo(t, devlogin.CustomerB, "Pedido "+paid.ID[:8]+" cancelado"); !strings.Contains(text, "estorno do pagamento foi feito") {
+		t.Errorf("the cancellation notice does not tell the refund: %q", text)
+	}
+
+	// D03: without the gateway the cancellation holds and the refund waits;
+	// a new call finishes it with the same idempotency key.
+	pending := paidOrder(t, a)
+	dockerCompose(t, "stop", "partnersim")
+	t.Cleanup(func() { dockerCompose(t, "start", "partnersim") })
+	if c := cancel(t, a, pending.ID, http.StatusAccepted); c.Status != "cancelled" || c.Payment == nil || c.Payment.Status != "refund_pending" {
+		t.Errorf("cancel with the gateway down: %+v", c)
+	}
+	dockerCompose(t, "start", "partnersim")
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp := apiJSON(t, http.MethodPost, "/api/v1/orders/"+pending.ID+"/cancel", a, "")
+		var c cancelled
+		decode(t, resp, &c)
+		if resp.StatusCode == http.StatusOK && c.Payment != nil && c.Payment.Status == "refunded" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the refund did not finish: %d %+v", resp.StatusCode, c.Payment)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	c := login(t, devlogin.CustomerC)
+	production := paidOrder(t, c)
+	wantStatus(t, panelDo(t, http.MethodPost, "/panel/v1/orders/"+production.ID+"/production", staff(t, devlogin.Technician), ""), http.StatusOK)
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/orders/"+production.ID+"/cancel", c, ""), http.StatusConflict)
+
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT reason FROM events WHERE name = 'order.cancelled' AND target = '"+paid.ID+"' AND actor = '"+devlogin.CustomerB.ID.String()+"'")
+	if !strings.Contains(out, "from paid") || !strings.Contains(out, "changed my mind") {
+		t.Errorf("order.cancelled reason %q", strings.TrimSpace(out))
+	}
+}
+
+type ticketView struct {
+	ID       string `json:"id"`
+	Status   string `json:"status"`
+	Messages []struct {
+		AuthorKind string `json:"author_kind"`
+		Body       string `json:"body"`
+	} `json:"messages"`
+}
+
+// RF11: the customer talks to support about their own orders only, and only
+// support and admin answer.
+func TestSupportTickets(t *testing.T) {
+	a, c := login(t, devlogin.CustomerA), login(t, devlogin.CustomerC)
+	orderA := createOrder(t, a, processedFile(t, a, 5, 6, 7))
+
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/tickets", c,
+		`{"order_id":"`+orderA.ID+`","subject":"Not mine","message":"e2e: trying someone else's order"}`), http.StatusForbidden)
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/tickets", c,
+		`{"subject":"Control","message":"bell \u0007 inside"}`), http.StatusBadRequest)
+
+	resp := apiJSON(t, http.MethodPost, "/api/v1/tickets", c, `{"subject":"Prazo","message":"e2e: <b>quando</b> chega?"}`)
+	wantStatus(t, resp, http.StatusCreated)
+	var tk ticketView
+	decode(t, resp, &tk)
+	wantStatus(t, apiJSON(t, http.MethodGet, "/api/v1/tickets/"+tk.ID, a, ""), http.StatusForbidden)
+
+	ticketPath := "/panel/v1/tickets/" + tk.ID
+	wantStatus(t, panelDo(t, http.MethodGet, "/panel/v1/tickets", staff(t, devlogin.Technician), ""), http.StatusForbidden)
+	support := staff(t, devlogin.Support)
+	resp = panelDo(t, http.MethodGet, "/panel/v1/tickets?status=open", support, "")
+	wantStatus(t, resp, http.StatusOK)
+	var open struct {
+		Tickets []ticketView `json:"tickets"`
+	}
+	decode(t, resp, &open)
+	if !slices.ContainsFunc(open.Tickets, func(x ticketView) bool { return x.ID == tk.ID }) {
+		t.Errorf("support does not see ticket %s among the open ones", tk.ID)
+	}
+	wantStatus(t, panelDo(t, http.MethodPost, ticketPath+"/messages", support, `{"message":"e2e: chega em 5 dias úteis."}`), http.StatusOK)
+	if text := mailTo(t, devlogin.CustomerC, "Resposta no chamado "+tk.ID[:8]); strings.Contains(text, "5 dias") {
+		t.Errorf("the notice carries the answer: %q", text)
+	}
+
+	resp = apiJSON(t, http.MethodGet, "/api/v1/tickets/"+tk.ID, c, "")
+	wantStatus(t, resp, http.StatusOK)
+	decode(t, resp, &tk)
+	if tk.Status != "answered" || len(tk.Messages) != 2 || tk.Messages[1].AuthorKind != "staff" || tk.Messages[0].Body != "e2e: <b>quando</b> chega?" {
+		t.Errorf("the customer sees %+v", tk)
+	}
+
+	wantStatus(t, panelDo(t, http.MethodPost, ticketPath+"/close", support, ""), http.StatusOK)
+	wantStatus(t, apiJSON(t, http.MethodPost, "/api/v1/tickets/"+tk.ID+"/messages", c, `{"message":"e2e: ainda aí?"}`), http.StatusConflict)
+	wantStatus(t, panelDo(t, http.MethodPost, ticketPath+"/messages", support, `{"message":"e2e: fechado"}`), http.StatusConflict)
+}
+
+var addressCode = regexp.MustCompile(`código (\d{8})`)
+
+// CA04 and C21: support alone cannot move a delivery. The change waits for
+// the code sent to the registered e-mail, which only the owner, logged in,
+// can type.
+func TestAddressChangeNeedsTheCustomer(t *testing.T) {
+	a, b := login(t, devlogin.CustomerE), login(t, devlogin.CustomerB)
+	o := approvedOrder(t, a)
+	support := staff(t, devlogin.Support)
+	changePath := "/panel/v1/orders/" + o.ID + "/address-change"
+
+	wantStatus(t, panelDo(t, http.MethodPost, changePath, staff(t, devlogin.Technician), newAddressBody), http.StatusForbidden)
+	wantStatus(t, panelDo(t, http.MethodPost, changePath, support, strings.Replace(newAddressBody, `"justification":"e2e: customer asked for a new delivery address"`, `"justification":""`, 1)), 422)
+
+	resp := panelDo(t, http.MethodPost, changePath, support, newAddressBody)
+	wantStatus(t, resp, http.StatusAccepted)
+	answer, _ := io.ReadAll(resp.Body)
+	code := addressCode.FindStringSubmatch(mailTo(t, devlogin.CustomerE, "Confirme a troca de endereço do pedido "+o.ID[:8]))
+	if code == nil {
+		t.Fatal("no code in the confirmation e-mail")
+	}
+	if strings.Contains(string(answer), code[1]) {
+		t.Fatal("the panel's answer carries the code")
+	}
+	if got := orderOf(t, a, o.ID); got.Shipping == nil || got.Shipping.PostalCode != "01310-100" {
+		t.Fatalf("the address changed before the confirmation: %+v", got.Shipping)
+	}
+
+	// Paced to the nginx rate per IP, so the limiter does not answer instead
+	// of the attempt counter.
+	confirm := func(token, code string) *http.Response {
+		time.Sleep(200 * time.Millisecond)
+		return apiJSON(t, http.MethodPost, "/api/v1/orders/"+o.ID+"/address-change/confirm", token, `{"code":"`+code+`"}`)
+	}
+	wantStatus(t, confirm(b, code[1]), http.StatusForbidden)
+	wrong := "00000000"
+	if wrong == code[1] {
+		wrong = "11111111"
+	}
+	for range 4 {
+		wantStatus(t, confirm(a, wrong), http.StatusBadRequest)
+	}
+	wantStatus(t, confirm(a, wrong), http.StatusConflict)
+	wantStatus(t, confirm(a, code[1]), http.StatusConflict)
+
+	// A new proposal, and this time the customer types the right code.
+	wantStatus(t, panelDo(t, http.MethodPost, changePath, support, newAddressBody), http.StatusAccepted)
+	deadline := time.Now().Add(20 * time.Second)
+	var fresh []string
+	for {
+		fresh = addressCode.FindStringSubmatch(mailTo(t, devlogin.CustomerE, "Confirme a troca de endereço do pedido "+o.ID[:8]))
+		if fresh != nil && fresh[1] != code[1] {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no new confirmation code")
+		}
+		time.Sleep(time.Second)
+	}
+	pendingResp := apiJSON(t, http.MethodGet, "/api/v1/orders/"+o.ID+"/address-change", a, "")
+	wantStatus(t, pendingResp, http.StatusOK)
+	wantStatus(t, confirm(a, fresh[1]), http.StatusOK)
+	if got := orderOf(t, a, o.ID); got.Shipping == nil || got.Shipping.PostalCode != "01304-000" {
+		t.Errorf("address after the confirmation: %+v", got.Shipping)
+	}
+	mailTo(t, devlogin.CustomerE, "Endereço do pedido "+o.ID[:8]+" alterado")
+
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT name, reason FROM events WHERE target = '"+o.ID+"' AND name LIKE 'address.%' ORDER BY occurred_at")
+	if strings.Count(out, "address.change_failed") != 5 || !strings.Contains(out, "address.changed") ||
+		!strings.Contains(out, "01310-***") || strings.Contains(out, "Augusta") || strings.Contains(out, "01304-000") {
+		t.Errorf("address events:\n%s", out)
+	}
+}
+
+// E8.5: the retention deletes the design 90 days after the delivery and the
+// design never ordered after 30 days, clears the address of a closed order,
+// and keeps what a live order still needs. The test moves the dates back in
+// the database, as only a test may.
+func TestRetention(t *testing.T) {
+	b := login(t, devlogin.CustomerF)
+	o := paidOrder(t, b)
+	tech := staff(t, devlogin.Technician)
+	wantStatus(t, panelDo(t, http.MethodPost, "/panel/v1/orders/"+o.ID+"/production", tech, ""), http.StatusOK)
+	wantStatus(t, panelDo(t, http.MethodPost, "/panel/v1/orders/"+o.ID+"/ship", tech, ""), http.StatusAccepted)
+	waitOrder(t, b, o.ID, "delivered")
+	oldURL := downloadURL(t, b, o.FileID)
+
+	unordered := processedFile(t, b, 3, 3, 3)
+	live := submittedOrder(t, b, processedFile(t, b, 4, 4, 4))
+
+	sql := func(q string) {
+		dockerCompose(t, "exec", "-T", "postgres", "psql", "-U", "postgres", "-d", "nugget", "-v", "ON_ERROR_STOP=1", "-c", q)
+	}
+	sql("UPDATE order_status_history SET at = at - interval '91 days' WHERE order_id = '" + o.ID + "'")
+	sql("UPDATE files SET created_at = created_at - interval '31 days' WHERE id IN ('" + unordered + "', '" + live.FileID + "')")
+	dockerCompose(t, "run", "--rm", "retention", "-once")
+
+	for _, id := range []string{o.FileID, unordered} {
+		if st := status(t, b, id); st.Status != "purged" {
+			t.Errorf("file %s is %q, want purged", id, st.Status)
+		}
+		wantStatus(t, do(t, http.MethodGet, base+"/api/v1/files/"+id+"/download", b, nil, -1), http.StatusGone)
+	}
+	wantStatus(t, do(t, http.MethodGet, oldURL, "", nil, -1), http.StatusNotFound)
+	if st := status(t, b, live.FileID); st.Status != "done" {
+		t.Errorf("the file of a live order is %q, want done", st.Status)
+	}
+	if got := orderOf(t, b, o.ID); got.Shipping != nil {
+		t.Errorf("the delivered order still shows the address: %+v", got.Shipping)
+	}
+	out := dockerCompose(t, "exec", "-T", "postgres-audit", "psql", "-U", "postgres", "-d", "audit", "-tAc",
+		"SELECT count(*) FROM events WHERE name = 'file.purged' AND target IN ('"+o.FileID+"', '"+unordered+"')")
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("file.purged events: %q, want 2", strings.TrimSpace(out))
+	}
+}
+
+// E8.4: the notifier sees only the queue and the mail server, and each
+// RabbitMQ user reaches only its own queues.
+func TestNotifierIsIsolated(t *testing.T) {
+	out := dockerCompose(t, "ps", "--format", "{{.Service}} {{.Networks}}")
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		service, networks, _ := strings.Cut(line, " ")
+		onNotify := strings.Contains(networks, "nuggetmachine_notify")
+		if service == "notifier" && networks != "nuggetmachine_notify" {
+			t.Errorf("the notifier is on %s", networks)
+		}
+		if onNotify && !slices.Contains([]string{"notifier", "mailpit", "rabbitmq"}, service) {
+			t.Errorf("%s is on the notify network", service)
+		}
+	}
+	perms := dockerCompose(t, "exec", "-T", "rabbitmq", "rabbitmqctl", "list_permissions", "-q")
+	for _, want := range []string{"notifier\t^$\t^$\t^notifications$", "panel\t^$\t^notifications$\t^$"} {
+		if !strings.Contains(perms, want) {
+			t.Errorf("RabbitMQ permissions without %q:\n%s", want, perms)
 		}
 	}
 }

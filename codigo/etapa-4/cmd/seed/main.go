@@ -2,8 +2,9 @@
 // public API, logged in through Keycloak as a customer would be (E2.5), and
 // leaves orders in different states for the demo. The orders past the review
 // go through the panel as the staff would, with the browser login and TOTP,
-// and are paid through the simulated gateway. No real data enters the
-// environment.
+// and are paid through the simulated gateway. It also opens a support ticket,
+// leaves an address change waiting for the customer's code and cancels a paid
+// order with its refund. No real data enters the environment.
 package main
 
 import (
@@ -29,7 +30,8 @@ type seeder struct {
 }
 
 // steps is the order lifecycle the seed walks, up to each model's target.
-var steps = []string{"quoted", "awaiting_review", "awaiting_payment", "paid", "in_production"}
+// "cancelled" is a paid order cancelled by the customer, with the refund.
+var steps = []string{"quoted", "awaiting_review", "awaiting_payment", "paid", "in_production", "cancelled"}
 
 func main() {
 	base := flag.String("url", "https://localhost", "API address")
@@ -57,6 +59,7 @@ func main() {
 		{devlogin.CustomerA, "gear", 30, 30, 10, "in_production"},
 		{devlogin.CustomerB, "housing", 80, 40, 20, "awaiting_payment"},
 		{devlogin.CustomerB, "clip", 15, 10, 5, "paid"},
+		{devlogin.CustomerB, "knob", 20, 20, 15, "cancelled"},
 		{devlogin.CustomerB, "beam", 320, 20, 20, "awaiting_review"},
 	}
 	for _, m := range models {
@@ -86,11 +89,40 @@ func main() {
 		s.call(ctx, http.MethodPost, "/api/v1/orders", token, "application/json", body, http.StatusCreated, &order)
 		s.advance(ctx, token, order.ID, m.order)
 		fmt.Printf("%-10s  %-8s  order %s (%s)\n", m.owner.Username, m.name, order.ID, m.order)
+		if m.name == "housing" {
+			s.afterSale(ctx, token, order.ID)
+		}
 	}
+}
+
+// afterSale opens a ticket about the order and has support propose an address
+// change, which waits for the code sent to the customer's inbox in Mailpit.
+func (s seeder) afterSale(ctx context.Context, token, orderID string) {
+	ticket, _ := json.Marshal(map[string]string{
+		"order_id": orderID, "subject": "Troca de endereço",
+		"message": "Vou me mudar antes da entrega. Podem enviar para a Rua Augusta, 500?",
+	})
+	var t struct {
+		ID string `json:"id"`
+	}
+	s.call(ctx, http.MethodPost, "/api/v1/tickets", token, "application/json", ticket, http.StatusCreated, &t)
+	change, _ := json.Marshal(map[string]any{
+		"address": map[string]string{
+			"recipient": "customer-b", "street": "Rua Augusta", "number": "500",
+			"city": "São Paulo", "state": "SP", "postal_code": "01304-000",
+		},
+		"ticket_id":     t.ID,
+		"justification": "seed: the customer asked in the ticket",
+	})
+	s.panelCall(ctx, devlogin.Support, "/panel/v1/orders/"+orderID+"/address-change", change, http.StatusAccepted)
+	fmt.Printf("%-10s  %-8s  ticket %s, address change waiting for the code in Mailpit\n", "customer-b", "housing", t.ID)
 }
 
 // advance walks the order from quoted up to the target step.
 func (s seeder) advance(ctx context.Context, token, id, target string) {
+	if target == steps[0] {
+		return
+	}
 	for _, step := range steps[1:] {
 		switch step {
 		case "awaiting_review":
@@ -104,7 +136,13 @@ func (s seeder) advance(ctx context.Context, token, id, target string) {
 			s.call(ctx, http.MethodPost, "/api/v1/orders/"+id+"/payment", token, "", nil, http.StatusAccepted, nil)
 			s.waitOrder(ctx, token, id, "paid")
 		case "in_production":
+			if target == "cancelled" {
+				continue
+			}
 			s.panelCall(ctx, devlogin.Technician, "/panel/v1/orders/"+id+"/production", nil, http.StatusOK)
+		case "cancelled":
+			s.call(ctx, http.MethodPost, "/api/v1/orders/"+id+"/cancel", token, "application/json",
+				[]byte(`{"reason":"seed: bought by mistake"}`), http.StatusOK, nil)
 		}
 		if step == target {
 			return

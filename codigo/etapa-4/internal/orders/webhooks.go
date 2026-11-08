@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"nuggetmachine/internal/audit"
+	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/problem"
 	"nuggetmachine/internal/webhook"
@@ -30,6 +32,7 @@ type Webhooks struct {
 	Audit          *audit.Logger
 	Now            func() time.Time
 	Log            *slog.Logger
+	Notify         Notifier
 }
 
 func (w *Webhooks) Payments(c *gin.Context) {
@@ -62,7 +65,8 @@ func (w *Webhooks) Shipping(c *gin.Context) {
 		EventID: ev.EventID, Type: ev.Type, ShipmentID: ev.ShipmentID, OrderID: ev.OrderID,
 	})
 	name := "shipment"
-	if ev.Type == partners.ShipmentPickedUp || ev.Type == partners.ShipmentDelivered {
+	switch ev.Type {
+	case partners.ShipmentPickedUp, partners.ShipmentDelivered, partners.ShipmentException:
 		name = ev.Type
 	}
 	w.respond(c, name, "shipping", ev.OrderID.String(), applied, err)
@@ -99,8 +103,37 @@ func (w *Webhooks) respond(c *gin.Context, name, partner, target string, applied
 			name = "payment.succeeded"
 		}
 		w.record(c, name, partner, target, "ok", "")
+		w.notice(c, name, target)
 		c.JSON(http.StatusOK, gin.H{"status": "applied"})
 	}
+}
+
+// notice tells the customer what the partner reported, after the commit.
+func (w *Webhooks) notice(c *gin.Context, name, target string) {
+	ctx := c.Request.Context()
+	id, err := uuid.Parse(target)
+	if err != nil {
+		return
+	}
+	o, err := w.Store.Get(ctx, id)
+	if err != nil {
+		w.Log.Error("order of an applied event", "order", target, "error", err)
+		return
+	}
+	var m notify.Message
+	switch name {
+	case "payment.succeeded":
+		m = NoticePaid(o)
+	case partners.ShipmentPickedUp:
+		m = NoticeShipped(o)
+	case partners.ShipmentDelivered:
+		m = NoticeDelivered(o)
+	case partners.ShipmentException:
+		m = NoticeShipmentProblem(o)
+	default:
+		return
+	}
+	w.Notify.Send(ctx, m, target, c.ClientIP())
 }
 
 func rejectedName(name string) string {

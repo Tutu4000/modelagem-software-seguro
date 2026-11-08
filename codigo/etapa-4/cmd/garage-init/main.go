@@ -1,7 +1,8 @@
 // Command garage-init prepares Garage through the Admin API v2: node layout,
-// private bucket and the API key, with read and write only (E3.3). Running it
-// again has no effect. It exists because the Garage image has no shell for a
-// script.
+// private bucket and the API key, with read and write only (E3.3), plus the
+// panel's read-only key, the retention's key and the bucket's lifecycle rule
+// (E8.5). Running it again has no effect. It exists because the Garage image
+// has no shell for a script.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"nuggetmachine/internal/config"
+	"nuggetmachine/internal/storage"
 )
 
 type admin struct {
@@ -40,6 +42,13 @@ func main() {
 	// The panel only opens designs for the assigned technician: read only (D02).
 	panelKey := key{name: "panel", write: false,
 		id: string(env.Secret("S3_PANEL_ACCESS_KEY_ID")), secret: string(env.Secret("S3_PANEL_SECRET_ACCESS_KEY"))}
+	// The retention deletes objects. Garage has no delete-only permission, so
+	// the key can also write: an accepted risk, the key lives only in the
+	// retention container.
+	retentionKey := key{name: "retention", write: true,
+		id: string(env.Secret("S3_RETENTION_ACCESS_KEY_ID")), secret: string(env.Secret("S3_RETENTION_SECRET_ACCESS_KEY"))}
+	s3Endpoint := env.String("S3_ENDPOINT", "http://garage:3900")
+	region := env.String("S3_REGION", "garage")
 	if err := env.Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -55,12 +64,49 @@ func main() {
 	if err != nil {
 		log.Fatalf("bucket: %v", err)
 	}
-	for _, k := range []key{apiKey, panelKey} {
+	for _, k := range []key{apiKey, panelKey, retentionKey} {
 		if err := a.grant(ctx, bucketID, k); err != nil {
 			log.Fatalf("key %s: %v", k.name, err)
 		}
 		log.Printf("Garage ready: bucket %q with key %s (%s), write=%v", bucket, k.id, k.name, k.write)
 	}
+	if err := a.lifecycle(ctx, bucketID, bucket, s3Endpoint, region); err != nil {
+		log.Fatalf("lifecycle: %v", err)
+	}
+	log.Printf("lifecycle applied: objects expire after %d days, incomplete uploads after %d", expireDays, abortDays)
+}
+
+// The lifecycle rule is a safety net: the retention job deletes the designs
+// much earlier, from the order dates (E8.5).
+const (
+	expireDays = 400
+	abortDays  = 1
+)
+
+// lifecycle needs an owner key, which no application key is. A temporary one
+// is created, used once and deleted.
+func (a admin) lifecycle(ctx context.Context, bucketID, bucket, endpoint, region string) error {
+	var k struct {
+		ID     string `json:"accessKeyId"`
+		Secret string `json:"secretAccessKey"`
+	}
+	if err := a.call(ctx, http.MethodPost, "/v2/CreateKey", map[string]string{"name": "garage-init-lifecycle"}, &k); err != nil {
+		return err
+	}
+	defer func() {
+		if err := a.call(ctx, http.MethodPost, "/v2/DeleteKey?id="+url.QueryEscape(k.ID), nil, nil); err != nil {
+			log.Printf("temporary key %s not deleted: %v", k.ID, err)
+		}
+	}()
+	if err := a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.ID,
+		// Garage refuses the lifecycle call to an owner-only key.
+		"permissions": map[string]bool{"read": true, "write": true, "owner": true},
+	}, nil); err != nil {
+		return err
+	}
+	owner := storage.NewS3(storage.S3Config{Bucket: bucket, Region: region, Endpoint: endpoint, PublicEndpoint: endpoint, AccessKey: k.ID, SecretKey: k.Secret})
+	return owner.SetLifecycle(ctx, expireDays, abortDays)
 }
 
 type key struct {

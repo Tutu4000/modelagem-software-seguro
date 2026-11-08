@@ -45,6 +45,19 @@ type PaymentEvent struct {
 
 const PaymentSucceeded = "payment.succeeded"
 
+// RefundRequest gives back the whole charge of a cancelled order (RF10). The
+// idempotency key makes a retry return the same refund.
+type RefundRequest struct {
+	ChargeID       string `json:"charge_id"`
+	AmountCents    int64  `json:"amount_cents"`
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+type Refund struct {
+	RefundID string `json:"refund_id"`
+	Status   string `json:"status"` // succeeded
+}
+
 type QuoteRequest struct {
 	PostalCode string  `json:"postal_code"`
 	VolumeCM3  float64 `json:"volume_cm3"`
@@ -100,7 +113,7 @@ type Shipment struct {
 // ShippingEvent is the notification of the carrier, signed with HMAC.
 type ShippingEvent struct {
 	EventID    string    `json:"event_id"`
-	Type       string    `json:"type"` // shipment.picked_up or shipment.delivered
+	Type       string    `json:"type"` // shipment.picked_up, shipment.delivered or shipment.exception
 	ShipmentID string    `json:"shipment_id"`
 	OrderID    uuid.UUID `json:"order_id"`
 }
@@ -108,6 +121,9 @@ type ShippingEvent struct {
 const (
 	ShipmentPickedUp  = "shipment.picked_up"
 	ShipmentDelivered = "shipment.delivered"
+	// ShipmentException is a problem in the delivery (RF15). It does not
+	// change the order's status.
+	ShipmentException = "shipment.exception"
 )
 
 // Client calls one partner with its API key.
@@ -124,6 +140,11 @@ func NewClient(base string, key []byte) *Client {
 func (c *Client) CreateCharge(ctx context.Context, r ChargeRequest) (Charge, error) {
 	var out Charge
 	return out, c.post(ctx, "/charges", r, &out)
+}
+
+func (c *Client) Refund(ctx context.Context, r RefundRequest) (Refund, error) {
+	var out Refund
+	return out, c.post(ctx, "/refunds", r, &out)
 }
 
 func (c *Client) Quote(ctx context.Context, r QuoteRequest) (ShippingQuote, error) {

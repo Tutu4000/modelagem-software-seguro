@@ -2,7 +2,9 @@
   "exchanges": [
     {"name": "tasks", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
     {"name": "results", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
-    {"name": "tasks.failed", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {}}
+    {"name": "tasks.failed", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+    {"name": "notifications", "vhost": "/", "type": "direct", "durable": true, "auto_delete": false, "internal": false, "arguments": {}},
+    {"name": "notifications.failed", "vhost": "/", "type": "fanout", "durable": true, "auto_delete": false, "internal": false, "arguments": {}}
   ],
   "queues": [
     {"name": "tasks", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {
@@ -11,11 +13,19 @@
       "x-dead-letter-exchange": "tasks.failed"
     }},
     {"name": "tasks.failed", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}},
-    {"name": "results", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}}
+    {"name": "results", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}},
+    {"name": "notifications", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {
+      "x-queue-type": "quorum",
+      "x-delivery-limit": 5,
+      "x-dead-letter-exchange": "notifications.failed"
+    }},
+    {"name": "notifications.failed", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {"x-queue-type": "quorum"}}
   ],
   "bindings": [
     {"source": "tasks", "vhost": "/", "destination": "tasks", "destination_type": "queue", "routing_key": "tasks", "arguments": {}},
     {"source": "results", "vhost": "/", "destination": "results", "destination_type": "queue", "routing_key": "results", "arguments": {}},
-    {"source": "tasks.failed", "vhost": "/", "destination": "tasks.failed", "destination_type": "queue", "routing_key": "", "arguments": {}}
+    {"source": "tasks.failed", "vhost": "/", "destination": "tasks.failed", "destination_type": "queue", "routing_key": "", "arguments": {}},
+    {"source": "notifications", "vhost": "/", "destination": "notifications", "destination_type": "queue", "routing_key": "notifications", "arguments": {}},
+    {"source": "notifications.failed", "vhost": "/", "destination": "notifications.failed", "destination_type": "queue", "routing_key": "", "arguments": {}}
   ]
 }

@@ -273,6 +273,28 @@
       "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
     },
     {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0e05",
+      "username": "customer-e",
+      "email": "customer-e@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "E",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0f06",
+      "username": "customer-f",
+      "email": "customer-f@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "F",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
       "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01",
       "username": "technician",
       "email": "technician@nugget.local",

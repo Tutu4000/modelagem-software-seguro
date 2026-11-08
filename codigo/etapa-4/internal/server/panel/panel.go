@@ -12,10 +12,12 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/server"
 	"nuggetmachine/internal/session"
+	"nuggetmachine/internal/support"
 )
 
 // IdP is what the panel asks of Keycloak: the incident response and whether
@@ -45,6 +47,9 @@ type Deps struct {
 	Orders        *orders.Store
 	Files         Presigner
 	Carrier       Carrier
+	Support       *support.Store
+	// Notify queues the notices to the customer's registered e-mail (E8.4).
+	Notify notify.Sender
 	// StepUpMaxAge is how recent the login must be for a critical operation.
 	StepUpMaxAge   time.Duration
 	Now            func() time.Time
@@ -81,6 +86,13 @@ func New(d Deps) (*server.Router, error) {
 	v1.Handle(http.MethodPost, "/orders/:id/review", technician, h.review)
 	v1.Handle(http.MethodPost, "/orders/:id/production", technician, h.startProduction)
 	v1.Handle(http.MethodPost, "/orders/:id/ship", technician, h.ship)
+
+	supportStaff := []auth.Role{auth.RoleSupport, auth.RoleAdmin}
+	v1.Handle(http.MethodPost, "/orders/:id/address-change", supportStaff, critical, h.proposeAddressChange)
+	v1.Handle(http.MethodGet, "/tickets", supportStaff, h.listTickets)
+	v1.Handle(http.MethodGet, "/tickets/:id", supportStaff, h.getTicket)
+	v1.Handle(http.MethodPost, "/tickets/:id/messages", supportStaff, h.replyTicket)
+	v1.Handle(http.MethodPost, "/tickets/:id/close", supportStaff, h.closeTicket)
 
 	v1.Handle(http.MethodGet, "/price-tables", admin, h.priceTables)
 	v1.Handle(http.MethodPost, "/price-tables", admin, h.proposePriceTable)

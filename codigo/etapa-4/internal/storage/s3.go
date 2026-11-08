@@ -8,6 +8,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S3Config struct {
@@ -86,4 +87,29 @@ func presign(c *s3.PresignClient, bucket, key string, ttl time.Duration) (string
 		return "", err
 	}
 	return req.URL, nil
+}
+
+// Delete removes an object. Only the retention's key can (E8.5).
+func (s *S3) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	return err
+}
+
+// SetLifecycle is the bucket's safety net for the retention (E8.5): every
+// object expires after expireDays, and an upload left incomplete is aborted
+// after abortDays. It needs an owner key.
+func (s *S3) SetLifecycle(ctx context.Context, expireDays, abortDays int32) error {
+	_, err := s.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+		Bucket: aws.String(s.bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+			ID:         aws.String("retention-safety-net"),
+			Status:     types.ExpirationStatusEnabled,
+			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
+			Expiration: &types.LifecycleExpiration{Days: aws.Int32(expireDays)},
+			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{
+				DaysAfterInitiation: aws.Int32(abortDays),
+			},
+		}}},
+	})
+	return err
 }

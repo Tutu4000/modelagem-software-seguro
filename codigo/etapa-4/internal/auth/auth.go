@@ -47,6 +47,7 @@ type User struct {
 	issuedAt time.Time
 	acr      string
 	authTime time.Time
+	email    string
 }
 
 func (u User) ID() UserID { return u.id }
@@ -67,6 +68,10 @@ func (u User) ACR() string { return u.acr }
 // AuthTime is when the user last typed the credentials, not when the token was
 // refreshed. Zero when the token does not say.
 func (u User) AuthTime() time.Time { return u.authTime }
+
+// Email is the address registered in Keycloak, only when it is verified, or
+// empty. It is the channel the notifications and confirmations go to (C21).
+func (u User) Email() string { return u.email }
 
 // StaticKey verifies every token with one public key. The tests use it in
 // place of the IdP.
@@ -107,11 +112,13 @@ func NewVerifier(c VerifierConfig) *Verifier {
 }
 
 type claims struct {
-	Type        string           `json:"typ"`
-	SessionID   string           `json:"sid"`
-	ACR         string           `json:"acr"`
-	AuthTime    *jwt.NumericDate `json:"auth_time"`
-	RealmAccess struct {
+	Type          string           `json:"typ"`
+	SessionID     string           `json:"sid"`
+	ACR           string           `json:"acr"`
+	AuthTime      *jwt.NumericDate `json:"auth_time"`
+	Email         string           `json:"email"`
+	EmailVerified bool             `json:"email_verified"`
+	RealmAccess   struct {
 		Roles []string `json:"roles"`
 	} `json:"realm_access"`
 	jwt.RegisteredClaims
@@ -151,6 +158,9 @@ func (v *Verifier) Verify(token string) (User, error) {
 	u := User{id: UserID(id), role: role, session: c.SessionID, issuedAt: c.IssuedAt.Time, acr: c.ACR}
 	if c.AuthTime != nil {
 		u.authTime = c.AuthTime.Time
+	}
+	if c.EmailVerified {
+		u.email = c.Email
 	}
 	return u, nil
 }

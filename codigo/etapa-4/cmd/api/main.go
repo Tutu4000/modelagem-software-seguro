@@ -19,6 +19,7 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pg"
@@ -27,6 +28,7 @@ import (
 	"nuggetmachine/internal/server/customer"
 	"nuggetmachine/internal/session"
 	"nuggetmachine/internal/storage"
+	"nuggetmachine/internal/support"
 )
 
 func main() {
@@ -58,6 +60,7 @@ func run(log *slog.Logger) error {
 	filesPassword := env.Secret("DB_FILES_PASSWORD")
 	queuePassword := env.Secret("DB_QUEUE_PASSWORD")
 	ordersPassword := env.Secret("DB_ORDERS_PASSWORD")
+	supportPassword := env.Secret("DB_SUPPORT_PASSWORD")
 	auditPassword := env.Secret("DB_AUDIT_PASSWORD")
 	buildVolume, err := pricing.ParseBuildVolume(env.String("BUILD_VOLUME_MM", "250,250,250"))
 	if err != nil {
@@ -103,6 +106,11 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer ordersPool.Close()
+	supportPool, err := pg.Open(ctx, mainHost, mainName, "support", supportPassword)
+	if err != nil {
+		return err
+	}
+	defer supportPool.Close()
 	auditPool, err := pg.Open(ctx, auditHost, auditName, "audit_app", auditPassword)
 	if err != nil {
 		return err
@@ -139,6 +147,8 @@ func run(log *slog.Logger) error {
 		Limiter:               sessions,
 		RatePerMinute:         ratePerMinute,
 		Orders:                orders.NewStore(ordersPool),
+		Support:               support.NewStore(supportPool),
+		Notify:                notify.NewRabbit(broker),
 		BuildVolume:           buildVolume,
 		Now:                   time.Now,
 		Gateway:               partners.NewClient(paymentsURL, paymentsKey),

@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -33,10 +35,13 @@ type Handler struct {
 	// network.
 	Gateway Gateway
 	Carrier Carrier
+	// Notify sends the notices to the registered e-mail after the commit.
+	Notify Notifier
 }
 
 type Gateway interface {
 	CreateCharge(ctx context.Context, r partners.ChargeRequest) (partners.Charge, error)
+	Refund(ctx context.Context, r partners.RefundRequest) (partners.Refund, error)
 }
 
 type Carrier interface {
@@ -78,6 +83,12 @@ func (h *Handler) Create(c *gin.Context) {
 		problem.Abort(c, problem.New(problem.InvalidRequest, err))
 		return
 	}
+	// The verified e-mail is the channel of the notices and of the address
+	// confirmation (C21). Without it, there is no order.
+	if user.Email() == "" {
+		problem.Abort(c, problem.New(problem.InvalidRequest, errors.New("the account has no verified e-mail")))
+		return
+	}
 	ctx := c.Request.Context()
 
 	file, err := h.Files.FindForUser(ctx, user, files.FileID(req.FileID))
@@ -87,6 +98,10 @@ func (h *Handler) Create(c *gin.Context) {
 	}
 	if err != nil {
 		problem.Abort(c, err)
+		return
+	}
+	if file.Purged {
+		problem.Abort(c, problem.New(problem.Conflict, fmt.Errorf("file %s was purged", file.ID)))
 		return
 	}
 	task, err := h.Tasks.StatusOf(ctx, file.ID)
@@ -135,6 +150,7 @@ func (h *Handler) Create(c *gin.Context) {
 		Status: string(StatusQuoted), QuoteExpiresAt: now.Add(QuoteValidity), CreatedAt: now,
 		ShipRecipient: a.Recipient, ShipStreet: a.Street, ShipNumber: a.Number,
 		ShipCity: a.City, ShipState: a.State, ShipPostalCode: a.PostalCode,
+		ContactEmail: user.Email(),
 	}
 	if err := h.Store.Create(ctx, o); err != nil {
 		problem.Abort(c, err)
@@ -272,6 +288,155 @@ func (h *Handler) record(c *gin.Context, name string, id uuid.UUID, reason strin
 	user := auth.MustUser(c)
 	if err := h.Audit.Record(audit.Event{
 		Name: name, Actor: user.ID().String(), Action: name, Target: id.String(), Result: "ok", Reason: reason, Origin: c.ClientIP(),
+	}); err != nil {
+		_ = c.Error(err)
+	}
+}
+
+type cancelRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Cancel is RF10: only the owner, only up to paid. A paid order is cancelled
+// first and refunded after; if the gateway does not answer, the refund stays
+// pending and a new call finishes it with the same idempotency key. The
+// event keeps who cancelled, from which status and why (T11).
+func (h *Handler) Cancel(c *gin.Context) {
+	user := auth.MustUser(c)
+	o, ok := h.own(c, user)
+	if !ok {
+		return
+	}
+	var req cancelRequest
+	if c.Request.ContentLength != 0 {
+		if err := server.DecodeJSON(c, &req); err != nil {
+			problem.Abort(c, problem.New(problem.InvalidRequest, err))
+			return
+		}
+	}
+	if utf8.RuneCountInString(req.Reason) > 500 {
+		problem.Abort(c, problem.New(problem.InvalidRequest, errors.New("reason must have up to 500 characters")))
+		return
+	}
+	ctx := c.Request.Context()
+
+	var refund *Payment
+	if Status(o.Status) == StatusCancelled {
+		p, err := h.Store.RefundPending(ctx, o.ID)
+		if err != nil {
+			problem.Abort(c, err)
+			return
+		}
+		if p == nil {
+			problem.Abort(c, problem.New(problem.Conflict, fmt.Errorf("order %s is already cancelled", o.ID)))
+			return
+		}
+		refund = p
+	} else {
+		p, err := h.Store.Cancel(ctx, o.ID, Status(o.Status), uuid.UUID(user.ID()))
+		switch {
+		case errors.Is(err, ErrConflict), errors.Is(err, ErrPaymentPending):
+			problem.Abort(c, problem.New(problem.Conflict, err))
+			return
+		case err != nil:
+			problem.Abort(c, err)
+			return
+		}
+		h.record(c, "order.cancelled", o.ID, fmt.Sprintf("from %s: %s", o.Status, req.Reason))
+		refund = p
+		o.Status = string(StatusCancelled)
+	}
+
+	status := http.StatusOK
+	if refund != nil {
+		h.record(c, "payment.refund_requested", o.ID, "charge "+refund.ChargeID)
+		rf, err := h.Gateway.Refund(ctx, partners.RefundRequest{
+			ChargeID: refund.ChargeID, AmountCents: refund.AmountCents, IdempotencyKey: "refund-" + o.ID.String(),
+		})
+		if err == nil {
+			err = h.Store.CompleteRefund(ctx, refund.ChargeID, rf.RefundID)
+		}
+		if err != nil {
+			// The cancellation holds; only the refund waits for a new call.
+			_ = c.Error(err)
+			status = http.StatusAccepted
+		} else {
+			refund.Status, refund.RefundID = "refunded", &rf.RefundID
+			h.record(c, "payment.refunded", o.ID, "refund "+rf.RefundID)
+		}
+	}
+	h.Notify.Send(ctx, NoticeCancelled(o, refund), o.ID.String(), c.ClientIP())
+	c.JSON(status, gin.H{"id": o.ID, "status": o.Status, "payment": refund})
+}
+
+// PendingAddressChange shows the owner what support proposed, so the
+// front-end can ask for the code.
+func (h *Handler) PendingAddressChange(c *gin.Context) {
+	user := auth.MustUser(c)
+	o, ok := h.own(c, user)
+	if !ok {
+		return
+	}
+	ac, err := h.Store.PendingAddressChange(c.Request.Context(), o.ID)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	if ac == nil {
+		problem.Abort(c, problem.New(problem.Conflict, ErrNoAddressChange))
+		return
+	}
+	c.JSON(http.StatusOK, ac)
+}
+
+type confirmRequest struct {
+	Code string `json:"code"`
+}
+
+// ConfirmAddressChange is the second half of C21: support alone cannot move
+// a delivery. The code went to the registered e-mail, and only the owner,
+// logged in, can type it.
+func (h *Handler) ConfirmAddressChange(c *gin.Context) {
+	user := auth.MustUser(c)
+	o, ok := h.own(c, user)
+	if !ok {
+		return
+	}
+	var req confirmRequest
+	if err := server.DecodeJSON(c, &req); err != nil || len(req.Code) == 0 || len(req.Code) > 16 {
+		problem.Abort(c, problem.New(problem.InvalidRequest, errors.New("a code is required")))
+		return
+	}
+	ctx := c.Request.Context()
+	res, err := h.Store.ConfirmAddressChange(ctx, o.ID, req.Code, h.Now())
+	switch {
+	case errors.Is(err, ErrWrongCode):
+		h.recordResult(c, "address.change_failed", o.ID, "rejected", fmt.Sprintf("wrong code, %d attempts left", res.AttemptsLeft))
+		problem.Abort(c, problem.New(problem.InvalidCode, err))
+		return
+	case errors.Is(err, ErrAddressChangeClosed):
+		h.recordResult(c, "address.change_failed", o.ID, "rejected", err.Error())
+		problem.Abort(c, problem.New(problem.Conflict, err))
+		return
+	case errors.Is(err, ErrNoAddressChange):
+		problem.Abort(c, problem.New(problem.Conflict, err))
+		return
+	case err != nil:
+		problem.Abort(c, err)
+		return
+	}
+	after := res.Change.Address
+	h.record(c, "address.changed", o.ID, fmt.Sprintf("change %s, fields %s, postal code %s to %s",
+		res.Change.ID, strings.Join(ChangedFields(res.Before, after), ","),
+		MaskPostalCode(res.Before.PostalCode), MaskPostalCode(after.PostalCode)))
+	h.Notify.Send(ctx, NoticeAddressChanged(o), o.ID.String(), c.ClientIP())
+	c.JSON(http.StatusOK, res.Change)
+}
+
+func (h *Handler) recordResult(c *gin.Context, name string, id uuid.UUID, result, reason string) {
+	user := auth.MustUser(c)
+	if err := h.Audit.Record(audit.Event{
+		Name: name, Actor: user.ID().String(), Action: name, Target: id.String(), Result: result, Reason: reason, Origin: c.ClientIP(),
 	}); err != nil {
 		_ = c.Error(err)
 	}

@@ -18,7 +18,7 @@ Todos os comandos são executados nesta pasta.
 just secrets     # gera chaves, senhas e o certificado TLS em secrets/ (fora do git)
 just up          # constrói as imagens e sobe tudo
 just scale 3     # opcional: três réplicas da API atrás do nginx
-just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento à produção
+just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento à produção, mais um chamado, uma troca de endereço pendente e um cancelamento
 ```
 
 |Endereço|O que é|
@@ -27,6 +27,7 @@ just seed        # STLs e pedidos fictícios dos clientes A e B, do orçamento �
 |`https://localhost:8443`|Downloads pelas URLs pré-assinadas do Garage. Só GET e HEAD|
 |`https://localhost:8444`|Keycloak, só o realm `nugget`. O console de administração e o realm `master` não são publicados|
 |`https://localhost:9445`|Painel interno, publicado só no loopback do host. As rotas do painel não existem nas outras portas|
+|`http://127.0.0.1:8026`|Caixa do Mailpit, com os e-mails enviados aos clientes. Publicada só no loopback do host|
 
 Numa VM, o painel só é alcançado por túnel SSH, que faz o papel da VPN: `ssh -L 9445:127.0.0.1:9445 <vm>`.
 
@@ -40,14 +41,14 @@ O realm é gerado a partir de [deploy/keycloak/realm.json](deploy/keycloak/realm
 
 |Conta|Perfil|TOTP|
 |-|-|-|
-|`customer-a`, `customer-b`, `customer-c`, `customer-d`|`customer`|Não|
+|`customer-a` a `customer-f`|`customer`|Não|
 |`technician`, `technician-2`|`technician`|Sim|
 |`support`|`support`|Sim|
 |`admin`, `admin-2`|`admin`|Sim|
 
 O `technician-2` nunca recebe pedidos nos testes, para conferir que só o técnico atribuído trabalha num pedido. O `admin-2` aprova as tabelas de preço que o `admin` propõe, porque uma tabela precisa de dois admins.
 
-O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel.
+O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel. O `customer-e` e o `customer-f` servem aos testes de troca de endereço e de retenção, cada um com o próprio limite por usuário.
 
 O `just token <conta>` faz o login pelo cliente `e2e`, que só existe no realm local e aceita usuário e senha, e imprime o token. Esse token não serve para o painel: sem o fluxo de navegador, o Keycloak não comprova o TOTP. Para o painel, `just panel-token <conta>` faz o login pelo `panel-web`, preenchendo as telas de senha e de TOTP como um navegador. Os front-ends vão usar os clientes `web` e `panel-web`, com authorization code e PKCE. O contrato do painel está em [panel-openapi.yaml](panel-openapi.yaml).
 
@@ -70,7 +71,14 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 6. **Cliente:** paga (`POST /api/v1/orders/{id}/payment`). A resposta é a cobrança pendente; o pedido só passa a `paid` quando chega a notificação assinada do gateway em `POST /api/v1/webhooks/payments`.
 7. **Técnico atribuído, no painel:** inicia a impressão (`POST /panel/v1/orders/{id}/production`, para `in_production`) e agenda a coleta (`POST /panel/v1/orders/{id}/ship`). O painel manda o endereço para a transportadora sem mostrá-lo ao técnico e recebe o código de rastreio.
 8. **Transportadora:** avisa a coleta e a entrega em `POST /api/v1/webhooks/shipping`, e o pedido passa a `shipped` e depois a `delivered`.
-9. **Cliente:** acompanha o pedido, o histórico, a revisão, o pagamento e o rastreio (`GET /api/v1/orders/{id}`).
+9. **Cliente:** acompanha o pedido, o histórico, a revisão, o pagamento e o rastreio (`GET /api/v1/orders/{id}`). Cada etapa também chega ao e-mail cadastrado, sem o endereço.
+
+Depois da compra:
+
+* **Cancelamento:** o cliente cancela até `paid` (`POST /api/v1/orders/{id}/cancel`). Um pedido pago é estornado no gateway; se o gateway estiver fora, a resposta é 202 com o estorno pendente, e uma nova chamada o conclui.
+* **Suporte:** o cliente abre chamados, opcionalmente sobre um pedido dele (`POST /api/v1/tickets`), e o suporte responde no painel (`POST /panel/v1/tickets/{id}/messages`). O e-mail só avisa que há resposta.
+* **Troca de endereço:** o suporte propõe o endereço novo no painel (`POST /panel/v1/orders/{id}/address-change`), como operação crítica. O cliente recebe um código de 8 dígitos no e-mail cadastrado e confirma logado (`POST /api/v1/orders/{id}/address-change/confirm`). Sem o código, o endereço não muda, e depois do despacho não há troca.
+* **Retenção:** o STL é apagado 90 dias depois da entrega, ou 30 dias depois do upload sem pedido vivo, e o endereço é limpo 90 dias depois da entrega ou do cancelamento. O job roda de hora em hora; `just retention` faz uma passada na hora.
 
 Os webhooks são rotas públicas, sem token: valem pela assinatura `X-Nugget-Signature: t=<unix>,v1=<HMAC-SHA256 de "t.corpo">`, com um segredo por parceiro, e recusam timestamps com mais de 5 minutos. Um evento repetido responde 200 sem efeito, e um evento cujo valor não bate com o pedido responde 400 e fica registrado como `payment.rejected`. Com um parceiro fora do ar, o orçamento e o pagamento respondem 502 `partner_unavailable`, e o pedido não muda.
 
@@ -86,11 +94,14 @@ Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/pri
 |`panel`|`internal` e `partners`|Painel interno, em binário próprio. Só aceita tokens do `panel-web` com TOTP (`acr=2`) e perfis da equipe, e grava `panel.access` em toda requisição. A operação crítica "revogar usuário" (só `admin`) exige um login de no máximo 5 minutos e uma justificativa. Grava no banco de auditoria com o papel `panel_audit`, e usa uma service account própria no Keycloak|
 |`api`|`internal` e `partners`|Rotas do cliente na porta 8080. Confere o token pelo JWKS do Keycloak (`iss`, `aud`, tipo e perfil `customer`) e a revogação no Valkey, valida o STL, grava no Garage e no Postgres, publica a tarefa e consome os resultados. A porta 8090 é interna: o nginx não a encaminha, e é por ela que o Keycloak faz o back-channel logout|
 |`worker`|`processing`|Baixa o arquivo pela URL da mensagem, confere o SHA-256 e calcula o volume e a caixa envolvente. Não alcança banco nem internet e não tem chave do Garage|
-|`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, e `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL|
-|`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). O papel `audit_app` só tem `INSERT`|
-|`rabbitmq`|`internal` e `processing`|Filas quorum `tasks` (até 3 entregas), `tasks.failed` e `results`. Os usuários `api` e `worker` não declaram nada|
+|`postgres`|`internal`|Banco principal (`nugget`). Cada módulo e cada binário tem o próprio papel: `files` e `queue` só alcançam `files` e `tasks`, `orders` (API) e `panel_orders` (painel) alcançam as tabelas de pedidos, com `UPDATE` concedido por coluna, de forma que nenhum dos dois muda um preço pelo SQL, `support` e `panel_support` alcançam os chamados, e `retention` só lê as datas e apaga o que expirou|
+|`postgres-audit`|`internal`|Eventos de auditoria (banco `audit`, tabela `events`). Os papéis `audit_app`, `panel_audit` e `retention_audit` só têm `INSERT`|
+|`rabbitmq`|`internal`, `processing` e `notify`|Filas quorum `tasks` (até 3 entregas), `tasks.failed`, `results`, `notifications` (até 5 entregas) e `notifications.failed`. Nenhum usuário declara nada: o `panel` só publica avisos, e o `notifier` só os consome|
 |`garage`|`internal` e `processing`|Bucket privado `files`. Só se lê com URL pré-assinada|
-|`garage-init`|`internal`|Executa uma vez e prepara o layout, o bucket e a chave da API|
+|`garage-init`|`internal`|Executa uma vez e prepara o layout, o bucket, as chaves da API, do painel e da retenção, e a regra de ciclo de vida do bucket|
+|`notifier`|`notify`|Consome a fila `notifications` e envia os e-mails por SMTP ao Mailpit. Recebe só o destinatário e o texto: não alcança banco nem Garage, e o log traz só o ID da mensagem|
+|`mailpit`|`notify` e `mailui`|Faz o papel do provedor de e-mail. A caixa fica em `127.0.0.1:8026`|
+|`retention`|`internal`|Aplica a retenção de hora em hora, com papel de banco, papel de auditoria e chave do Garage próprios. É o único que apaga objetos|
 |`partnersim`|`public` e `partners`|Simula o gateway de pagamento (porta 8100) e a transportadora (porta 8200). Exige chave de API, responde de forma assíncrona e avisa a plataforma por webhooks assinados, enviados ao endereço público do nginx. O atraso entre os eventos é o `SIM_DELAY`. A rede `partners` não tem internet e só liga a `api` e o `panel` a ele|
 
 Os estados de uma tarefa são `waiting`, `processing`, `done` e `failed`.
@@ -117,7 +128,13 @@ O `just test-e2e` cobre:
 * o pedido do pagamento até a entrega, com os webhooks do `partnersim`;
 * webhooks forjados, alterados, velhos, repetidos e com valor errado;
 * o parceiro fora do ar (o teste para o `partnersim` e depois o religa);
-* o endereço escondido do técnico.
+* o endereço escondido do técnico;
+* os e-mails de cada etapa, sem o endereço;
+* o cancelamento, com estorno e com o gateway fora;
+* os chamados de suporte;
+* a troca de endereço só com o código do e-mail;
+* a retenção (o teste recua as datas no banco);
+* o isolamento do `notifier`.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
 

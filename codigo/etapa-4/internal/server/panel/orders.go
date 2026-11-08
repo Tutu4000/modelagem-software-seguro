@@ -159,6 +159,15 @@ func (h handlers) file(c *gin.Context) {
 	if !ok {
 		return
 	}
+	purged, err := h.d.Orders.FilePurged(c.Request.Context(), o.FileID)
+	if err != nil {
+		problem.Abort(c, err)
+		return
+	}
+	if purged {
+		problem.Abort(c, problem.New(problem.FilePurged, fmt.Errorf("file %s was purged", o.FileID)))
+		return
+	}
 	url, err := h.d.Files.PresignGet(o.FileID.String(), staffDownloadTTL)
 	if err != nil {
 		problem.Abort(c, err)
@@ -198,6 +207,7 @@ func (h handlers) review(c *gin.Context) {
 		return
 	}
 	h.record(c, "review."+body.Decision, o.ID, "")
+	h.notices().Send(c.Request.Context(), orders.NoticeReview(o, body.Decision == "approved"), o.ID.String(), c.ClientIP())
 	c.JSON(http.StatusOK, gin.H{"id": o.ID, "decision": body.Decision})
 }
 
