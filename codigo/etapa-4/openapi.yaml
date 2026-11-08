@@ -725,6 +725,7 @@ components:
           enum: [pending, confirmed]
     Ticket:
       type: object
+      required: [id, order_id, subject, status, created_at, updated_at]
       properties:
         id:
           type: string
@@ -748,6 +749,7 @@ components:
           type: array
           items:
             type: object
+            required: [id, author_kind, body, created_at]
             properties:
               id:
                 type: string

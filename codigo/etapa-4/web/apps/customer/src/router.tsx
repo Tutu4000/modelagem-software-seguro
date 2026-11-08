@@ -11,6 +11,9 @@ import { NotFound } from "./pages/NotFound";
 import { OrderPage } from "./orders/OrderPage";
 import { OrdersPage } from "./orders/OrdersPage";
 import { QuotePage } from "./quote/QuotePage";
+import { NewTicketPage } from "./support/NewTicketPage";
+import { TicketPage } from "./support/TicketPage";
+import { TicketsPage } from "./support/TicketsPage";
 
 function Protected({ children }: { children: ReactNode }) {
   return (
@@ -54,6 +57,9 @@ const routes: RouteObject[] = [
   { path: "orcar", element: <Protected><QuotePage /></Protected> },
   { path: "pedidos", element: <Protected><OrdersPage /></Protected> },
   { path: "pedidos/:id", element: <Protected><OrderPage /></Protected> },
+  { path: "suporte", element: <Protected><TicketsPage /></Protected> },
+  { path: "suporte/novo", element: <Protected><NewTicketPage /></Protected> },
+  { path: "suporte/:id", element: <Protected><TicketPage /></Protected> },
 ];
 
 // The component gallery exists only in development: the production build

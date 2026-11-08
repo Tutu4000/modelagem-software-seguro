@@ -10,6 +10,8 @@ export { ChipGroup } from "./ChipGroup";
 export type { Chip, ChipGroupProps } from "./ChipGroup";
 export { CodeInput, digitsOnly } from "./CodeInput";
 export type { CodeInputProps } from "./CodeInput";
+export { Conversation } from "./Conversation";
+export type { MessageProps } from "./Conversation";
 export { cx } from "./cx";
 export { DataTable } from "./DataTable";
 export { Dialog } from "./Dialog";
