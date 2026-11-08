@@ -1,8 +1,12 @@
 package panel
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -66,10 +70,18 @@ func Critical(maxAge time.Duration, now func() time.Time, a *audit.Logger) gin.H
 			problem.Abort(c, problem.New(problem.StepUpRequired, fmt.Errorf("login at %s, older than %s", u.AuthTime(), maxAge)))
 			return
 		}
+		// The body is read once and put back, so the operation can read the
+		// rest of it; its own decoder knows the justification field too.
+		raw, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10))
+		if err != nil {
+			problem.Abort(c, problem.New(problem.InvalidRequest, err))
+			return
+		}
+		c.Request.Body = io.NopCloser(bytes.NewReader(raw))
 		var body struct {
 			Justification string `json:"justification"`
 		}
-		if err := c.ShouldBindJSON(&body); err != nil {
+		if err := json.Unmarshal(raw, &body); err != nil {
 			problem.Abort(c, problem.New(problem.JustificationRequired, err))
 			return
 		}
@@ -81,7 +93,7 @@ func Critical(maxAge time.Duration, now func() time.Time, a *audit.Logger) gin.H
 		c.Set(justificationKey, justification)
 		c.Next()
 
-		err := a.Record(audit.Event{
+		err = a.Record(audit.Event{
 			Name:   "panel.critical",
 			Actor:  u.ID().String(),
 			Action: c.Request.Method + " " + c.FullPath(),

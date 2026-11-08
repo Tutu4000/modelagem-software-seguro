@@ -29,12 +29,12 @@ INSERT INTO orders (
 	id, owner_id, file_id, material, color, quality, finishing, quantity,
 	price_table_version, unit_cents, discount_cents, shipping_cents, total_cents,
 	volume_mm3, bbox_mm, dfm_flags, status, quote_expires_at,
-	ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code
+	ship_recipient, ship_street, ship_number, ship_city, ship_state, ship_postal_code, contact_email
 ) VALUES (
 	@id, @owner_id, @file_id, @material, @color, @quality, @finishing, @quantity,
 	@price_table_version, @unit_cents, @discount_cents, @shipping_cents, @total_cents,
 	@volume_mm3, @bbox_mm, @dfm_flags, @status, @quote_expires_at,
-	@ship_recipient, @ship_street, @ship_number, @ship_city, @ship_state, @ship_postal_code
+	@ship_recipient, @ship_street, @ship_number, @ship_city, @ship_state, @ship_postal_code, @contact_email
 );
 
 -- There is no customer lookup by ID alone: the owner is part of the query
@@ -106,3 +106,64 @@ UPDATE payments SET status = 'succeeded', updated_at = now() WHERE charge_id = @
 -- name: RecordPartnerEvent :execrows
 INSERT INTO partner_events (event_id, partner, type) VALUES (@event_id, @partner, @type)
 ON CONFLICT (event_id) DO NOTHING;
+
+-- The most recent charge, whatever its status, for the order details.
+-- name: LatestPayment :one
+SELECT charge_id, order_id, amount_cents, status, refund_id, created_at, updated_at
+FROM payments
+WHERE order_id = @order_id
+ORDER BY created_at DESC
+LIMIT 1;
+
+-- name: RequestRefund :execrows
+UPDATE payments SET status = 'refund_pending', updated_at = now()
+WHERE charge_id = @charge_id AND status = 'succeeded';
+
+-- name: CompleteRefund :execrows
+UPDATE payments SET status = 'refunded', refund_id = @refund_id, updated_at = now()
+WHERE charge_id = @charge_id AND status = 'refund_pending';
+
+-- name: FilePurged :one
+SELECT (purged_at IS NOT NULL)::boolean AS purged FROM files WHERE id = @id;
+
+-- Address change (C21). A new proposal replaces the pending one.
+-- name: SupersedeAddressChanges :exec
+UPDATE address_changes SET status = 'superseded', decided_at = now()
+WHERE order_id = @order_id AND status = 'pending';
+
+-- name: InsertAddressChange :exec
+INSERT INTO address_changes (
+	id, order_id, requested_by, ticket_id,
+	new_recipient, new_street, new_number, new_city, new_state, new_postal_code,
+	code_hash, expires_at, status
+) VALUES (
+	@id, @order_id, @requested_by, @ticket_id,
+	@new_recipient, @new_street, @new_number, @new_city, @new_state, @new_postal_code,
+	@code_hash, @expires_at, 'pending'
+);
+
+-- name: DecideAddressChange :exec
+UPDATE address_changes SET status = @status, decided_at = now() WHERE id = @id;
+
+-- name: PendingAddressChange :one
+SELECT * FROM address_changes WHERE order_id = @order_id AND status = 'pending';
+
+-- Locks the pending change until the end of the confirmation.
+-- name: LockPendingAddressChange :one
+SELECT * FROM address_changes WHERE order_id = @order_id AND status = 'pending' FOR UPDATE;
+
+-- name: CountAddressAttempt :one
+UPDATE address_changes
+SET attempts = attempts + 1,
+	status = CASE WHEN attempts + 1 >= @max_attempts::integer THEN 'locked' ELSE status END,
+	decided_at = CASE WHEN attempts + 1 >= @max_attempts::integer THEN now() ELSE decided_at END
+WHERE id = @id
+RETURNING attempts, status;
+
+-- The address only changes before the dispatch (C21).
+-- name: SetAddress :execrows
+UPDATE orders
+SET ship_recipient = @recipient, ship_street = @street, ship_number = @number,
+	ship_city = @city, ship_state = @state, ship_postal_code = @postal_code, updated_at = now()
+WHERE id = @id AND shipment_id IS NULL
+	AND status IN ('quoted', 'awaiting_review', 'awaiting_payment', 'paid', 'in_production');

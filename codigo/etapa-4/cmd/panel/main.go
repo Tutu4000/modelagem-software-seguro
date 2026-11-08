@@ -20,12 +20,15 @@ import (
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/idpadmin"
+	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pg"
+	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/panel"
 	"nuggetmachine/internal/session"
 	"nuggetmachine/internal/storage"
+	"nuggetmachine/internal/support"
 )
 
 func main() {
@@ -48,6 +51,10 @@ func run(log *slog.Logger) error {
 	auditPassword := env.Secret("DB_PANEL_AUDIT_PASSWORD")
 	mainHost, mainName := env.Required("DB_HOST"), env.String("DB_NAME", "nugget")
 	ordersPassword := env.Secret("DB_PANEL_ORDERS_PASSWORD")
+	supportPassword := env.Secret("DB_PANEL_SUPPORT_PASSWORD")
+	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
+	amqpUser := env.String("AMQP_USER", "panel")
+	amqpPassword := env.Secret("AMQP_PASSWORD")
 	// A read-only storage key: the panel only opens designs (D02).
 	s3cfg := storage.S3Config{
 		Bucket:         env.String("S3_BUCKET", "files"),
@@ -93,6 +100,19 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	defer ordersPool.Close()
+	supportPool, err := pg.Open(ctx, mainHost, mainName, "panel_support", supportPassword)
+	if err != nil {
+		return err
+	}
+	defer supportPool.Close()
+	// The panel only publishes notifications: its RabbitMQ user reaches
+	// nothing else.
+	broker, err := queue.Dial(ctx, amqpHost, amqpUser, amqpPassword)
+	if err != nil {
+		return err
+	}
+	defer broker.Close()
+	closed := broker.Closed()
 	sessions, err := session.NewValkey(valkeyAddr, valkeyUser, valkeyPassword)
 	if err != nil {
 		return fmt.Errorf("Valkey at %s: %w", valkeyAddr, err)
@@ -113,6 +133,8 @@ func run(log *slog.Logger) error {
 		Orders:         orders.NewStore(ordersPool),
 		Files:          storage.NewS3(s3cfg),
 		Carrier:        partners.NewClient(carrierURL, carrierKey),
+		Support:        support.NewStore(supportPool),
+		Notify:         notify.NewRabbit(broker),
 		StepUpMaxAge:   stepUp,
 		Now:            time.Now,
 		Log:            log,
@@ -158,6 +180,8 @@ func run(log *slog.Logger) error {
 	select {
 	case err := <-errc:
 		return err
+	case err := <-closed:
+		return fmt.Errorf("connection to RabbitMQ dropped: %v", err)
 	case <-ctx.Done():
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 20*time.Second)

@@ -46,6 +46,10 @@ panel-token who="admin":
 seed:
     go run ./cmd/seed
 
+# Run one pass of the retention rules now, instead of waiting for the hourly one
+retention:
+    {{ compose }} run --rm retention -once
+
 test:
     go test ./...
 

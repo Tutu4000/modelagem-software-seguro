@@ -29,6 +29,10 @@ const downloadTTL = 5 * time.Minute // RS01
 
 // FileID is also the object key in the storage. It is a UUIDv4 because the
 // customer sees it: a v7 would reveal when each design was uploaded (C02).
+// StatusPurged replaces the processing status once the retention deleted the
+// file.
+const StatusPurged = "purged"
+
 type FileID uuid.UUID
 
 func NewFileID() FileID { return FileID(uuid.New()) }
@@ -45,6 +49,8 @@ type File struct {
 	Owner  auth.UserID
 	Size   int64
 	SHA256 [32]byte
+	// Purged means the retention deleted the object (E8.5).
+	Purged bool
 }
 
 // Repo has no lookup by ID alone: every read goes through the central
@@ -130,6 +136,10 @@ func (h *Handler) Status(c *gin.Context) {
 		return
 	}
 
+	if f.Purged {
+		c.JSON(http.StatusOK, gin.H{"id": f.ID.String(), "status": StatusPurged})
+		return
+	}
 	st, err := h.Tasks.StatusOf(c.Request.Context(), f.ID)
 	if err != nil {
 		problem.Abort(c, err)
@@ -157,6 +167,10 @@ func (h *Handler) Download(c *gin.Context) {
 		return
 	}
 
+	if f.Purged {
+		problem.Abort(c, problem.New(problem.FilePurged, fmt.Errorf("file %s was purged", f.ID)))
+		return
+	}
 	url, err := h.Store.PresignGet(f.ID.String(), downloadTTL)
 	if err != nil {
 		problem.Abort(c, err)

@@ -58,16 +58,21 @@ func AddressOf(o Order) partners.Address {
 	}
 }
 
-// NewView is the customer's view, with their own address.
+// NewView is the customer's view, with their own address until the
+// retention clears it.
 func NewView(o Order, d Details) View {
-	address := AddressOf(o)
+	var shipping *partners.Address
+	if o.AddressPurgedAt == nil {
+		address := AddressOf(o)
+		shipping = &address
+	}
 	return View{
 		ID: o.ID, FileID: o.FileID,
 		Material: o.Material, Color: o.Color, Quality: o.Quality, Finishing: o.Finishing, Quantity: o.Quantity,
 		PriceTableVersion: o.PriceTableVersion, UnitCents: o.UnitCents, DiscountCents: o.DiscountCents,
 		ShippingCents: o.ShippingCents, TotalCents: o.TotalCents,
 		Currency: "BRL", Status: o.Status, QuoteExpiresAt: o.QuoteExpiresAt, CreatedAt: o.CreatedAt,
-		Shipping: &address, TrackingCode: o.TrackingCode, Payment: d.Payment,
+		Shipping: shipping, TrackingCode: o.TrackingCode, Payment: d.Payment,
 		History: d.History, Review: d.Review,
 	}
 }

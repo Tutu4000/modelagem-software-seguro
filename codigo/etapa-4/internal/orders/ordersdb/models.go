@@ -10,12 +10,32 @@ import (
 	"github.com/google/uuid"
 )
 
+type AddressChange struct {
+	ID            uuid.UUID
+	OrderID       uuid.UUID
+	RequestedBy   uuid.UUID
+	TicketID      *uuid.UUID
+	NewRecipient  string
+	NewStreet     string
+	NewNumber     string
+	NewCity       string
+	NewState      string
+	NewPostalCode string
+	CodeHash      []byte
+	Attempts      int32
+	ExpiresAt     time.Time
+	Status        string
+	CreatedAt     time.Time
+	DecidedAt     *time.Time
+}
+
 type File struct {
 	ID        uuid.UUID
 	OwnerID   uuid.UUID
 	SizeBytes int64
 	Sha256    []byte
 	CreatedAt time.Time
+	PurgedAt  *time.Time
 }
 
 type Order struct {
@@ -48,6 +68,8 @@ type Order struct {
 	ShipPostalCode     string
 	ShipmentID         *string
 	TrackingCode       *string
+	ContactEmail       string
+	AddressPurgedAt    *time.Time
 }
 
 type OrderStatusHistory struct {
@@ -73,6 +95,7 @@ type Payment struct {
 	Status      string
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
+	RefundID    *string
 }
 
 type PriceTable struct {
@@ -104,4 +127,24 @@ type Task struct {
 	BboxMm    []float64
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+type Ticket struct {
+	ID           uuid.UUID
+	OwnerID      uuid.UUID
+	OrderID      *uuid.UUID
+	Subject      string
+	Status       string
+	ContactEmail string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type TicketMessage struct {
+	ID         uuid.UUID
+	TicketID   uuid.UUID
+	AuthorID   uuid.UUID
+	AuthorKind string
+	Body       string
+	CreatedAt  time.Time
 }

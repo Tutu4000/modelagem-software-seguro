@@ -34,3 +34,11 @@ ENTRYPOINT ["/garage-init"]
 FROM base AS worker
 COPY --from=build /out/worker /worker
 ENTRYPOINT ["/worker"]
+
+FROM base AS notifier
+COPY --from=build /out/notifier /notifier
+ENTRYPOINT ["/notifier"]
+
+FROM base AS retention
+COPY --from=build /out/retention /retention
+ENTRYPOINT ["/retention"]

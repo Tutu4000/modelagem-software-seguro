@@ -34,7 +34,11 @@ const (
 	PartnerUnavailable Code = "partner_unavailable"
 	// InvalidSignature: a webhook without a valid signature (C14, C15).
 	InvalidSignature Code = "invalid_signature"
-	Internal         Code = "internal"
+	// InvalidCode: a wrong confirmation code for an address change (C21).
+	InvalidCode Code = "invalid_code"
+	// FilePurged: the retention already deleted the file (E8.5).
+	FilePurged Code = "file_purged"
+	Internal   Code = "internal"
 )
 
 var catalog = map[Code]struct {
@@ -57,6 +61,8 @@ var catalog = map[Code]struct {
 	QuoteExpired:          {http.StatusConflict, "Quote expired"},
 	PartnerUnavailable:    {http.StatusBadGateway, "Partner unavailable"},
 	InvalidSignature:      {http.StatusBadRequest, "Invalid signature"},
+	InvalidCode:           {http.StatusBadRequest, "Invalid confirmation code"},
+	FilePurged:            {http.StatusGone, "File deleted by the retention policy"},
 	Internal:              {http.StatusInternalServerError, "Internal error"},
 }
 

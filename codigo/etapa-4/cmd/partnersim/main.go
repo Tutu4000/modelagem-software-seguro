@@ -41,6 +41,7 @@ type sim struct {
 
 	mu      sync.Mutex
 	charges map[string]partners.Charge // by idempotency key
+	refunds map[string]partners.Refund // by idempotency key
 }
 
 func main() {
@@ -79,10 +80,12 @@ func run(log *slog.Logger) error {
 			Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}},
 		},
 		charges: map[string]partners.Charge{},
+		refunds: map[string]partners.Refund{},
 	}
 
 	gateway := http.NewServeMux()
 	gateway.Handle("POST /charges", authorized([][]byte{paymentsKey}, http.HandlerFunc(s.charge)))
+	gateway.Handle("POST /refunds", authorized([][]byte{paymentsKey}, http.HandlerFunc(s.refund)))
 	carrier := http.NewServeMux()
 	carrier.Handle("POST /quotes", authorized(carrierKeys, http.HandlerFunc(s.quote)))
 	carrier.Handle("POST /shipments", authorized(carrierKeys, http.HandlerFunc(s.shipment)))
@@ -145,6 +148,24 @@ func (s *sim) charge(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	reply(w, http.StatusCreated, c)
+}
+
+// refund gives the money back at once. The same idempotency key returns the
+// same refund.
+func (s *sim) refund(w http.ResponseWriter, r *http.Request) {
+	var req partners.RefundRequest
+	if !decode(w, r, &req) || req.ChargeID == "" || req.AmountCents <= 0 || req.IdempotencyKey == "" {
+		http.Error(w, "invalid refund", http.StatusBadRequest)
+		return
+	}
+	s.mu.Lock()
+	rf, seen := s.refunds[req.IdempotencyKey]
+	if !seen {
+		rf = partners.Refund{RefundID: "re_" + randomHex(12), Status: "succeeded"}
+		s.refunds[req.IdempotencyKey] = rf
+	}
+	s.mu.Unlock()
+	reply(w, http.StatusCreated, rf)
 }
 
 // quote is a fixed formula: a base price plus 10 cents per cm3.

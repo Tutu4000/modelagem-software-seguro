@@ -52,6 +52,10 @@ services:
       DB_PANEL_AUDIT_PASSWORD_FILE: /run/secrets/db_panel_audit_password
       DB_HOST: postgres
       DB_PANEL_ORDERS_PASSWORD_FILE: /run/secrets/db_panel_orders_password
+      DB_PANEL_SUPPORT_PASSWORD_FILE: /run/secrets/db_panel_support_password
+      # The panel only publishes notifications (E8.4).
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_panel_password
       # Read-only storage key: the panel only opens designs (D02).
       S3_ENDPOINT: http://garage:3900
       S3_PUBLIC_ENDPOINT: https://localhost:8443
@@ -71,6 +75,8 @@ services:
     secrets:
       - db_panel_audit_password
       - db_panel_orders_password
+      - db_panel_support_password
+      - rabbitmq_panel_password
       - valkey_panel_password
       - keycloak_panel_admin_secret
       - s3_panel_access_key_id
@@ -81,6 +87,7 @@ services:
       garage-init: { condition: service_completed_successfully }
       keycloak: { condition: service_healthy }
       valkey: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
       postgres: { condition: service_healthy }
       postgres-audit: { condition: service_healthy }
     deploy:
@@ -147,6 +154,7 @@ services:
       DB_HOST: postgres
       DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
       DB_ORDERS_PASSWORD_FILE: /run/secrets/db_orders_password
+      DB_SUPPORT_PASSWORD_FILE: /run/secrets/db_support_password
       BUILD_VOLUME_MM: "250,250,250"
       PAYMENTS_URL: http://partnersim:8100
       PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
@@ -173,6 +181,7 @@ services:
       - valkey_api_password
       - db_files_password
       - db_orders_password
+      - db_support_password
       - partner_payments_api_key
       - partner_carrier_api_key_api
       - partner_payments_webhook_secret
@@ -225,6 +234,76 @@ services:
     deploy:
       resources:
         limits: { cpus: "0.5", memory: 64m, pids: 64 }
+
+  # Delivers the notifications (E8.4). It receives only the recipient and the
+  # text: no database, no Garage, no order data. Its network reaches only the
+  # queue and the mail server.
+  notifier:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: notifier
+    environment:
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_notifier_password
+      SMTP_ADDR: mailpit:1025
+      MAIL_FROM: nao-responda@nugget.local
+    secrets: [rabbitmq_notifier_password]
+    networks: [notify]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      mailpit: { condition: service_started }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  # Stands for the e-mail provider. Its inbox is published only on the host's
+  # loopback, like the panel: http://127.0.0.1:8026.
+  mailpit:
+    <<: *hardened
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    ports: ["127.0.0.1:8026:8025"]
+    environment:
+      MP_MAX_MESSAGES: "2000"
+    tmpfs: ["/tmp:size=64m"]
+    networks: [notify, mailui]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128m, pids: 64 }
+
+  # Deletes the designs and addresses the platform no longer needs (E8.5).
+  # Own database role, own audit role and the only storage key that deletes.
+  retention:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: retention
+    environment:
+      DB_HOST: postgres
+      DB_RETENTION_PASSWORD_FILE: /run/secrets/db_retention_password
+      AUDIT_DB_HOST: postgres-audit
+      DB_RETENTION_AUDIT_PASSWORD_FILE: /run/secrets/db_retention_audit_password
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_retention_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_retention_secret_access_key
+      RETENTION_AFTER_DELIVERY: 2160h
+      RETENTION_UNORDERED: 720h
+      RETENTION_INTERVAL: 1h
+    secrets:
+      - db_retention_password
+      - db_retention_audit_password
+      - s3_retention_access_key_id
+      - s3_retention_secret_access_key
+    networks: [internal]
+    depends_on:
+      garage-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
 
   # Only on the processing network: no database, Valkey or internet, and no
   # Garage key. It reads the files through the message's presigned URL (FC3,
@@ -288,7 +367,7 @@ services:
     secrets:
       - source: rabbitmq_users
         target: /etc/rabbitmq/definitions/01-users.json
-    networks: [internal, processing]
+    networks: [internal, processing, notify]
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
@@ -331,7 +410,17 @@ services:
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
       S3_PANEL_ACCESS_KEY_ID_FILE: /run/secrets/s3_panel_access_key_id
       S3_PANEL_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
-    secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key, s3_panel_access_key_id, s3_panel_secret_access_key]
+      S3_RETENTION_ACCESS_KEY_ID_FILE: /run/secrets/s3_retention_access_key_id
+      S3_RETENTION_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_retention_secret_access_key
+      S3_ENDPOINT: http://garage:3900
+    secrets:
+      - garage_admin_token
+      - s3_access_key_id
+      - s3_secret_access_key
+      - s3_panel_access_key_id
+      - s3_panel_secret_access_key
+      - s3_retention_access_key_id
+      - s3_retention_secret_access_key
     networks: [internal]
     depends_on: [garage]
     deploy:
@@ -347,7 +436,16 @@ services:
     volumes:
       - main:/var/lib/postgresql
       - ../migrations/main:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_password, db_files_password, db_queue_password, db_orders_password, db_panel_orders_password, db_keycloak_password]
+    secrets:
+      - postgres_password
+      - db_files_password
+      - db_queue_password
+      - db_orders_password
+      - db_panel_orders_password
+      - db_keycloak_password
+      - db_support_password
+      - db_panel_support_password
+      - db_retention_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
@@ -369,7 +467,7 @@ services:
     volumes:
       - audit:/var/lib/postgresql
       - ../migrations/audit:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_audit_password, db_audit_password, db_panel_audit_password]
+    secrets: [postgres_audit_password, db_audit_password, db_panel_audit_password, db_retention_audit_password]
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
@@ -401,26 +499,46 @@ services:
         -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
 
 networks:
-  # The only network with published ports, and only nginx is on it. The fixed
+  # The only network with published ports besides the Mailpit inbox. The fixed
   # subnet lets nginx allow the panel only from its gateway, which is where
-  # connections to the loopback-only port arrive.
+  # connections to the loopback-only port arrive. Every network has a fixed
+  # subnet, so none takes another's range.
   public:
     ipam:
       config:
         - subnet: 172.28.20.0/24
           gateway: 172.28.20.1
-  # No way out to the internet.
+  # No way out to the internet. Dynamic addresses come from the upper half,
+  # so no container takes nginx's fixed one.
   internal:
     internal: true
     ipam:
       config:
         - subnet: 172.28.10.0/24
+          ip_range: 172.28.10.128/25
   # Worker, queue and storage. The worker reaches no database or internet (FC3).
   processing:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.28.40.0/24
   # API and panel to the partners (FC5), with no way out to the internet.
   partners:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.28.50.0/24
+  # Queue, notifier and mail server only (E8.4).
+  notify:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.60.0/24
+  # Only for the Mailpit inbox published on the host's loopback.
+  mailui:
+    ipam:
+      config:
+        - subnet: 172.28.30.0/24
 
 volumes:
   main: {}
@@ -462,3 +580,11 @@ secrets:
   valkey_panel_password: { file: ../secrets/valkey_panel_password }
   db_panel_audit_password: { file: ../secrets/db_panel_audit_password }
   keycloak_panel_admin_secret: { file: ../secrets/keycloak_panel_admin_secret }
+  rabbitmq_panel_password: { file: ../secrets/rabbitmq_panel_password }
+  rabbitmq_notifier_password: { file: ../secrets/rabbitmq_notifier_password }
+  db_support_password: { file: ../secrets/db_support_password }
+  db_panel_support_password: { file: ../secrets/db_panel_support_password }
+  db_retention_password: { file: ../secrets/db_retention_password }
+  db_retention_audit_password: { file: ../secrets/db_retention_audit_password }
+  s3_retention_access_key_id: { file: ../secrets/s3_retention_access_key_id }
+  s3_retention_secret_access_key: { file: ../secrets/s3_retention_secret_access_key }

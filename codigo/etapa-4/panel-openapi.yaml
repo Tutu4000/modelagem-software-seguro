@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — internal panel API
-  version: 0.3.0
+  version: 0.4.0
   description: >
     Staff routes (technician, support, admin), served by the panel binary on
     an address of its own, reachable only from the host's loopback or an SSH
@@ -212,6 +212,12 @@ paths:
           $ref: "#/components/responses/Unauthenticated"
         "403":
           $ref: "#/components/responses/Problem"
+        "410":
+          description: The retention already deleted the design (file_purged)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "422":
           $ref: "#/components/responses/Problem"
   /panel/v1/orders/{id}/review:
@@ -301,6 +307,181 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+  /panel/v1/orders/{id}/address-change:
+    post:
+      summary: Propose a new delivery address (support and admin, critical, C21)
+      description: >
+        Step-up and justification, as every critical operation. Support never
+        changes the address: the change waits for the 8-digit code sent to
+        the e-mail registered with the order, which only the customer, logged
+        in, can type in the public API. The answer never carries the code. A
+        new proposal replaces the pending one. No change after the dispatch.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address, justification]
+              properties:
+                address:
+                  type: object
+                  required: [recipient, street, number, city, state, postal_code]
+                  properties:
+                    recipient:
+                      type: string
+                    street:
+                      type: string
+                    number:
+                      type: string
+                    city:
+                      type: string
+                    state:
+                      type: string
+                      pattern: "^[A-Z]{2}$"
+                    postal_code:
+                      type: string
+                      pattern: "^[0-9]{5}-?[0-9]{3}$"
+                ticket_id:
+                  type: string
+                  format: uuid
+                justification:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+      responses:
+        "202":
+          description: Change pending, code sent to the customer
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  change_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [pending]
+                  expires_at:
+                    type: string
+                    format: date-time
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order was dispatched or has no registered e-mail (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "503":
+          description: The code could not be queued; the change was withdrawn
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /panel/v1/tickets:
+    get:
+      summary: Support tickets, most recently updated first (support and admin)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, answered, closed]
+      responses:
+        "200":
+          description: Tickets, without the messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StaffTicket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}:
+    get:
+      summary: One ticket with the messages (support and admin)
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTicket"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}/messages:
+    post:
+      summary: Answer the customer (support and admin)
+      description: >
+        The ticket becomes answered, and the customer gets an e-mail that only
+        says there is an answer: the conversation stays behind the login.
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The ticket with the new message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTicket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}/close:
+    post:
+      summary: Close a ticket (support and admin)
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: Ticket closed
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
   /panel/v1/price-tables:
     get:
       summary: Price table versions (admin)
@@ -366,6 +547,13 @@ paths:
 components:
   parameters:
     OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketID:
       name: id
       in: path
       required: true
@@ -476,6 +664,40 @@ components:
           type: string
           format: uuid
           nullable: true
+    StaffTicket:
+      type: object
+      description: >
+        The ticket as the customer sees it (see openapi.yaml), plus the owner.
+        The message bodies are plain text: show them as text, never as HTML.
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner_id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+          nullable: true
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [open, answered, closed]
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              author_kind:
+                type: string
+                enum: [customer, staff]
+              body:
+                type: string
+              created_at:
+                type: string
+                format: date-time
     Justification:
       type: object
       required: [justification]

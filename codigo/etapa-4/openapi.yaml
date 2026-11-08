@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.7.0
+  version: 0.8.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -65,7 +65,8 @@ paths:
       summary: Presigned URL to download one of the customer's own files
       description: >
         Only the owner gets the URL (RS01). Someone else's file and a missing
-        file get the same 403 response. The URL is valid for 5 minutes.
+        file get the same 403 response. The URL is valid for 5 minutes. A
+        file the retention already deleted gets 410 file_purged.
       parameters:
         - $ref: "#/components/parameters/FileID"
       responses:
@@ -84,6 +85,12 @@ paths:
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
+        "410":
+          description: Deleted by the retention policy (file_purged)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
         "429":
           $ref: "#/components/responses/RateLimited"
         "503":
@@ -119,7 +126,9 @@ paths:
         the active price table (CA03). The body has no price field, and any
         unknown field (such as total_cents or status) is refused with 400.
         The shipping price is quoted by the carrier for the address and
-        added after the volume discount. The quote holds for 24 hours.
+        added after the volume discount. The quote holds for 24 hours. The
+        account needs a verified e-mail: it is where the notices and the
+        address confirmations go.
       requestBody:
         required: true
         content:
@@ -265,6 +274,245 @@ paths:
           "https://localhost/api/v1/webhooks/payments":
             post:
               $ref: "#/paths/~1api~1v1~1webhooks~1payments/post"
+  /api/v1/orders/{id}/cancel:
+    post:
+      summary: Cancel an order, up to paid (RF10)
+      description: >
+        Only the owner. From quoted, awaiting_review or awaiting_payment
+        (without a charge in flight) the order is cancelled at once. A paid
+        order is cancelled and refunded at the gateway; if the gateway does
+        not answer, the answer is 202 with the refund pending, and calling
+        again finishes it. From production on, 409: the support handles it.
+        The customer gets a confirmation e-mail.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Order cancelled, and refunded when it was paid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancellation"
+        "202":
+          description: Order cancelled, refund pending at the gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancellation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order cannot be cancelled from its status, or a payment is in flight (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/address-change:
+    get:
+      summary: The address change support proposed, waiting for the code (C21)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The pending change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddressChange"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: There is no pending change (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/address-change/confirm:
+    post:
+      summary: Confirm the address change with the code sent to the registered e-mail (C21)
+      description: >
+        Support alone cannot change a delivery address: the change only
+        applies when the owner, logged in, types the 8-digit code sent to the
+        registered e-mail. The code holds for 30 minutes; a wrong code gets
+        400 invalid_code, and the fifth wrong code locks the change (409). No
+        change applies after the dispatch.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  pattern: "^[0-9]{8}$"
+      responses:
+        "200":
+          description: Address changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddressChange"
+        "400":
+          description: Wrong code (invalid_code) or invalid body (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: No pending change, or it expired, was locked or the order was dispatched (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets:
+    post:
+      summary: Open a support ticket, optionally about one of the customer's orders (RF11)
+      description: >
+        At most 10 tickets not closed per customer. The texts are plain text,
+        kept as typed: a front-end must show them as text, never as HTML.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [subject, message]
+              properties:
+                order_id:
+                  type: string
+                  format: uuid
+                subject:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Ticket opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          description: The order is not the customer's
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Too many open tickets (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      summary: The customer's tickets, newest first
+      responses:
+        "200":
+          description: Tickets, without the messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets/{id}:
+    get:
+      summary: One of the customer's tickets, with the messages
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets/{id}/messages:
+    post:
+      summary: Add a message to one of the customer's tickets
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketMessageRequest"
+      responses:
+        "200":
+          description: The ticket, open again, with the messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The ticket is closed (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
   /api/v1/webhooks/payments:
     post:
       summary: Payment notification from the gateway (C14)
@@ -297,8 +545,9 @@ paths:
       description: >
         Same scheme as the payments webhook, with the carrier's own secret.
         shipment.picked_up moves the order from in_production to shipped and
-        shipment.delivered from shipped to delivered. The shipment must be
-        the one booked for the order.
+        shipment.delivered from shipped to delivered. shipment.exception, a
+        problem on the way (RF15), keeps the order shipped and tells the
+        customer. The shipment must be the one booked for the order.
       security:
         - webhookSignature: []
       requestBody:
@@ -336,6 +585,13 @@ components:
       openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
   parameters:
     OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketID:
       name: id
       in: path
       required: true
@@ -431,10 +687,86 @@ components:
           type: integer
         status:
           type: string
-          enum: [pending, succeeded]
+          enum: [pending, succeeded, refund_pending, refunded]
+        refund_id:
+          type: string
         created_at:
           type: string
           format: date-time
+    Cancellation:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [cancelled]
+        payment:
+          allOf:
+            - $ref: "#/components/schemas/Payment"
+          nullable: true
+    AddressChange:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        address:
+          $ref: "#/components/schemas/Address"
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, confirmed]
+    Ticket:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+          nullable: true
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [open, answered, closed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+                format: uuid
+              author_kind:
+                type: string
+                enum: [customer, staff]
+              body:
+                type: string
+                description: Plain text, as typed. Show it as text, never as HTML.
+              created_at:
+                type: string
+                format: date-time
+    TicketMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
     PaymentEvent:
       type: object
       required: [event_id, type, charge_id, order_id, amount_cents]
@@ -459,7 +791,7 @@ components:
           type: string
         type:
           type: string
-          enum: [shipment.picked_up, shipment.delivered]
+          enum: [shipment.picked_up, shipment.delivered, shipment.exception]
         shipment_id:
           type: string
         order_id:
@@ -483,7 +815,8 @@ components:
           format: uuid
         status:
           type: string
-          enum: [waiting, processing, done, failed]
+          enum: [waiting, processing, done, failed, purged]
+          description: purged means the retention deleted the file (E8.5)
         result:
           type: object
           properties:

@@ -40,7 +40,11 @@ var (
 	CustomerB = Account{"customer-b", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02"), false}
 	CustomerC = Account{"customer-c", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0c03"), false}
 	// CustomerD is revoked by the panel e2e test, so no other test uses it.
-	CustomerD  = Account{"customer-d", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04"), false}
+	CustomerD = Account{"customer-d", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04"), false}
+	// CustomerE and CustomerF give the after-sale e2e tests a per-user rate
+	// limit of their own (60 requests per minute).
+	CustomerE  = Account{"customer-e", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0e05"), false}
+	CustomerF  = Account{"customer-f", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0f06"), false}
 	Technician = Account{"technician", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01"), true}
 	// Technician2 is never assigned in the tests: it checks that only the
 	// assigned technician works on an order.
@@ -51,9 +55,9 @@ var (
 	Admin2 = Account{"admin-2", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c04"), true}
 )
 
-// Resolve accepts "a" to "d" or a username.
+// Resolve accepts "a" to "f" or a username.
 func Resolve(name string) (Account, error) {
-	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, Technician, Technician2, Support, Admin, Admin2} {
+	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, CustomerE, CustomerF, Technician, Technician2, Support, Admin, Admin2} {
 		if name == a.Username || "customer-"+name == a.Username {
 			return a, nil
 		}

@@ -19,7 +19,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
-	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -76,6 +75,12 @@ func main() {
 		"partner_carrier_api_key_panel",
 		"partner_payments_webhook_secret",
 		"partner_shipping_webhook_secret",
+		"rabbitmq_panel_password",
+		"rabbitmq_notifier_password",
+		"db_support_password",
+		"db_panel_support_password",
+		"db_retention_password",
+		"db_retention_audit_password",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -86,7 +91,7 @@ func main() {
 	})
 	// Garage only imports keys in its own format: GK + 12 bytes in hex and a
 	// 32-byte secret in hex.
-	for _, prefix := range []string{"s3", "s3_panel"} {
+	for _, prefix := range []string{"s3", "s3_panel", "s3_retention"} {
 		id, secret := prefix+"_access_key_id", prefix+"_secret_access_key"
 		g.once([]string{id, secret}, func() map[string][]byte {
 			return map[string][]byte{id: append([]byte("GK"), randomHex(12)...), secret: randomHex(32)}
@@ -96,7 +101,12 @@ func main() {
 
 	// Derived from the secrets above: always regenerated, so they never go
 	// stale.
-	users, err := rabbitUsers(g.read("rabbitmq_api_password"), g.read("rabbitmq_worker_password"))
+	users, err := rabbitUsers(map[string][]byte{
+		"api":      g.read("rabbitmq_api_password"),
+		"worker":   g.read("rabbitmq_worker_password"),
+		"panel":    g.read("rabbitmq_panel_password"),
+		"notifier": g.read("rabbitmq_notifier_password"),
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -266,10 +276,13 @@ func serial() *big.Int {
 // rabbitUsers builds the part of the RabbitMQ definitions that holds secrets.
 // The topology lives in deploy/rabbitmq. Neither user can declare or delete
 // queues and exchanges (configure "^$"), and each one only publishes and
-// consumes what belongs to it (E4.1).
-func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
-	if len(apiPassword) == 0 || len(workerPassword) == 0 {
-		return nil, errors.New("empty RabbitMQ passwords")
+// consumes what belongs to it (E4.1). The panel only publishes notifications
+// and the notifier only consumes them (E8.4).
+func rabbitUsers(passwords map[string][]byte) ([]byte, error) {
+	for _, name := range []string{"api", "worker", "panel", "notifier"} {
+		if len(passwords[name]) == 0 {
+			return nil, fmt.Errorf("empty RabbitMQ password for %s", name)
+		}
 	}
 	type user struct {
 		Name      string   `json:"name"`
@@ -288,12 +301,16 @@ func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 	return json.MarshalIndent(map[string]any{
 		"vhosts": []map[string]string{{"name": "/"}},
 		"users": []user{
-			{"api", rabbitHash(apiPassword), algorithm, []string{}},
-			{"worker", rabbitHash(workerPassword), algorithm, []string{}},
+			{"api", rabbitHash(passwords["api"]), algorithm, []string{}},
+			{"worker", rabbitHash(passwords["worker"]), algorithm, []string{}},
+			{"panel", rabbitHash(passwords["panel"]), algorithm, []string{}},
+			{"notifier", rabbitHash(passwords["notifier"]), algorithm, []string{}},
 		},
 		"permissions": []permission{
-			{"api", "/", "^$", "^tasks$", "^results$"},
+			{"api", "/", "^$", "^(tasks|notifications)$", "^results$"},
 			{"worker", "/", "^$", "^results$", "^tasks$"},
+			{"panel", "/", "^$", "^notifications$", "^$"},
+			{"notifier", "/", "^$", "^$", "^notifications$"},
 		},
 	}, "", "  ")
 }

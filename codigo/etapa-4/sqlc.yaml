@@ -50,6 +50,24 @@ sql:
         out: internal/orders/ordersdb
 
   - engine: postgresql
+    schema: migrations/main
+    queries: internal/support/queries.sql
+    gen:
+      go:
+        <<: *go
+        package: supportdb
+        out: internal/support/supportdb
+
+  - engine: postgresql
+    schema: migrations/main
+    queries: internal/retention/queries.sql
+    gen:
+      go:
+        <<: *go
+        package: retentiondb
+        out: internal/retention/retentiondb
+
+  - engine: postgresql
     schema: migrations/audit
     queries: internal/audit/queries.sql
     gen:

@@ -38,7 +38,7 @@ var transitions = map[Status][]Status{
 	StatusQuoted:          {StatusAwaitingReview, StatusCancelled},
 	StatusAwaitingReview:  {StatusAwaitingPayment, StatusRejected, StatusCancelled},
 	StatusAwaitingPayment: {StatusPaid, StatusCancelled},
-	StatusPaid:            {StatusInProduction},
+	StatusPaid:            {StatusInProduction, StatusCancelled},
 	StatusInProduction:    {StatusShipped},
 	StatusShipped:         {StatusDelivered},
 }
@@ -122,6 +122,7 @@ func (s *Store) Create(ctx context.Context, o Order) error {
 			VolumeMm3: o.VolumeMm3, BboxMm: o.BboxMm, DfmFlags: o.DfmFlags, Status: o.Status, QuoteExpiresAt: o.QuoteExpiresAt,
 			ShipRecipient: o.ShipRecipient, ShipStreet: o.ShipStreet, ShipNumber: o.ShipNumber,
 			ShipCity: o.ShipCity, ShipState: o.ShipState, ShipPostalCode: o.ShipPostalCode,
+			ContactEmail: o.ContactEmail,
 		}); err != nil {
 			return err
 		}
@@ -173,7 +174,7 @@ func (s *Store) Details(ctx context.Context, id uuid.UUID) (Details, error) {
 	if d.Review, err = s.ReviewOf(ctx, id); err != nil {
 		return d, err
 	}
-	d.Payment, err = s.LivePayment(ctx, id)
+	d.Payment, err = latestPayment(ctx, s.q, id)
 	return d, err
 }
 
@@ -290,6 +291,7 @@ type Payment struct {
 	ChargeID    string    `json:"charge_id"`
 	AmountCents int64     `json:"amount_cents"`
 	Status      string    `json:"status"`
+	RefundID    *string   `json:"refund_id,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -386,9 +388,15 @@ type ShippingEvent struct {
 // order.
 func (s *Store) ApplyShipping(ctx context.Context, ev ShippingEvent) (applied bool, err error) {
 	from, to := StatusInProduction, StatusShipped
-	if ev.Type == "shipment.delivered" {
+	switch ev.Type {
+	case "shipment.picked_up":
+	case "shipment.delivered":
 		from, to = StatusShipped, StatusDelivered
-	} else if ev.Type != "shipment.picked_up" {
+	case "shipment.exception":
+		// RF15: a problem on the way is reported to the customer, and the
+		// status stays.
+		from, to = StatusShipped, StatusShipped
+	default:
 		return false, fmt.Errorf("%w: event type %q", ErrRejected, ev.Type)
 	}
 	err = s.tx(ctx, func(q *ordersdb.Queries) error {
@@ -403,7 +411,11 @@ func (s *Store) ApplyShipping(ctx context.Context, ev ShippingEvent) (applied bo
 		if err != nil {
 			return err
 		}
-		if err := transition(ctx, q, o.ID, from, to, SystemActor); err != nil {
+		if from == to {
+			if Status(o.Status) != from {
+				return fmt.Errorf("%w: order %s is %s", ErrRejected, o.ID, o.Status)
+			}
+		} else if err := transition(ctx, q, o.ID, from, to, SystemActor); err != nil {
 			return fmt.Errorf("%w: order %s is %s", ErrRejected, o.ID, o.Status)
 		}
 		applied = true
