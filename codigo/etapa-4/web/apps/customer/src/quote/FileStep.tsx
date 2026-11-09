@@ -1,6 +1,6 @@
-import { unwrap, uploadStl } from "@nugget/api";
+import { ApiError, retryAfterSeconds, unwrap, uploadStl } from "@nugget/api";
 import { useSession } from "@nugget/auth";
-import { Banner, FileDrop, Panel, Progress, Skeleton, Spinner, Stack, StatusTag, type Tone } from "@nugget/ui";
+import { Banner, Button, FileDrop, Panel, Progress, Skeleton, Spinner, Stack, StatusTag, type Tone } from "@nugget/ui";
 import { dimensions, maxBytes, parseInWorker, type Mesh } from "@nugget/viewer";
 import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense, useState } from "react";
@@ -58,9 +58,16 @@ export function FileStep({ fileId, onUploaded, onReset, status }: FileStepProps)
     staleTime: Infinity,
     queryFn: async () => {
       const { url } = await unwrap(api.GET("/api/v1/files/{id}/download", { params: { path: { id: fileId ?? "" } } }));
-      const blob = await (await fetch(url, { mode: "cors", credentials: "omit" })).blob();
-      const parsed = await parseInWorker(blob);
-      return parsed.ok ? parsed.mesh : undefined;
+      const res = await fetch(url, { mode: "cors", credentials: "omit" });
+      if (!res.ok) {
+        // A 429 waits for Retry-After and is retried once (shouldRetry).
+        throw new ApiError(res.status, "storage", retryAfterSeconds(res.headers.get("Retry-After")));
+      }
+      const parsed = await parseInWorker(await res.blob());
+      if (!parsed.ok) {
+        throw new Error(`stored file: ${parsed.problem}`);
+      }
+      return parsed.mesh;
     },
   });
   const shown = mesh ?? remote.data;
@@ -109,7 +116,20 @@ export function FileStep({ fileId, onUploaded, onReset, status }: FileStepProps)
               <StlViewer mesh={shown} label={name ?? "Peça enviada"} />
             </Suspense>
           ) : fileId !== undefined && status?.status === "done" ? (
-            <Spinner label="Carregando a visualização…" />
+            remote.isError ? (
+              <Banner
+                tone="warning"
+                action={
+                  <Button onClick={() => void remote.refetch()} disabled={remote.isFetching}>
+                    Tentar de novo
+                  </Button>
+                }
+              >
+                Não foi possível carregar a visualização. O arquivo continua enviado.
+              </Banner>
+            ) : (
+              <Spinner label="Carregando a visualização…" />
+            )
           ) : null}
           {progress !== undefined && <Progress value={progress} label="Envio do arquivo" />}
           {problem !== undefined && <Banner tone="danger">{problem}</Banner>}

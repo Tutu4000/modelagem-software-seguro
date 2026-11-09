@@ -111,3 +111,21 @@
     display: none;
   }
 }
+
+/* Hidden until it gets the keyboard focus, then above the bar. */
+.skip {
+  position: absolute;
+  left: var(--space-4);
+  top: -100px;
+  z-index: 20;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+.skip:focus {
+  top: var(--space-2);
+}
+.main:focus {
+  outline: none;
+}
