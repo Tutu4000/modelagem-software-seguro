@@ -1,4 +1,5 @@
 import { isStepUp } from "@nugget/api";
+import { codePoints } from "@nugget/domain";
 import { useSession } from "@nugget/auth";
 import { Banner, Button, Dialog, Field, Stack, TextArea } from "@nugget/ui";
 import { useId, useState, type ReactNode } from "react";
@@ -7,21 +8,6 @@ export const minJustification = 10;
 export const maxJustification = 500;
 /** Just under the panel's 5 minutes, so the request does not race the limit. */
 const stepUpMaxAgeMs = 4.5 * 60 * 1000;
-
-/** codePoints counts like the panel API (utf8.RuneCountInString), so the
- * limits here and there agree. */
-export function codePoints(text: string): number {
-  let n = 0;
-  for (let i = 0; i < text.length; i++) {
-    const unit = text.charCodeAt(i);
-    // A high surrogate and the low one after it are one code point.
-    if (unit >= 0xd800 && unit <= 0xdbff && i + 1 < text.length) {
-      i++;
-    }
-    n++;
-  }
-  return n;
-}
 
 export function justificationError(text: string): string | undefined {
   const n = codePoints(text.trim());

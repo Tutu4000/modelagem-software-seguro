@@ -1,6 +1,7 @@
+import { codePoints } from "@nugget/domain";
 import { describe, expect, it } from "vitest";
 
-import { codePoints, justificationError } from "./CriticalActionDialog";
+import { justificationError } from "./CriticalActionDialog";
 
 describe("justification", () => {
   it("counts code points, like the panel API", () => {

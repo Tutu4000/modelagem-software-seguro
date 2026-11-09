@@ -3,10 +3,11 @@ import { colorLabel, finishingLabel, materialLabel, qualityLabel, statusView, ti
 import { Banner, Button, Grid, KeyValue, money, Panel, Skeleton, Stack, StatusTag, Timeline } from "@nugget/ui";
 import { dimensions } from "@nugget/viewer";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router";
+import { Link, useParams, useSearchParams } from "react-router";
 
 import { useApi, useMe } from "../api";
 import type { StaffRole } from "../roles";
+import { AddressChangePanel } from "./AddressChangePanel";
 import { AssignPanel } from "./AssignPanel";
 import { DesignPanel } from "./DesignPanel";
 import { ReviewForm } from "./ReviewForm";
@@ -20,6 +21,8 @@ export function OrderPage() {
   const { id = "" } = useParams();
   const api = useApi();
   const me = useMe();
+  const [search] = useSearchParams();
+  const ticketId = search.get("chamado") ?? undefined;
   const order = useQuery({
     queryKey: ["order", id],
     queryFn: () => unwrap(api.GET("/panel/v1/orders/{id}", { params: { path: { id } } })),
@@ -125,6 +128,8 @@ export function OrderPage() {
           </Panel>
           {can.assign && <AssignPanel order={o} />}
           {(can.startProduction || can.ship) && <ProductionPanel order={o} start={can.startProduction} ship={can.ship} />}
+          {can.changeAddress && <AddressChangePanel orderId={o.id} ticketId={ticketId} />}
+          {me.data.role === "admin" && <Link to={`/revogar?usuario=${o.owner_id}`}>Revogar acesso do cliente</Link>}
         </Stack>
       </Grid>
     </Stack>

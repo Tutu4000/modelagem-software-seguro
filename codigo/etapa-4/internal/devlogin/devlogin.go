@@ -43,8 +43,10 @@ var (
 	CustomerD = Account{"customer-d", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04"), false}
 	// CustomerE and CustomerF give the after-sale e2e tests a per-user rate
 	// limit of their own (60 requests per minute).
-	CustomerE  = Account{"customer-e", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0e05"), false}
-	CustomerF  = Account{"customer-f", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0f06"), false}
+	CustomerE = Account{"customer-e", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0e05"), false}
+	CustomerF = Account{"customer-f", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0f06"), false}
+	// CustomerG is revoked by the panel's browser test and stays revoked.
+	CustomerG  = Account{"customer-g", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1007"), false}
 	Technician = Account{"technician", uuid.MustParse("0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01"), true}
 	// Technician2 is never assigned in the tests: it checks that only the
 	// assigned technician works on an order.
@@ -57,7 +59,7 @@ var (
 
 // Resolve accepts "a" to "f" or a username.
 func Resolve(name string) (Account, error) {
-	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, CustomerE, CustomerF, Technician, Technician2, Support, Admin, Admin2} {
+	for _, a := range []Account{CustomerA, CustomerB, CustomerC, CustomerD, CustomerE, CustomerF, CustomerG, Technician, Technician2, Support, Admin, Admin2} {
 		if name == a.Username || "customer-"+name == a.Username {
 			return a, nil
 		}
@@ -71,8 +73,11 @@ type Client struct {
 	tls     *tls.Config
 	http    *http.Client
 
-	mu       sync.Mutex
-	lastStep int64 // TOTP time step of the last code used
+	mu sync.Mutex
+	// lastStep is the TOTP time step of the last code used. It starts at the
+	// current step: another process, such as the other test suite, may have
+	// just used its code for the same account.
+	lastStep int64
 }
 
 // New reads the client secret, the demo password and the TOTP secret from the
@@ -95,6 +100,7 @@ func New(issuer, secretsDir string) (*Client, error) {
 			Timeout:   30 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConfig},
 		},
+		lastStep: time.Now().Unix() / 30,
 	}, nil
 }
 

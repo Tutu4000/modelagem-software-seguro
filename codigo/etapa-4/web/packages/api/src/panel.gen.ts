@@ -93,10 +93,10 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** Format: uuid */
-                            id?: string;
-                            tokens?: string;
-                            enabled?: boolean;
-                            sessions?: string;
+                            id: string;
+                            tokens: string;
+                            enabled: boolean;
+                            sessions: string;
                         };
                     };
                 };
@@ -594,11 +594,11 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** Format: uuid */
-                            change_id?: string;
+                            change_id: string;
                             /** @enum {string} */
-                            status?: "pending";
+                            status: "pending";
                             /** Format: date-time */
-                            expires_at?: string;
+                            expires_at: string;
                         };
                     };
                 };
@@ -658,7 +658,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
-                            tickets?: components["schemas"]["StaffTicket"][];
+                            tickets: components["schemas"]["StaffTicket"][];
                         };
                     };
                 };
@@ -827,7 +827,11 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": {
+                            price_tables: components["schemas"]["PriceTable"][];
+                        };
+                    };
                 };
                 401: components["responses"]["Unauthenticated"];
                 403: components["responses"]["Problem"];
@@ -848,8 +852,7 @@ export interface paths {
             requestBody: {
                 content: {
                     "application/json": {
-                        /** @description Same shape as the rules of GET /api/v1/catalog */
-                        rules: Record<string, never>;
+                        rules: components["schemas"]["PriceRules"];
                     };
                 };
             };
@@ -859,7 +862,13 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": {
+                            version: number;
+                            /** @enum {string} */
+                            status: "draft";
+                        };
+                    };
                 };
                 400: components["responses"]["Problem"];
                 401: components["responses"]["Unauthenticated"];
@@ -905,7 +914,13 @@ export interface paths {
                     headers: {
                         [name: string]: unknown;
                     };
-                    content?: never;
+                    content: {
+                        "application/json": {
+                            version: number;
+                            /** @enum {string} */
+                            status: "active";
+                        };
+                    };
                 };
                 401: components["responses"]["Unauthenticated"];
                 403: components["responses"]["Problem"];
@@ -936,24 +951,24 @@ export interface components {
             id: string;
             username: string;
         };
-        /** @description The ticket as the customer sees it (see openapi.yaml), plus the owner. The message bodies are plain text: show them as text, never as HTML. */
-        StaffTicket: {
+        /** @description The ticket as the customer sees it (Ticket in openapi.yaml), plus the owner. The message bodies are plain text: show them as text, never as HTML. */
+        StaffTicket: components["schemas"]["Ticket"] & {
             /** Format: uuid */
-            id?: string;
-            /** Format: uuid */
-            owner_id?: string;
-            /** Format: uuid */
-            order_id?: string | null;
-            subject?: string;
+            owner_id: string;
+        };
+        PriceTable: {
+            version: number;
             /** @enum {string} */
-            status?: "open" | "answered" | "closed";
-            messages?: {
-                /** @enum {string} */
-                author_kind?: "customer" | "staff";
-                body?: string;
-                /** Format: date-time */
-                created_at?: string;
-            }[];
+            status: "draft" | "active" | "retired";
+            rules: components["schemas"]["PriceRules"];
+            /** Format: uuid */
+            created_by: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: uuid */
+            approved_by: string | null;
+            /** Format: date-time */
+            approved_at: string | null;
         };
         Justification: {
             /** @description Why the operation is needed. It goes to the audit log. */
@@ -1025,6 +1040,51 @@ export interface components {
                 /** Format: date-time */
                 reviewed_at: string;
             } | null;
+        };
+        Ticket: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            order_id: string | null;
+            subject: string;
+            /** @enum {string} */
+            status: "open" | "answered" | "closed";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            messages?: {
+                /** Format: uuid */
+                id: string;
+                /** @enum {string} */
+                author_kind: "customer" | "staff";
+                /** @description Plain text, as typed. Show it as text, never as HTML. */
+                body: string;
+                /** Format: date-time */
+                created_at: string;
+            }[];
+        };
+        PriceRules: {
+            materials: {
+                [key: string]: {
+                    name: string;
+                    cents_per_cm3: number;
+                    colors: string[];
+                };
+            };
+            /** @description Multiplier in per mille (1000 keeps the material price) */
+            qualities: {
+                [key: string]: number;
+            };
+            /** @description Cents per unit */
+            finishings: {
+                [key: string]: number;
+            };
+            setup_cents: number;
+            discounts: {
+                min_quantity: number;
+                percent_off: number;
+            }[];
         };
     };
     responses: {

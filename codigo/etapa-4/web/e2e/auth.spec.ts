@@ -58,6 +58,9 @@ test.describe("customer session", () => {
 });
 
 test.describe("panel session", () => {
+  // A staff login waits for a fresh TOTP step, up to 30 seconds.
+  test.describe.configure({ timeout: 2 * 60 * 1000 });
+
   test("the staff logs in with TOTP, sees the role and confirms the identity in a popup", async ({ page }) => {
     const problems = cspProblems(page);
     await page.goto("https://localhost:9445/");

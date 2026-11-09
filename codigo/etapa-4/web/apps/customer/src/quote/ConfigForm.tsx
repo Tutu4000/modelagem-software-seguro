@@ -1,7 +1,6 @@
-import { colorLabel, finishingLabel, qualityLabel } from "@nugget/domain";
-import { ChipGroup, Field, Grid, money, Panel, Select, Stack, Stepper, TextInput } from "@nugget/ui";
+import { AddressFields, colorLabel, finishingLabel, qualityLabel, type AddressErrors } from "@nugget/domain";
+import { ChipGroup, Field, money, Panel, Stack, Stepper } from "@nugget/ui";
 
-import { maskPostalCode, states, type AddressErrors } from "./address";
 import type { Address, Choice, Rules } from "./types";
 
 export interface ConfigFormProps {
@@ -20,7 +19,6 @@ export interface ConfigFormProps {
 export function ConfigForm({ rules, choice, onChoice, address, onAddress, errors, disabled }: ConfigFormProps) {
   const material = rules.materials[choice.material];
   const set = (patch: Partial<Choice>) => { onChoice({ ...choice, ...patch }); };
-  const setAddress = (patch: Partial<Address>) => { onAddress({ ...address, ...patch }); };
   return (
     <Panel>
       <Panel.Header>
@@ -72,46 +70,7 @@ export function ConfigForm({ rules, choice, onChoice, address, onAddress, errors
 
           <Stack gap={3}>
             <h3>Entrega</h3>
-            <Field label="Destinatário" error={errors.recipient}>
-              {(c) => <TextInput {...c} autoComplete="name" maxLength={120} disabled={disabled} value={address.recipient} onChange={(e) => { setAddress({ recipient: e.target.value }); }} />}
-            </Field>
-            <Grid columns={2}>
-              <Field label="CEP" error={errors.postal_code}>
-                {(c) => (
-                  <TextInput
-                    {...c}
-                    autoComplete="postal-code"
-                    inputMode="numeric"
-                    placeholder="00000-000"
-                    disabled={disabled}
-                    value={address.postal_code}
-                    onChange={(e) => { setAddress({ postal_code: maskPostalCode(e.target.value) }); }}
-                  />
-                )}
-              </Field>
-              <Field label="UF" error={errors.state}>
-                {(c) => (
-                  <Select {...c} disabled={disabled} value={address.state} onChange={(e) => { setAddress({ state: e.target.value }); }}>
-                    {states.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </Select>
-                )}
-              </Field>
-            </Grid>
-            <Field label="Logradouro" error={errors.street}>
-              {(c) => <TextInput {...c} autoComplete="address-line1" maxLength={120} disabled={disabled} value={address.street} onChange={(e) => { setAddress({ street: e.target.value }); }} />}
-            </Field>
-            <Grid columns={2}>
-              <Field label="Número" error={errors.number}>
-                {(c) => <TextInput {...c} maxLength={120} disabled={disabled} value={address.number} onChange={(e) => { setAddress({ number: e.target.value }); }} />}
-              </Field>
-              <Field label="Cidade" error={errors.city}>
-                {(c) => <TextInput {...c} autoComplete="address-level2" maxLength={120} disabled={disabled} value={address.city} onChange={(e) => { setAddress({ city: e.target.value }); }} />}
-              </Field>
-            </Grid>
+            <AddressFields address={address} onChange={onAddress} errors={errors} disabled={disabled} />
           </Stack>
         </Stack>
       </Panel.Body>

@@ -282,6 +282,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |Admin API do Garage só para o init|Escuta também na rede de processamento. Exige o token, que o worker não tem|
 |Outbox transacional|A tarefa é publicada antes do commit, e o resultado só recebe ack depois dele. Se o commit falhar, nenhuma tarefa fica parada, mas o worker pode processar uma tarefa que não existe, ou a mesma duas vezes. A idempotência do E4.6 descarta o resultado extra|
 |Cabeçalhos de segurança no nginx|Ficaram de fora até a verificação da Etapa 5 encontrá-los. Desde a FE0 estão ligados em todas as portas: CSP estrita com Trusted Types, HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP e CORP. A rodada nova do ZAP está em `evidencias/etapa-5/relatorios-zap-fe0/`. O Keycloak e o Grafana mantêm a CSP que eles mesmos mandam|
+|Catálogo editável pelo painel|O editor de tabela de preço (FE6) só muda valores de uma tabela que já existe. Criar material, cor, qualidade ou acabamento pede uma tabela proposta pela API (`POST /panel/v1/price-tables`)|
 
 ## 6. Ligação com as próximas etapas
 

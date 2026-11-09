@@ -9,6 +9,12 @@ import { OrderPage } from "./orders/OrderPage";
 import { OrdersPage } from "./orders/OrdersPage";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
+import { NewPricePage } from "./prices/NewPricePage";
+import { PricesPage } from "./prices/PricesPage";
+import { PriceTablePage } from "./prices/PriceTablePage";
+import { RevokePage } from "./RevokePage";
+import { TicketPage } from "./tickets/TicketPage";
+import { TicketsPage } from "./tickets/TicketsPage";
 
 /** Everything in the panel needs a staff session with the second factor. */
 function Protected() {
@@ -54,6 +60,12 @@ const routes: RouteObject[] = [
       { index: true, element: <Home /> },
       { path: "pedidos", element: <OrdersPage /> },
       { path: "pedidos/:id", element: <OrderPage /> },
+      { path: "chamados", element: <TicketsPage /> },
+      { path: "chamados/:id", element: <TicketPage /> },
+      { path: "precos", element: <PricesPage /> },
+      { path: "precos/nova", element: <NewPricePage /> },
+      { path: "precos/:version", element: <PriceTablePage /> },
+      { path: "revogar", element: <RevokePage /> },
     ],
   },
 ];
