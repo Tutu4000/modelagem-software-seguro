@@ -1,11 +1,11 @@
 import { ApiError, unwrap } from "@nugget/api";
+import { cleanText, maxMessage, ticketStatus } from "@nugget/domain";
 import { Banner, Button, Conversation, Field, Panel, Skeleton, Stack, StatusTag, TextArea } from "@nugget/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { useApi } from "../api";
-import { cleanText, maxMessage, ticketStatus } from "./text";
 
 const when = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 

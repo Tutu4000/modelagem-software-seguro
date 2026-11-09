@@ -1,10 +1,10 @@
 import { unwrap } from "@nugget/api";
+import { ticketStatus, type Ticket } from "@nugget/domain";
 import { Banner, DataTable, EmptyState, ShieldIcon, Skeleton, Stack, StatusTag, Toolbar } from "@nugget/ui";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 
 import { useApi } from "../api";
-import { ticketStatus, type Ticket } from "./text";
 
 const when = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 

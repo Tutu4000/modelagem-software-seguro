@@ -1,9 +1,8 @@
 // What each staff role may try on an order. The panel API decides for real
 // (403, 409); this only offers the buttons that make sense.
 import { ApiError, type PanelComponents } from "@nugget/api";
-import type { Status } from "@nugget/domain";
+import { codePoints, type Status } from "@nugget/domain";
 
-import { codePoints } from "../CriticalActionDialog";
 import type { StaffRole } from "../roles";
 
 export type StaffOrder = PanelComponents["schemas"]["StaffOrder"];
@@ -15,11 +14,16 @@ export interface Work {
   review: boolean;
   startProduction: boolean;
   ship: boolean;
+  changeAddress: boolean;
 }
+
+/** The statuses before the dispatch, as orders.AddressChangeAllowed. */
+const beforeDispatch: readonly Status[] = ["quoted", "awaiting_review", "awaiting_payment", "paid", "in_production"];
 
 /** work: the admin assigns an order awaiting review; only the technician it
  * was assigned to opens the design, reviews it, prints it and books the
- * pickup. */
+ * pickup. The support and the admin propose an address change until the
+ * pickup is booked, while the address was not cleared by the retention. */
 export function work(role: StaffRole, me: string, o: StaffOrder): Work {
   const mine = role === "technician" && o.assigned_technician === me;
   return {
@@ -28,6 +32,7 @@ export function work(role: StaffRole, me: string, o: StaffOrder): Work {
     review: mine && o.status === "awaiting_review" && (o.review === undefined || o.review === null),
     startProduction: mine && o.status === "paid",
     ship: mine && o.status === "in_production" && o.tracking_code === undefined,
+    changeAddress: role !== "technician" && beforeDispatch.includes(o.status) && o.tracking_code === undefined && o.shipping !== undefined,
   };
 }
 

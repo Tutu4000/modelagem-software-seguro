@@ -10,15 +10,22 @@ export const roleLabel: Record<StaffRole, string> = {
 
 export interface Section {
   label: string;
-  /** Where it is; a section without a path arrives in a later phase. */
-  to?: string;
+  to: string;
 }
 
 /** The sections each role sees. The panel API decides for real (D02). */
 export const sections: Record<StaffRole, readonly Section[]> = {
   technician: [{ label: "Meus pedidos", to: "/pedidos" }],
-  support: [{ label: "Pedidos", to: "/pedidos" }, { label: "Chamados" }],
-  admin: [{ label: "Pedidos", to: "/pedidos" }, { label: "Chamados" }, { label: "Tabelas de preço" }],
+  support: [
+    { label: "Pedidos", to: "/pedidos" },
+    { label: "Chamados", to: "/chamados" },
+  ],
+  admin: [
+    { label: "Pedidos", to: "/pedidos" },
+    { label: "Chamados", to: "/chamados" },
+    { label: "Tabelas de preço", to: "/precos" },
+    { label: "Revogar acesso", to: "/revogar" },
+  ],
 };
 
 export function staffRole(roles: readonly Role[]): StaffRole | undefined {

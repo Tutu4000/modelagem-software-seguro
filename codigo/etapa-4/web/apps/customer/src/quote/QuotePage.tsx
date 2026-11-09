@@ -1,11 +1,11 @@
 import { unwrap } from "@nugget/api";
+import { emptyAddress, validateAddress } from "@nugget/domain";
 import { Banner, Button, money, Panel, Skeleton, Stack, Steps } from "@nugget/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router";
 
 import { useApi } from "../api";
-import { emptyAddress, validateAddress } from "./address";
 import { ConfigForm } from "./ConfigForm";
 import { FileStep, useFileStatus } from "./FileStep";
 import { quoteMessage } from "./messages";

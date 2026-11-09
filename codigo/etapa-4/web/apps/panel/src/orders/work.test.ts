@@ -6,6 +6,8 @@ import { orderProblem, reportError, technicianOptions, work, type StaffOrder } f
 const me = "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01";
 const other = "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a02";
 
+const shipping = { recipient: "Customer", street: "Rua A", number: "1", city: "São Paulo", state: "SP", postal_code: "01310-100" };
+
 function order(status: StaffOrder["status"], extra: Partial<StaffOrder> = {}): StaffOrder {
   return {
     id: "0b7e3a52-0000-4000-8000-000000000001", file_id: "f1", material: "pla", color: "black", quality: "standard", finishing: "none",
@@ -16,12 +18,12 @@ function order(status: StaffOrder["status"], extra: Partial<StaffOrder> = {}): S
   };
 }
 
-const none = { assign: false, openFile: false, review: false, startProduction: false, ship: false };
+const none = { assign: false, openFile: false, review: false, startProduction: false, ship: false, changeAddress: false };
 
 describe("work", () => {
   it("lets the admin assign only an order awaiting review", () => {
     expect(work("admin", other, order("awaiting_review", { assigned_technician: null }))).toEqual({ ...none, assign: true });
-    expect(work("admin", other, order("paid"))).toEqual(none);
+    expect(work("admin", other, order("delivered"))).toEqual(none);
   });
 
   it("gives the design and the review only to the assigned technician", () => {
@@ -40,6 +42,20 @@ describe("work", () => {
   it("offers no second review", () => {
     const review = { decision: "approved" as const, report: "ok ok ok ok", reviewed_at: "2026-11-09T11:00:00Z" };
     expect(work("technician", me, order("awaiting_review", { review })).review).toBe(false);
+  });
+});
+
+describe("address change", () => {
+  it("is for the support and the admin until the pickup is booked", () => {
+    expect(work("support", other, order("paid", { shipping })).changeAddress).toBe(true);
+    expect(work("admin", other, order("in_production", { shipping })).changeAddress).toBe(true);
+    expect(work("support", other, order("in_production", { shipping, tracking_code: "BR1" })).changeAddress).toBe(false);
+    expect(work("support", other, order("shipped", { shipping })).changeAddress).toBe(false);
+    expect(work("technician", me, order("paid", { shipping })).changeAddress).toBe(false);
+  });
+
+  it("needs the address the retention did not clear", () => {
+    expect(work("support", other, order("paid")).changeAddress).toBe(false);
   });
 });
 

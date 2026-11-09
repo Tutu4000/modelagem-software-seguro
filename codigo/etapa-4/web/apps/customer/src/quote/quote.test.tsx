@@ -1,10 +1,10 @@
+import { emptyAddress, maskPostalCode, validateAddress } from "@nugget/domain";
 import { money } from "@nugget/ui";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { describe, expect, it } from "vitest";
 
-import { emptyAddress, maskPostalCode, validateAddress } from "./address";
 import { ConfigForm } from "./ConfigForm";
 import { lines } from "./QuotePanel";
 import type { Address, Choice, Order, Rules } from "./types";

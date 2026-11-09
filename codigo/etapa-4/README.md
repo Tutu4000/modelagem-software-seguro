@@ -89,14 +89,14 @@ O realm é gerado a partir de [deploy/keycloak/realm.json](deploy/keycloak/realm
 
 |Conta|Perfil|TOTP|
 |-|-|-|
-|`customer-a` a `customer-f`|`customer`|Não|
+|`customer-a` a `customer-g`|`customer`|Não|
 |`technician`, `technician-2`|`technician`|Sim|
 |`support`|`support`|Sim|
 |`admin`, `admin-2`|`admin`|Sim|
 
 O `technician-2` nunca recebe pedidos nos testes, para conferir que só o técnico atribuído trabalha num pedido. O `admin-2` aprova as tabelas de preço que o `admin` propõe, porque uma tabela precisa de dois admins.
 
-O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel. O `customer-e` e o `customer-f` servem aos testes de troca de endereço e de retenção, cada um com o próprio limite por usuário.
+O `customer-c` fica reservado para o teste de cota do e2e, e o `customer-d` é revogado pelo teste do painel. O `customer-e` e o `customer-f` servem aos testes de troca de endereço e de retenção, cada um com o próprio limite por usuário. O `customer-g` é revogado pelo teste do painel no navegador e fica desativado até o próximo `just reset`.
 
 O `just token <conta>` faz o login pelo cliente `e2e`, que só existe no realm local e aceita usuário e senha, e imprime o token. Esse token não serve para o painel: sem o fluxo de navegador, o Keycloak não comprova o TOTP. Para o painel, `just panel-token <conta>` faz o login pelo `panel-web`, preenchendo as telas de senha e de TOTP como um navegador. Os apps web usam os clientes `web` e `panel-web`, com authorization code e PKCE. Para entrar pelo navegador:
 
@@ -132,12 +132,12 @@ Depois da compra:
 
 * **Cancelamento:** o cliente cancela até `paid` (`POST /api/v1/orders/{id}/cancel`). Um pedido pago é estornado no gateway; se o gateway estiver fora, a resposta é 202 com o estorno pendente, e uma nova chamada o conclui.
 * **Suporte:** o cliente abre chamados, opcionalmente sobre um pedido dele (`POST /api/v1/tickets`), e o suporte responde no painel (`POST /panel/v1/tickets/{id}/messages`). O e-mail só avisa que há resposta.
-* **Troca de endereço:** o suporte propõe o endereço novo no painel (`POST /panel/v1/orders/{id}/address-change`), como operação crítica. O cliente recebe um código de 8 dígitos no e-mail cadastrado e confirma logado (`POST /api/v1/orders/{id}/address-change/confirm`). Sem o código, o endereço não muda, e depois do despacho não há troca.
+* **Troca de endereço:** o suporte propõe o endereço novo no painel, a partir do detalhe do pedido ou do chamado (`POST /panel/v1/orders/{id}/address-change`), como operação crítica. O cliente recebe um código de 8 dígitos no e-mail cadastrado e confirma logado (`POST /api/v1/orders/{id}/address-change/confirm`). Sem o código, o endereço não muda, e depois do despacho não há troca.
 * **Retenção:** o STL é apagado 90 dias depois da entrega, ou 30 dias depois do upload sem pedido vivo, e o endereço é limpo 90 dias depois da entrega ou do cancelamento. O job roda de hora em hora; `just retention` faz uma passada na hora.
 
 Os webhooks são rotas públicas, sem token: valem pela assinatura `X-Nugget-Signature: t=<unix>,v1=<HMAC-SHA256 de "t.corpo">`, com um segredo por parceiro, e recusam timestamps com mais de 5 minutos. Um evento repetido responde 200 sem efeito, e um evento cujo valor não bate com o pedido responde 400 e fica registrado como `payment.rejected`. Com um parceiro fora do ar, o orçamento e o pagamento respondem 502 `partner_unavailable`, e o pedido não muda.
 
-Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/price-tables`) e aprovada por outro (`POST /panel/v1/price-tables/{versão}/approve`). Os pedidos já orçados mantêm o preço que tinham.
+Os preços mudam por uma tabela nova, proposta por um admin (`POST /panel/v1/price-tables`) e aprovada por outro (`POST /panel/v1/price-tables/{versão}/approve`). Os pedidos já orçados mantêm o preço que tinham. No painel, `/precos/nova` parte da tabela ativa e só muda valores, e o segundo admin vê o que muda antes de aprovar. A revogação de uma conta fica em `/revogar`, só para admin.
 
 ## Componentes
 
@@ -217,7 +217,7 @@ Os dois apps ficam em `web/`, um workspace npm descrito em [FRONTEND.md](FRONTEN
 |`web/packages/api`|Tipos gerados dos dois OpenAPI, o cliente tipado e os erros em Problem Details|
 |`web/packages/auth`|Login com PKCE, sessão e step-up|
 |`web/packages/viewer`|Leitor de STL num worker e visualizador 3D|
-|`web/packages/domain`|Estados do pedido, linha do tempo e nomes do catálogo, comuns aos dois apps|
+|`web/packages/domain`|Estados do pedido, linha do tempo, nomes do catálogo, regras de texto e de endereço, comuns aos dois apps|
 |`web/e2e`|Testes do Playwright contra o compose|
 
 O nginx constrói os apps na própria imagem (`deploy/nginx/Dockerfile`), então `just up` já os serve. Para desenvolver:

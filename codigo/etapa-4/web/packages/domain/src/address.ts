@@ -1,4 +1,8 @@
-import type { Address } from "./types";
+// The delivery address as the API validates it (partners.Address.Validate):
+// the customer's quote and the support's address change use the same rules.
+import type { CustomerComponents } from "@nugget/api";
+
+export type Address = CustomerComponents["schemas"]["Address"];
 
 export const states = [
   "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA",

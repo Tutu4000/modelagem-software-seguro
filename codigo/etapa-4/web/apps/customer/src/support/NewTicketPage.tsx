@@ -1,11 +1,11 @@
 import { ApiError, unwrap } from "@nugget/api";
+import { cleanText, maxMessage, maxSubject } from "@nugget/domain";
 import { Banner, Button, Field, Panel, Select, Stack, TextArea, TextInput } from "@nugget/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import { useApi } from "../api";
-import { cleanText, maxMessage, maxSubject } from "./text";
 
 function refusal(e: unknown): string | undefined {
   if (!(e instanceof ApiError)) {

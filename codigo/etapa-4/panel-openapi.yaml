@@ -76,6 +76,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [id, tokens, enabled, sessions]
                 properties:
                   id:
                     type: string
@@ -390,6 +391,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [change_id, status, expires_at]
                 properties:
                   change_id:
                     type: string
@@ -436,6 +438,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [tickets]
                 properties:
                   tickets:
                     type: array
@@ -519,6 +522,16 @@ paths:
       responses:
         "200":
           description: Versions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [price_tables]
+                properties:
+                  price_tables:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PriceTable"
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -536,11 +549,21 @@ paths:
               required: [rules]
               properties:
                 rules:
-                  type: object
-                  description: Same shape as the rules of GET /api/v1/catalog
+                  $ref: "openapi.yaml#/components/schemas/PriceRules"
       responses:
         "201":
           description: Draft created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, status]
+                properties:
+                  version:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [draft]
         "400":
           $ref: "#/components/responses/Problem"
         "401":
@@ -569,6 +592,17 @@ paths:
       responses:
         "200":
           description: Table active
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, status]
+                properties:
+                  version:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [active]
         "401":
           $ref: "#/components/responses/Unauthenticated"
         "403":
@@ -668,39 +702,44 @@ components:
         username:
           type: string
     StaffTicket:
-      type: object
       description: >
-        The ticket as the customer sees it (see openapi.yaml), plus the owner.
-        The message bodies are plain text: show them as text, never as HTML.
+        The ticket as the customer sees it (Ticket in openapi.yaml), plus the
+        owner. The message bodies are plain text: show them as text, never as
+        HTML.
+      allOf:
+        - $ref: "openapi.yaml#/components/schemas/Ticket"
+        - type: object
+          required: [owner_id]
+          properties:
+            owner_id:
+              type: string
+              format: uuid
+    PriceTable:
+      type: object
+      required: [version, status, rules, created_by, created_at, approved_by, approved_at]
       properties:
-        id:
+        version:
+          type: integer
+        status:
           type: string
-          format: uuid
-        owner_id:
-          type: string
-          format: uuid
-        order_id:
+          enum: [draft, active, retired]
+        rules:
+          $ref: "openapi.yaml#/components/schemas/PriceRules"
+        created_by:
           type: string
           format: uuid
           nullable: true
-        subject:
+        created_at:
           type: string
-        status:
+          format: date-time
+        approved_by:
           type: string
-          enum: [open, answered, closed]
-        messages:
-          type: array
-          items:
-            type: object
-            properties:
-              author_kind:
-                type: string
-                enum: [customer, staff]
-              body:
-                type: string
-              created_at:
-                type: string
-                format: date-time
+          format: uuid
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
     Justification:
       type: object
       required: [justification]

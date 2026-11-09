@@ -21,7 +21,9 @@ export function totpAt(key: string, unixSeconds: number): string {
   return String((sum.readUInt32BE(off) & 0x7fffffff) % 1_000_000).padStart(6, "0");
 }
 
-let lastStep = 0;
+// Starts at the current step: another process, such as the Go suite, may have
+// just used its code for the same account.
+let lastStep = Math.floor(Date.now() / 1000 / 30);
 
 /** totp never reuses a step: Keycloak refuses a code used twice. */
 export async function totp(): Promise<string> {

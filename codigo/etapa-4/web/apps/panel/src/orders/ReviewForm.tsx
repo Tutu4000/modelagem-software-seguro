@@ -1,10 +1,10 @@
 import { unwrap } from "@nugget/api";
+import { codePoints } from "@nugget/domain";
 import { Banner, Button, ChipGroup, Field, Panel, Stack, TextArea } from "@nugget/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useApi } from "../api";
-import { codePoints } from "../CriticalActionDialog";
 import { maxReport, orderProblem, reportError } from "./work";
 
 type Decision = "approved" | "rejected";

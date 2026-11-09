@@ -6,7 +6,9 @@ export type Ticket = CustomerComponents["schemas"]["Ticket"];
 export const maxSubject = 200;
 export const maxMessage = 2000;
 
-function codePoints(s: string): number {
+/** codePoints counts like the Go API (utf8.RuneCountInString), so the limits
+ * here and there agree. */
+export function codePoints(s: string): number {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
     const unit = s.charCodeAt(i);
@@ -42,12 +44,15 @@ export function cleanText(input: string, max: number): CleanResult {
   return { ok: true, text, length };
 }
 
-const view: Record<Ticket["status"], { label: string; tone: Tone }> = {
-  open: { label: "Aguardando o suporte", tone: "info" },
-  answered: { label: "Respondido", tone: "warning" },
-  closed: { label: "Fechado", tone: "neutral" },
+const tone: Record<Ticket["status"], Tone> = { open: "info", answered: "warning", closed: "neutral" };
+
+/** The same status, told from each side: the customer waits for the support;
+ * the support sees an open ticket. */
+const label: Record<"customer" | "staff", Record<Ticket["status"], string>> = {
+  customer: { open: "Aguardando o suporte", answered: "Respondido", closed: "Fechado" },
+  staff: { open: "Aberto", answered: "Respondido", closed: "Fechado" },
 };
 
-export function ticketStatus(status: Ticket["status"]): { label: string; tone: Tone } {
-  return view[status];
+export function ticketStatus(status: Ticket["status"], side: "customer" | "staff" = "customer"): { label: string; tone: Tone } {
+  return { label: label[side][status], tone: tone[status] };
 }

@@ -243,7 +243,7 @@ Done. Where to look:
                and the "Enumeração de IDs" and "Abuso de upload" alerts firing for it
                Negócio: an order in each status
   Mailpit      http://127.0.0.1:8026: the notices, and the address change code of customer-b
-  Accounts     customer-a to customer-f, technician, support, admin, admin-2 (password in
+  Accounts     customer-a to customer-g, technician, support, admin, admin-2 (password in
                secrets/keycloak_demo_password; the staff also need the TOTP, see README)
 `)
 }

@@ -1,8 +1,7 @@
+import { cleanText, maxMessage, ticketStatus } from "@nugget/domain";
 import { Conversation } from "@nugget/ui";
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-
-import { cleanText, maxMessage, ticketStatus } from "./text";
 
 describe("cleanText", () => {
   it("trims and normalizes the line breaks, like the API", () => {
