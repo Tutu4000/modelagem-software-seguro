@@ -1,7 +1,7 @@
+import { colorLabel, finishingLabel, qualityLabel } from "@nugget/domain";
 import { ChipGroup, Field, Grid, money, Panel, Select, Stack, Stepper, TextInput } from "@nugget/ui";
 
 import { maskPostalCode, states, type AddressErrors } from "./address";
-import { colorLabel, finishingLabel, qualityLabel } from "./labels";
 import type { Address, Choice, Rules } from "./types";
 
 export interface ConfigFormProps {

@@ -1,7 +1,7 @@
 // Package idpadmin calls the Keycloak Admin API with the panel's service
 // account ("panel-admin", client credentials). It disables a user and ends
 // their sessions (the incident response of the panel, E6.4), and reads a
-// user's roles (before assigning an order to a technician).
+// user's roles and lists the technicians (before assigning an order).
 package idpadmin
 
 import (
@@ -78,6 +78,31 @@ func (c *Client) HasRealmRole(ctx context.Context, user uuid.UUID, role string) 
 		}
 	}
 	return false, nil
+}
+
+// User is an account as the panel shows it: no e-mail or name.
+type User struct {
+	ID       uuid.UUID `json:"id"`
+	Username string    `json:"username"`
+}
+
+// usersPage is how many accounts each call asks Keycloak for.
+const usersPage = 100
+
+// UsersWithRealmRole lists the accounts with the realm role, page by page.
+func (c *Client) UsersWithRealmRole(ctx context.Context, role string) ([]User, error) {
+	var all []User
+	for first := 0; ; first += usersPage {
+		var page []User
+		path := fmt.Sprintf("/roles/%s/users?first=%d&max=%d&briefRepresentation=true", url.PathEscape(role), first, usersPage)
+		if err := c.get(ctx, path, &page); err != nil {
+			return nil, err
+		}
+		all = append(all, page...)
+		if len(page) < usersPage {
+			return all, nil
+		}
+	}
 }
 
 var errUserNotFound = errors.New("user not found")

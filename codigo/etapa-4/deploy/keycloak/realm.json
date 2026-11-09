@@ -217,7 +217,7 @@
     {
       "clientId": "panel-admin",
       "name": "Panel service account (Keycloak Admin API)",
-      "description": "Used only by the panel to log out and disable a user in an incident. Holds realm-management/manage-users: the narrowest Keycloak role that can do it.",
+      "description": "Used only by the panel to log out and disable a user in an incident (realm-management/manage-users, the narrowest Keycloak role that can do it) and to list the technicians (view-realm, read-only, which Keycloak requires to read the users of a role).",
       "enabled": true,
       "publicClient": false,
       "secret": "{{PANEL_ADMIN_SECRET}}",
@@ -233,7 +233,7 @@
       "username": "service-account-panel-admin",
       "enabled": true,
       "serviceAccountClientId": "panel-admin",
-      "clientRoles": {"realm-management": ["manage-users"]}
+      "clientRoles": {"realm-management": ["manage-users", "view-realm"]}
     },
     {
       "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01",

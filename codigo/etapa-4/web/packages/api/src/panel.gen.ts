@@ -121,6 +121,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/panel/v1/technicians": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The accounts with the technician role (admin)
+         * @description Read from Keycloak, so the admin picks the technician of an order by name. Only the ID and the username: no e-mail.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description The technicians */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            technicians: components["schemas"]["Technician"][];
+                        };
+                    };
+                };
+                401: components["responses"]["Unauthenticated"];
+                403: components["responses"]["Problem"];
+                /** @description Keycloak did not answer (idp_unavailable) */
+                502: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/problem+json": components["schemas"]["Problem"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/panel/v1/orders": {
         parameters: {
             query?: never;
@@ -318,8 +370,8 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** Format: uri */
-                            url?: string;
-                            expires_in?: number;
+                            url: string;
+                            expires_in: number;
                         };
                     };
                 };
@@ -468,9 +520,9 @@ export interface paths {
                     content: {
                         "application/json": {
                             /** Format: uuid */
-                            id?: string;
-                            shipment_id?: string;
-                            tracking_code?: string;
+                            id: string;
+                            shipment_id: string;
+                            tracking_code: string;
                         };
                     };
                 };
@@ -870,35 +922,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** @description The customer view of the order (see openapi.yaml) plus the review data. The payment and the tracking code come for every staff role; the shipping address only for support and admin. */
-        StaffOrder: {
+        /** @description The customer view of the order (Order in openapi.yaml) plus the review data. The payment and the tracking code come for every staff role; the shipping address only for support and admin. */
+        StaffOrder: components["schemas"]["Order"] & {
             /** Format: uuid */
-            id?: string;
+            owner_id: string;
+            volume_mm3: number;
+            bbox_mm: number[];
             /** Format: uuid */
-            owner_id?: string;
-            status?: string;
-            total_cents?: number;
-            shipping_cents?: number;
-            tracking_code?: string;
-            payment?: {
-                charge_id?: string;
-                amount_cents?: number;
-                status?: string;
-            };
-            /** @description Only for support and admin */
-            shipping?: {
-                recipient?: string;
-                street?: string;
-                number?: string;
-                city?: string;
-                state?: string;
-                postal_code?: string;
-            };
-            volume_mm3?: number;
-            bbox_mm?: number[];
-            dfm_flags?: "exceeds_build_volume"[];
+            assigned_technician: string | null;
+        };
+        Technician: {
             /** Format: uuid */
-            assigned_technician?: string | null;
+            id: string;
+            username: string;
         };
         /** @description The ticket as the customer sees it (see openapi.yaml), plus the owner. The message bodies are plain text: show them as text, never as HTML. */
         StaffTicket: {
@@ -930,6 +966,66 @@ export interface components {
             /** @enum {string} */
             code: "unauthenticated" | "mfa_required" | "step_up_required" | "forbidden" | "invalid_request" | "justification_required" | "rate_limited" | "unavailable" | "idp_unavailable" | "conflict" | "internal";
         };
+        /** @description The minimum to deliver (LGPD). Shown to the customer, support and admin, never to the technician, and sent to the carrier only at pickup. */
+        Address: {
+            recipient: string;
+            street: string;
+            number: string;
+            city: string;
+            state: string;
+            postal_code: string;
+        };
+        Payment: {
+            charge_id: string;
+            amount_cents: number;
+            /** @enum {string} */
+            status: "pending" | "succeeded" | "refund_pending" | "refunded";
+            refund_id?: string;
+            /** Format: date-time */
+            created_at: string;
+        };
+        Order: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            file_id: string;
+            material: string;
+            color: string;
+            quality: string;
+            finishing: string;
+            quantity: number;
+            price_table_version: number;
+            unit_cents: number;
+            discount_cents: number;
+            /** @description Carrier quote, added after the discount */
+            shipping_cents: number;
+            total_cents: number;
+            currency: string;
+            /** @enum {string} */
+            status: "quoted" | "awaiting_review" | "awaiting_payment" | "rejected" | "paid" | "in_production" | "shipped" | "delivered" | "cancelled";
+            /** Format: date-time */
+            quote_expires_at: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Manufacturability warnings (RF19), such as exceeds_build_volume */
+            dfm_flags: "exceeds_build_volume"[];
+            shipping?: components["schemas"]["Address"];
+            tracking_code?: string;
+            payment?: components["schemas"]["Payment"];
+            history?: {
+                from: string | null;
+                to: string;
+                /** Format: date-time */
+                at: string;
+            }[];
+            review?: {
+                /** @enum {string} */
+                decision: "approved" | "rejected";
+                report: string;
+                /** Format: date-time */
+                reviewed_at: string;
+            } | null;
+        };
     };
     responses: {
         /** @description Orders, newest first */
@@ -939,7 +1035,7 @@ export interface components {
             };
             content: {
                 "application/json": {
-                    orders?: components["schemas"]["StaffOrder"][];
+                    orders: components["schemas"]["StaffOrder"][];
                 };
             };
         };

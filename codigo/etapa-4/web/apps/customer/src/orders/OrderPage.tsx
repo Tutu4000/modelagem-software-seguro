@@ -1,15 +1,15 @@
 import { ApiError, unwrap } from "@nugget/api";
+import { colorLabel, finishingLabel, materialLabel, qualityLabel, statusView, timeline } from "@nugget/domain";
 import { Banner, Button, Grid, KeyValue, money, Panel, PriceSummary, Skeleton, Spinner, Stack, StatusTag, Timeline } from "@nugget/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link, useParams } from "react-router";
 
 import { useApi } from "../api";
-import { colorLabel, finishingLabel, materialLabel, qualityLabel } from "../quote/labels";
 import { lines } from "../quote/QuotePanel";
 import { AddressChangePanel } from "./AddressChangePanel";
 import { CancelDialog } from "./CancelDialog";
-import { actions, pollInterval, statusView, timeline } from "./status";
+import { actions, pollInterval } from "./status";
 
 const when = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 

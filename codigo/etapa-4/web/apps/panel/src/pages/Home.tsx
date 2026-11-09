@@ -1,18 +1,15 @@
-import { unwrap } from "@nugget/api";
 import { useSession } from "@nugget/auth";
 import { Banner, Button, Grid, Panel, ShieldIcon, Skeleton, Stack } from "@nugget/ui";
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { useApi } from "../api";
+import { useMe } from "../api";
 import { roleLabel } from "../roles";
 
 const time = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "medium" });
 
 export function Home() {
   const session = useSession();
-  const api = useApi();
-  const me = useQuery({ queryKey: ["me"], queryFn: () => unwrap(api.GET("/panel/v1/me")) });
+  const me = useMe();
   const [stepUpFailed, setStepUpFailed] = useState(false);
 
   const confirm = async () => {

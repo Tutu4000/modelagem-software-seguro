@@ -12,6 +12,7 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/idpadmin"
 	"nuggetmachine/internal/notify"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
@@ -20,11 +21,12 @@ import (
 	"nuggetmachine/internal/support"
 )
 
-// IdP is what the panel asks of Keycloak: the incident response and whether
-// an account has a role.
+// IdP is what the panel asks of Keycloak: the incident response, whether an
+// account has a role and who has it.
 type IdP interface {
 	LogoutAndDisable(ctx context.Context, user uuid.UUID) error
 	HasRealmRole(ctx context.Context, user uuid.UUID, role string) (bool, error)
+	UsersWithRealmRole(ctx context.Context, role string) ([]idpadmin.User, error)
 }
 
 // Presigner signs read URLs with the panel's read-only storage key.
@@ -77,6 +79,7 @@ func New(d Deps) (*server.Router, error) {
 
 	v1.Handle(http.MethodGet, "/me", auth.StaffRoles, h.me)
 	v1.Handle(http.MethodPost, "/users/:id/revoke", admin, critical, h.revoke)
+	v1.Handle(http.MethodGet, "/technicians", admin, h.technicians)
 
 	v1.Handle(http.MethodGet, "/orders", []auth.Role{auth.RoleAdmin, auth.RoleSupport}, h.listOrders)
 	v1.Handle(http.MethodGet, "/orders/assigned", technician, h.assignedOrders)

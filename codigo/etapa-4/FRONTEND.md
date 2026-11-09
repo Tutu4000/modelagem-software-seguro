@@ -23,6 +23,8 @@ O item do backlog é o E8.6, aplicação web e visualizador 3D com CSP (C09).
   | Cliente | `/` da porta 443 | `/api/` |
   | Painel | `/` da porta 9445 | `/panel/` |
 
+  A exceção é o download do STL para os visualizadores 3D, no Garage (porta 8443). Ali o nginx esconde o `*` do Garage e só devolve `Access-Control-Allow-Origin` para `https://localhost` e `https://localhost:9445`, por uma lista fixa (`map $http_origin`). Qualquer outra origem fica sem o cabeçalho.
+
 - **Contratos:** [openapi.yaml](openapi.yaml) e [panel-openapi.yaml](panel-openapi.yaml) completos, com os erros em Problem Details (RFC 9457).
 - **Sem Node em execução:** o front vira arquivos estáticos, servidos pelo nginx. O Node só entra no build, dentro do Docker.
 
@@ -128,4 +130,5 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 |FE2|Concluída: `/orcar` com o STL lido no navegador (worker, só binário), o visualizador 3D (three.js, carregado sob demanda, toque e mouse), o upload com progresso, o processamento acompanhado e a retomada pela URL depois de uma recarga (o arquivo vem pela URL pré-assinada do Garage). Também o configurador montado pelo catálogo, o endereço com as regras da API, o orçamento do servidor com o alerta de DFM e o envio para a revisão. O alerta de DFM passou a fazer parte da visão do cliente na API|
 |FE3|Concluída: `/pedidos` com filtros, que vira cartões no celular. `/pedidos/:id` com a linha do tempo, o laudo, o alerta de DFM, o endereço, o rastreio, os valores e o pagamento, além das ações pelo estado (pagar, enviar, cancelar com motivo, orçar de novo e concluir estorno). Também a confirmação da troca de endereço com o código do e-mail (C21) e "Pedido não encontrado" para pedido alheio (D01)|
 |FE4|Concluída: `/suporte` (lista), `/suporte/novo` (com o pedido já escolhido quando vem do detalhe do pedido) e `/suporte/:id` (conversa que se atualiza sozinha enquanto o chamado está aberto). As regras do texto espelham as da API (sem caracteres de controle, em code points), e o chamado alheio aparece como não encontrado (D01)|
-|FE5 a FE7|Pendentes|
+|FE5|Concluída: `/pedidos` no painel (fila com filtro de estado para admin e suporte, "Meus pedidos" para o técnico) e `/pedidos/:id` com a linha do tempo, as medidas, o volume e o DFM. O admin atribui escolhendo o técnico numa lista que vem do Keycloak (`GET /panel/v1/technicians`). O técnico atribuído abre o projeto pelo `CriticalActionDialog` e o vê no visualizador 3D, sem link de download, registra o laudo, inicia a produção e agenda a coleta. O endereço só aparece para suporte e admin. Os rótulos dos estados, a linha do tempo e os nomes do catálogo foram para `packages/domain`, usado pelos dois apps. O CORS do Garage passou a ecoar só as duas origens dos apps, por uma lista fixa no nginx|
+|FE6 e FE7|Pendentes|

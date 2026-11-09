@@ -102,6 +102,35 @@ paths:
             application/problem+json:
               schema:
                 $ref: "#/components/schemas/Problem"
+  /panel/v1/technicians:
+    get:
+      summary: The accounts with the technician role (admin)
+      description: >
+        Read from Keycloak, so the admin picks the technician of an order by
+        name. Only the ID and the username: no e-mail.
+      responses:
+        "200":
+          description: The technicians
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [technicians]
+                properties:
+                  technicians:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Technician"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "502":
+          description: Keycloak did not answer (idp_unavailable)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
   /panel/v1/orders:
     get:
       summary: List orders, optionally by status (admin, support)
@@ -202,6 +231,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [url, expires_in]
                 properties:
                   url:
                     type: string
@@ -287,6 +317,7 @@ paths:
             application/json:
               schema:
                 type: object
+                required: [id, shipment_id, tracking_code]
                 properties:
                   id:
                     type: string
@@ -574,6 +605,7 @@ components:
         application/json:
           schema:
             type: object
+            required: [orders]
             properties:
               orders:
                 type: array
@@ -604,66 +636,37 @@ components:
             $ref: "#/components/schemas/Problem"
   schemas:
     StaffOrder:
-      type: object
       description: >
-        The customer view of the order (see openapi.yaml) plus the review
+        The customer view of the order (Order in openapi.yaml) plus the review
         data. The payment and the tracking code come for every staff role;
         the shipping address only for support and admin.
+      allOf:
+        - $ref: "openapi.yaml#/components/schemas/Order"
+        - type: object
+          required: [owner_id, volume_mm3, bbox_mm, assigned_technician]
+          properties:
+            owner_id:
+              type: string
+              format: uuid
+            volume_mm3:
+              type: number
+            bbox_mm:
+              type: array
+              items:
+                type: number
+            assigned_technician:
+              type: string
+              format: uuid
+              nullable: true
+    Technician:
+      type: object
+      required: [id, username]
       properties:
         id:
           type: string
           format: uuid
-        owner_id:
+        username:
           type: string
-          format: uuid
-        status:
-          type: string
-        total_cents:
-          type: integer
-        shipping_cents:
-          type: integer
-        tracking_code:
-          type: string
-        payment:
-          type: object
-          properties:
-            charge_id:
-              type: string
-            amount_cents:
-              type: integer
-            status:
-              type: string
-        shipping:
-          type: object
-          description: Only for support and admin
-          properties:
-            recipient:
-              type: string
-            street:
-              type: string
-            number:
-              type: string
-            city:
-              type: string
-            state:
-              type: string
-            postal_code:
-              type: string
-        volume_mm3:
-          type: number
-        bbox_mm:
-          type: array
-          items:
-            type: number
-        dfm_flags:
-          type: array
-          items:
-            type: string
-            enum: [exceeds_build_volume]
-        assigned_technician:
-          type: string
-          format: uuid
-          nullable: true
     StaffTicket:
       type: object
       description: >

@@ -20,16 +20,25 @@ import (
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
+	"nuggetmachine/internal/idpadmin"
 	"nuggetmachine/internal/server/panel"
 	"nuggetmachine/internal/session"
 )
 
 type fakeIdP struct {
 	revoked []uuid.UUID
+	users   map[string][]idpadmin.User
 	err     error
 }
 
 func (f *fakeIdP) HasRealmRole(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
+
+func (f *fakeIdP) UsersWithRealmRole(_ context.Context, role string) ([]idpadmin.User, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.users[role], nil
+}
 
 func (f *fakeIdP) LogoutAndDisable(_ context.Context, user uuid.UUID) error {
 	if f.err != nil {
@@ -231,4 +240,45 @@ func TestOnlyAdminsRevoke(t *testing.T) {
 		rec := e.post(revokePath(newUser()), e.staff(newUser(), role, time.Minute), justification)
 		wantStatus(t, rec, http.StatusForbidden)
 	}
+}
+
+func TestAdminListsTechnicians(t *testing.T) {
+	e := newPanelEnv(t)
+	tech := idpadmin.User{ID: uuid.New(), Username: "technician"}
+	e.idp.users = map[string][]idpadmin.User{"technician": {tech}}
+
+	rec := e.get("/panel/v1/technicians", e.staff(newUser(), auth.RoleAdmin, time.Hour))
+
+	wantStatus(t, rec, http.StatusOK)
+	if !strings.Contains(rec.Body.String(), tech.ID.String()) || !strings.Contains(rec.Body.String(), `"username":"technician"`) {
+		t.Errorf("body %s, want the technician", rec.Body.String())
+	}
+}
+
+func TestTechniciansListIsEmptyNotNull(t *testing.T) {
+	e := newPanelEnv(t)
+
+	rec := e.get("/panel/v1/technicians", e.staff(newUser(), auth.RoleAdmin, time.Hour))
+
+	wantStatus(t, rec, http.StatusOK)
+	if got := strings.TrimSpace(rec.Body.String()); got != `{"technicians":[]}` {
+		t.Errorf("body %s, want an empty list", got)
+	}
+}
+
+func TestOnlyAdminsListTechnicians(t *testing.T) {
+	e := newPanelEnv(t)
+	for _, role := range []auth.Role{auth.RoleTechnician, auth.RoleSupport} {
+		rec := e.get("/panel/v1/technicians", e.staff(newUser(), role, time.Hour))
+		wantStatus(t, rec, http.StatusForbidden)
+	}
+}
+
+func TestTechniciansWithKeycloakDown(t *testing.T) {
+	e := newPanelEnv(t)
+	e.idp.err = errors.New("keycloak down")
+
+	rec := e.get("/panel/v1/technicians", e.staff(newUser(), auth.RoleAdmin, time.Hour))
+
+	wantStatus(t, rec, http.StatusBadGateway)
 }

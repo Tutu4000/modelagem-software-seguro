@@ -1785,6 +1785,31 @@ func TestDFMFlagInThePanel(t *testing.T) {
 	}
 }
 
+// The admin picks the technician from a list that Keycloak gives by role.
+func TestTechniciansList(t *testing.T) {
+	resp := panelDo(t, http.MethodGet, "/panel/v1/technicians", staff(t, devlogin.Admin), "")
+	wantStatus(t, resp, http.StatusOK)
+	var out struct {
+		Technicians []struct {
+			ID       string `json:"id"`
+			Username string `json:"username"`
+		} `json:"technicians"`
+	}
+	decode(t, resp, &out)
+	names := map[string]string{}
+	for _, u := range out.Technicians {
+		names[u.Username] = u.ID
+	}
+	if names["technician"] != devlogin.Technician.ID.String() || names["technician-2"] != devlogin.Technician2.ID.String() {
+		t.Errorf("technicians %v, want technician and technician-2", out.Technicians)
+	}
+	if _, ok := names["support"]; ok {
+		t.Errorf("technicians %v include the support account", out.Technicians)
+	}
+
+	wantStatus(t, panelDo(t, http.MethodGet, "/panel/v1/technicians", staff(t, devlogin.Support), ""), http.StatusForbidden)
+}
+
 // E5.1: a logout in Keycloak revokes the access token in every API replica.
 // The back-channel call reaches one replica; the revocation is in Valkey.
 func TestLogoutRevokesTokenOnAllReplicas(t *testing.T) {
