@@ -5,6 +5,8 @@ import { createBrowserRouter, Outlet, type RouteObject } from "react-router";
 
 import { manager } from "./auth";
 import { Layout } from "./Layout";
+import { OrderPage } from "./orders/OrderPage";
+import { OrdersPage } from "./orders/OrdersPage";
 import { Home } from "./pages/Home";
 import { NotFound } from "./pages/NotFound";
 
@@ -46,7 +48,14 @@ const routes: RouteObject[] = [
       />
     ),
   },
-  { element: <Protected />, children: [{ index: true, element: <Home /> }] },
+  {
+    element: <Protected />,
+    children: [
+      { index: true, element: <Home /> },
+      { path: "pedidos", element: <OrdersPage /> },
+      { path: "pedidos/:id", element: <OrderPage /> },
+    ],
+  },
 ];
 
 if (import.meta.env.DEV) {

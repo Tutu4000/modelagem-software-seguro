@@ -7,6 +7,7 @@ WORKDIR /web
 COPY web/package.json web/package-lock.json web/.npmrc ./
 COPY web/packages/api/package.json packages/api/
 COPY web/packages/auth/package.json packages/auth/
+COPY web/packages/domain/package.json packages/domain/
 COPY web/packages/ui/package.json packages/ui/
 COPY web/packages/viewer/package.json packages/viewer/
 COPY web/apps/customer/package.json apps/customer/

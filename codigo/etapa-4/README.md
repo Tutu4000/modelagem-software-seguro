@@ -121,8 +121,8 @@ O contrato das rotas está no [openapi.yaml](openapi.yaml).
 1. **Cliente:** envia o STL (`POST /api/v1/files`) e espera o estado `done`.
 2. **Cliente:** consulta o catálogo (`GET /api/v1/catalog`) e pede o orçamento (`POST /api/v1/orders`), com o endereço de entrega. O preço é calculado só no servidor, e o frete, cotado na transportadora, é somado depois do desconto. O pedido nasce `quoted`, e o orçamento vale 24 horas.
 3. **Cliente:** confirma (`POST /api/v1/orders/{id}/submit`), e o pedido passa a `awaiting_review`.
-4. **Admin, no painel:** atribui o pedido a um técnico (`POST /panel/v1/orders/{id}/assign`).
-5. **Técnico atribuído, no painel:** abre o STL com justificativa (`POST /panel/v1/orders/{id}/file`) e registra o laudo e a decisão (`POST /panel/v1/orders/{id}/review`). Aprovado, o pedido vai para `awaiting_payment`; reprovado, para `rejected`.
+4. **Admin, no painel:** atribui o pedido a um técnico, escolhido na lista do Keycloak (`GET /panel/v1/technicians` e `POST /panel/v1/orders/{id}/assign`).
+5. **Técnico atribuído, no painel:** abre o STL com justificativa (`POST /panel/v1/orders/{id}/file`), que o painel mostra só no visualizador 3D, e registra o laudo e a decisão (`POST /panel/v1/orders/{id}/review`). Aprovado, o pedido vai para `awaiting_payment`; reprovado, para `rejected`.
 6. **Cliente:** paga (`POST /api/v1/orders/{id}/payment`). A resposta é a cobrança pendente; o pedido só passa a `paid` quando chega a notificação assinada do gateway em `POST /api/v1/webhooks/payments`.
 7. **Técnico atribuído, no painel:** inicia a impressão (`POST /panel/v1/orders/{id}/production`, para `in_production`) e agenda a coleta (`POST /panel/v1/orders/{id}/ship`). O painel manda o endereço para a transportadora sem mostrá-lo ao técnico e recebe o código de rastreio.
 8. **Transportadora:** avisa a coleta e a entrega em `POST /api/v1/webhooks/shipping`, e o pedido passa a `shipped` e depois a `delivered`.
@@ -215,6 +215,9 @@ Os dois apps ficam em `web/`, um workspace npm descrito em [FRONTEND.md](FRONTEN
 |`web/apps/panel`|App do painel, servido em `https://localhost:9445/`|
 |`web/packages/ui`|Design system: tokens (bordas retas) e primitivas que se combinam|
 |`web/packages/api`|Tipos gerados dos dois OpenAPI, o cliente tipado e os erros em Problem Details|
+|`web/packages/auth`|Login com PKCE, sessão e step-up|
+|`web/packages/viewer`|Leitor de STL num worker e visualizador 3D|
+|`web/packages/domain`|Estados do pedido, linha do tempo e nomes do catálogo, comuns aos dois apps|
 |`web/e2e`|Testes do Playwright contra o compose|
 
 O nginx constrói os apps na própria imagem (`deploy/nginx/Dockerfile`), então `just up` já os serve. Para desenvolver:

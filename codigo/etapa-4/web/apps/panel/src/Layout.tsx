@@ -5,8 +5,7 @@ import { NavLink, Outlet } from "react-router";
 
 import { roleLabel, sections, staffRole } from "./roles";
 
-// The sections arrive with FE5 and FE6; until then they show, disabled, as
-// the role would see them.
+// The sections of FE6 show, disabled, as the role will see them.
 export function Layout() {
   const session = useSession();
   const { state } = session;
@@ -20,11 +19,17 @@ export function Layout() {
             <NavLink to="/" end>
               Início
             </NavLink>
-            {sections[role].map((label) => (
-              <a key={label} aria-disabled="true">
-                {label}
-              </a>
-            ))}
+            {sections[role].map((s) =>
+              s.to === undefined ? (
+                <a key={s.label} aria-disabled="true">
+                  {s.label}
+                </a>
+              ) : (
+                <NavLink key={s.label} to={s.to}>
+                  {s.label}
+                </NavLink>
+              ),
+            )}
           </>
         )
       }

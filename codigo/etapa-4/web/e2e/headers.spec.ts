@@ -19,7 +19,7 @@ interface Case {
 const cases: Case[] = [
   { url: "https://localhost/", extra: { "content-security-policy": appCSP, "cross-origin-opener-policy": "same-origin", "cross-origin-resource-policy": "same-origin" } },
   { url: "https://localhost/api/v1/catalog", extra: { "content-security-policy": jsonCSP, "cross-origin-resource-policy": "same-origin" } },
-  { url: "https://localhost:8443/files", extra: { "content-security-policy": jsonCSP, "cross-origin-resource-policy": "same-site", "access-control-allow-origin": "https://localhost" } },
+  { url: "https://localhost:8443/files", extra: { "content-security-policy": jsonCSP, "cross-origin-resource-policy": "same-site" } },
   { url: "https://localhost:8444/realms/nugget/", extra: {} },
   { url: "https://localhost:9445/", extra: { "content-security-policy": appCSP, "cross-origin-opener-policy": "same-origin-allow-popups" } },
   { url: "https://localhost:9445/panel/v1/me", extra: { "content-security-policy": jsonCSP } },
@@ -37,6 +37,26 @@ test.describe("security headers (C09)", () => {
         expect(found, `${name} once`).toHaveLength(1);
         expect(found[0]?.value).toBe(value);
       }
+      await ctx.dispose();
+    });
+  }
+});
+
+// Garage's own "*" is hidden: the designs are readable through CORS only by
+// the customer app and the panel, the two 3D viewers.
+test.describe("storage CORS", () => {
+  const origins: [string, string | undefined][] = [
+    ["https://localhost", "https://localhost"],
+    ["https://localhost:9445", "https://localhost:9445"],
+    ["https://evil.example", undefined],
+    ["https://localhost:8443", undefined],
+  ];
+  for (const [origin, allowed] of origins) {
+    test(`origin ${origin}`, async () => {
+      const ctx = await request.newContext({ ignoreHTTPSErrors: true });
+      const res = await ctx.get("https://localhost:8443/files", { headers: { Origin: origin }, maxRedirects: 0 });
+      const found = res.headersArray().filter((h) => h.name.toLowerCase() === "access-control-allow-origin");
+      expect(found.map((h) => h.value)).toEqual(allowed === undefined ? [] : [allowed]);
       await ctx.dispose();
     });
   }

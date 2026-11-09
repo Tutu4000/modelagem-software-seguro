@@ -15,6 +15,7 @@ import (
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/authz"
+	"nuggetmachine/internal/idpadmin"
 	"nuggetmachine/internal/orders"
 	"nuggetmachine/internal/partners"
 	"nuggetmachine/internal/pricing"
@@ -148,6 +149,20 @@ func (h handlers) assign(c *gin.Context) {
 	}
 	h.record(c, "order.assigned", o.ID, "technician "+body.TechnicianID.String())
 	c.JSON(http.StatusOK, gin.H{"id": o.ID, "assigned_technician": body.TechnicianID})
+}
+
+// technicians lists who can receive an order, so the admin picks a name
+// instead of typing an ID.
+func (h handlers) technicians(c *gin.Context) {
+	list, err := h.d.IdP.UsersWithRealmRole(c.Request.Context(), string(auth.RoleTechnician))
+	if err != nil {
+		problem.Abort(c, problem.New(problem.IdPUnavailable, err))
+		return
+	}
+	if list == nil {
+		list = []idpadmin.User{}
+	}
+	c.JSON(http.StatusOK, gin.H{"technicians": list})
 }
 
 // file gives the assigned technician a short-lived URL to the customer's

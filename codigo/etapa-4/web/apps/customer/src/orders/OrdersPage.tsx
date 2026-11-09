@@ -1,13 +1,12 @@
 import { unwrap } from "@nugget/api";
+import { colorLabel, matches, materialLabel, statusView, type Filter } from "@nugget/domain";
 import { Banner, ChipGroup, CubeIcon, DataTable, EmptyState, money, Skeleton, Stack, StatusTag, Toolbar } from "@nugget/ui";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 
 import { useApi } from "../api";
-import { colorLabel, materialLabel } from "../quote/labels";
 import type { Order } from "../quote/types";
-import { matches, statusView, type Filter } from "./status";
 
 const date = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short" });
 
