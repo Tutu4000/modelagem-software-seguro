@@ -132,4 +132,21 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 |FE4|Concluída: `/suporte` (lista), `/suporte/novo` (com o pedido já escolhido quando vem do detalhe do pedido) e `/suporte/:id` (conversa que se atualiza sozinha enquanto o chamado está aberto). As regras do texto espelham as da API (sem caracteres de controle, em code points), e o chamado alheio aparece como não encontrado (D01)|
 |FE5|Concluída: `/pedidos` no painel (fila com filtro de estado para admin e suporte, "Meus pedidos" para o técnico) e `/pedidos/:id` com a linha do tempo, as medidas, o volume e o DFM. O admin atribui escolhendo o técnico numa lista que vem do Keycloak (`GET /panel/v1/technicians`). O técnico atribuído abre o projeto pelo `CriticalActionDialog` e o vê no visualizador 3D, sem link de download, registra o laudo, inicia a produção e agenda a coleta. O endereço só aparece para suporte e admin. Os rótulos dos estados, a linha do tempo e os nomes do catálogo foram para `packages/domain`, usado pelos dois apps. O CORS do Garage passou a ecoar só as duas origens dos apps, por uma lista fixa no nginx|
 |FE6|Concluída: `/chamados` (fila por estado) e `/chamados/:id` (conversa como texto, resposta e fechamento). A troca de endereço no detalhe do pedido, para suporte e admin até o agendamento da coleta, ligada ao chamado quando vem dele (`?chamado=`). `/precos` com as versões, a tabela ativa e o editor que só muda valores (centavos lidos sem ponto flutuante, limites iguais aos do `pricing.Rules.Validate`); o rascunho mostra a diferença para a ativa, e só outro admin aprova. `/revogar` para o admin, com atalhos no pedido e no chamado. Toda operação crítica passa pelo `CriticalActionDialog`. O `packages/domain` ganhou as regras de texto dos chamados, as de endereço e o `AddressFields`, usados pelos dois apps|
-|FE7|Pendente|
+|FE7|Concluída: os casos de abuso que faltavam (XSS armazenado contra a equipe no painel, painel sem MFA, IDs inventados ou malformados na URL, operação crítica sem justificativa), a verificação com o axe (WCAG 2.1 A e AA) em 16 telas dos dois apps, o link "Pular para o conteúdo", o menu do celular que fecha com Esc e devolve o foco, e o uso só pelo teclado. O axe apontou contraste insuficiente no laranja com texto e nos tons de sucesso e de alerta: o laranja da marca ficou para o que não é texto, e o texto usa tons mais escuros (pelo menos 4,5:1). O ZAP rodou de novo com o front completo|
+
+## 5. Controles e onde os testes os provam
+
+| Controle | Onde está | Teste |
+|-|-|-|
+| CSP estrita com Trusted Types (uma política só, para os workers do bundle) | `deploy/nginx/headers/`, `packages/viewer/src/trustedWorker.ts` | `headers.spec`; todo teste de tela confere que não houve violação |
+| Tokens só em memória, login com PKCE | `packages/auth` | `auth.spec` (nenhum JWT no `localStorage` nem no `sessionStorage`) |
+| Painel só com MFA, só para a equipe | Keycloak (`acr=2`), `RequireSession` | `auth.spec`, `abuse.spec` (a senha sozinha para na tela do TOTP; token de cliente e falta de token recusados) |
+| Operação crítica com step-up e justificativa | `CriticalActionDialog` | `auth.spec` (popup), `panel-orders.spec`, `panel-admin.spec`, `abuse.spec` (a API recusa sem justificativa) |
+| Texto de usuário sempre como texto | `Conversation.Message` só aceita `string`; lint contra `dangerouslySetInnerHTML` e `innerHTML` | `support.spec` (cliente), `abuse.spec` (equipe, com `onerror`, `<script>`, `javascript:` e `<svg onload>`) |
+| Preço só do servidor | o app mostra o `total_cents` da API | `quote.spec` |
+| Recurso alheio como "não encontrado" | API (D01), páginas de detalhe | `orders.spec`, `support.spec`, `panel-orders.spec` (`technician-2`), `abuse.spec` (IDs inventados e malformados) |
+| Download do projeto só no visualizador, pelo técnico atribuído | `DesignPanel` | `panel-orders.spec` (sem link de download) |
+| Endereço só para suporte e admin | API (`seesAddress`) | `panel-orders.spec` |
+| CORS do Garage por lista fixa | `map $http_origin` no nginx | `headers.spec` |
+| Acessibilidade básica | `packages/ui` (rótulos, foco visível, contraste, link de pular) | `a11y.spec` |
+

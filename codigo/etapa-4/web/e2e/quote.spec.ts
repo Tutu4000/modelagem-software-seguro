@@ -2,20 +2,8 @@ import type { CustomerComponents } from "@nugget/api";
 import { expect, test, type Page } from "@playwright/test";
 
 import { apiToken, fillLogin } from "./login";
+import { problems } from "./problems";
 import { box } from "./stl";
-
-/** problems collects console errors of our pages: CSP and Trusted Types
- * violations included, which the worker and three.js must not cause. */
-function problems(page: Page): string[] {
-  const found: string[] = [];
-  page.on("console", (m) => {
-    if (m.type() === "error" && !m.location().url.startsWith("https://localhost:8444")) {
-      found.push(`${m.location().url}: ${m.text()}`);
-    }
-  });
-  page.on("pageerror", (e) => found.push(e.message));
-  return found;
-}
 
 async function openQuote(page: Page, username: string) {
   await page.goto("https://localhost/orcar");

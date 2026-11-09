@@ -230,6 +230,11 @@ just web-lint           # tipos gerados em dia, tsc, eslint, vitest e npm audit
 just web-e2e            # Playwright contra o compose, na imagem oficial
 ```
 
+O `just web-e2e` inclui os casos de abuso (`e2e/abuse.spec.ts`), a verificação de acessibilidade com o axe nas telas dos dois apps e o uso só pelo teclado (`e2e/a11y.spec.ts`). Os logins da equipe esperam um código TOTP novo, então a suíte leva cerca de 10 minutos. Duas observações:
+
+* **Ordem das suítes:** o `just web-e2e` e o `just test-e2e` dividem os limites por IP e por usuário do ambiente. Rodar um logo depois do outro pode render 429 em testes do segundo; deixe um ou dois minutos entre eles.
+* **`customer-g`:** o teste de revogação desativa essa conta, e ela só volta com `just reset`. Até lá, o teste é pulado com esse aviso.
+
 No `just web-dev`, a página `/_design` mostra todas as primitivas. Ela não existe no build de produção.
 
 Para orçar pelo app, entre como cliente e abra "Orçar" (`https://localhost/orcar`):
@@ -248,6 +253,14 @@ Em "Pedidos" (`https://localhost/pedidos`), o cliente:
 
 Em "Suporte" (`https://localhost/suporte`), o cliente abre chamados, sobre um pedido ou não, e conversa com a equipe. A resposta do suporte aparece sozinha e também chega por e-mail.
 
+No painel (`https://localhost:9445`, login com senha e TOTP), cada papel vê as próprias seções:
+
+* **Técnico:** "Meus pedidos". Abre o projeto do cliente com uma justificativa e o vê em 3D, registra o laudo, inicia a produção e agenda a coleta.
+* **Suporte:** a fila de pedidos e os chamados. Responde, fecha e, a partir do chamado, propõe a troca de endereço que o cliente confirma pelo código do e-mail.
+* **Admin:** o mesmo, mais a atribuição de pedidos aos técnicos, as tabelas de preço (propor e, com outro admin, aprovar) e a revogação de contas.
+
+Toda operação crítica pede uma justificativa e um login com MFA de no máximo 5 minutos; quando o login é mais antigo, o painel pede a senha e o código numa janela.
+
 O TypeScript é estrito, sem `any`. O ESLint também barra `dangerouslySetInnerHTML`, `innerHTML` e o uso de `localStorage` e `sessionStorage`. Os tipos da API saem do `openapi.yaml` e do `panel-openapi.yaml` (`npm run gen`), e o `just web-lint` falha se estiverem desatualizados.
 
 Todas as portas mandam os cabeçalhos de segurança:
@@ -259,7 +272,7 @@ Todas as portas mandam os cabeçalhos de segurança:
 * `Permissions-Policy`;
 * COOP e CORP.
 
-O `just zap relatorios-zap-fe0` refaz a varredura da API e do app do cliente.
+O `just zap out=relatorios-zap-fe7` refaz a varredura da API e do app do cliente. As rodadas e as conclusões ficam em `evidencias/etapa-5/` (`relatorios-zap-fe0/` e `relatorios-zap-fe7/`).
 
 ## Backup e restauração
 

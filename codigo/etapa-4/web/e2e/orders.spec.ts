@@ -1,21 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { fillLogin } from "./login";
+import { problems } from "./problems";
 import { approvedOrder, mailCode, panel, submittedOrder } from "./setup";
-
-/** problems collects CSP and Trusted Types violations and script errors.
- * The browser also logs every 4xx answer as a console error; those are the
- * expected refusals these tests provoke, so they are left out. */
-function problems(page: Page): string[] {
-  const found: string[] = [];
-  page.on("console", (m) => {
-    if (m.type() === "error" && !m.location().url.startsWith("https://localhost:8444") && !m.text().startsWith("Failed to load resource")) {
-      found.push(`${m.location().url}: ${m.text()}`);
-    }
-  });
-  page.on("pageerror", (e) => found.push(e.message));
-  return found;
-}
 
 async function open(page: Page, path: string, customer: string) {
   await page.goto(`https://localhost${path}`);

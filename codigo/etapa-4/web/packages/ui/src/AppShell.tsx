@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import styles from "./AppShell.module.css";
 import { CloseIcon, MenuIcon } from "./icons";
@@ -12,11 +12,32 @@ export interface AppShellProps {
   children: ReactNode;
 }
 
-/** AppShell is the frame of both apps: a navy bar, the page and a footer. */
+/** AppShell is the frame of both apps: a navy bar, the page and a footer.
+ * A skip link takes the keyboard past the bar, and Esc closes the phone menu
+ * and gives the focus back to its button. */
 export function AppShell({ brand, nav, actions, footer, children }: AppShellProps) {
   const [open, setOpen] = useState(false);
+  const menuButton = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        menuButton.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("keydown", onKey); };
+  }, [open]);
+
   return (
     <div className={styles.shell}>
+      <a className={styles.skip} href="#conteudo">
+        Pular para o conteúdo
+      </a>
       <header className={styles.bar}>
         <div className={styles.barInner}>
           <span className={styles.brand}>
@@ -28,6 +49,7 @@ export function AppShell({ brand, nav, actions, footer, children }: AppShellProp
           </nav>
           {actions !== undefined && <div className={styles.actions}>{actions}</div>}
           <button
+            ref={menuButton}
             type="button"
             className={styles.menuButton}
             aria-expanded={open}
@@ -45,7 +67,9 @@ export function AppShell({ brand, nav, actions, footer, children }: AppShellProp
           </nav>
         )}
       </header>
-      <main className={styles.main}>{children}</main>
+      <main id="conteudo" tabIndex={-1} className={styles.main}>
+        {children}
+      </main>
       {footer !== undefined && (
         <footer className={styles.footer}>
           <div className={styles.footerInner}>{footer}</div>

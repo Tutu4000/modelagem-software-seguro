@@ -24,7 +24,7 @@
 }
 .stepNumber {
   font-family: var(--font-mono);
-  color: var(--signal-600);
+  color: var(--signal-700);
   font-weight: 600;
 }
 .materialPrice {
