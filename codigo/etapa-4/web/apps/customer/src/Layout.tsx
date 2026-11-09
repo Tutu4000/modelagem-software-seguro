@@ -3,10 +3,6 @@ import { useSession } from "@nugget/auth";
 import { AccountMenu, AppShell, Button, Stack } from "@nugget/ui";
 import { Link, NavLink, Outlet, useLocation } from "react-router";
 
-// The section still to come: support (FE4). Until then it shows, disabled,
-// to whoever is logged in.
-const upcoming = ["Suporte"];
-
 function Account() {
   const session = useSession();
   const location = useLocation();
@@ -41,12 +37,7 @@ export function Layout() {
           </NavLink>
           {signedIn && <NavLink to="/orcar">Orçar</NavLink>}
           {signedIn && <NavLink to="/pedidos">Pedidos</NavLink>}
-          {signedIn &&
-            upcoming.map((label) => (
-              <a key={label} aria-disabled="true">
-                {label}
-              </a>
-            ))}
+          {signedIn && <NavLink to="/suporte">Suporte</NavLink>}
         </>
       }
       actions={<Account />}

@@ -932,25 +932,25 @@ export interface components {
         };
         Ticket: {
             /** Format: uuid */
-            id?: string;
+            id: string;
             /** Format: uuid */
-            order_id?: string | null;
-            subject?: string;
+            order_id: string | null;
+            subject: string;
             /** @enum {string} */
-            status?: "open" | "answered" | "closed";
+            status: "open" | "answered" | "closed";
             /** Format: date-time */
-            created_at?: string;
+            created_at: string;
             /** Format: date-time */
-            updated_at?: string;
+            updated_at: string;
             messages?: {
                 /** Format: uuid */
-                id?: string;
+                id: string;
                 /** @enum {string} */
-                author_kind?: "customer" | "staff";
+                author_kind: "customer" | "staff";
                 /** @description Plain text, as typed. Show it as text, never as HTML. */
-                body?: string;
+                body: string;
                 /** Format: date-time */
-                created_at?: string;
+                created_at: string;
             }[];
         };
         TicketMessageRequest: {

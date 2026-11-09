@@ -180,6 +180,7 @@ export function OrderPage() {
             )}
           </Panel>
           <AddressChangePanel orderId={o.id} />
+          <Link to={`/suporte/novo?pedido=${o.id}`}>Abrir chamado sobre este pedido</Link>
         </Stack>
       </Grid>
       <CancelDialog orderId={o.id} open={cancelling} onClose={() => { setCancelling(false); }} paid={o.status === "paid"} />

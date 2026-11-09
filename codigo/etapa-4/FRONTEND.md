@@ -74,6 +74,8 @@ O item do backlog é o E8.6, aplicação web e visualizador 3D com CSP (C09).
 - **Nada de recurso de terceiros:** as fontes e os ícones vêm no próprio bundle, então a CSP não precisa liberar CDN nem Google Fonts.
 - **ZAP de novo,** contra a API e contra o front, com os relatórios em `evidencias/etapa-5/relatorios-zap-fe0/`. Os da Etapa 5 ficam como estão, para comparação.
 - **Texto digitado por usuários** (chamados, laudos, endereços) é sempre renderizado como texto. Uma regra de lint proíbe `dangerouslySetInnerHTML`.
+  - A primitiva `Conversation.Message` só aceita `string` como conteúdo, nunca um `ReactNode`.
+  - O Playwright manda um `<img onerror>` e um `<script>` num chamado e confere que eles aparecem como texto literal, sem nenhum elemento criado e sem violação de CSP.
 
 ### Direção visual
 
@@ -125,4 +127,5 @@ A referência é o PCBWay, mais moderno: cara de ferramenta industrial de orçam
 |FE1|Concluída: login com PKCE nos dois apps (`packages/auth`), tokens em memória, sessão de volta depois da recarga, saída, recuperação de 401, banner de 429, 503 e parceiro fora, `/conta` do cliente, `/me` do painel com a navegação pelo papel e o `CriticalActionDialog`, pronto para a FE5 e a FE6|
 |FE2|Concluída: `/orcar` com o STL lido no navegador (worker, só binário), o visualizador 3D (three.js, carregado sob demanda, toque e mouse), o upload com progresso, o processamento acompanhado e a retomada pela URL depois de uma recarga (o arquivo vem pela URL pré-assinada do Garage). Também o configurador montado pelo catálogo, o endereço com as regras da API, o orçamento do servidor com o alerta de DFM e o envio para a revisão. O alerta de DFM passou a fazer parte da visão do cliente na API|
 |FE3|Concluída: `/pedidos` com filtros, que vira cartões no celular. `/pedidos/:id` com a linha do tempo, o laudo, o alerta de DFM, o endereço, o rastreio, os valores e o pagamento, além das ações pelo estado (pagar, enviar, cancelar com motivo, orçar de novo e concluir estorno). Também a confirmação da troca de endereço com o código do e-mail (C21) e "Pedido não encontrado" para pedido alheio (D01)|
-|FE4 a FE7|Pendentes|
+|FE4|Concluída: `/suporte` (lista), `/suporte/novo` (com o pedido já escolhido quando vem do detalhe do pedido) e `/suporte/:id` (conversa que se atualiza sozinha enquanto o chamado está aberto). As regras do texto espelham as da API (sem caracteres de controle, em code points), e o chamado alheio aparece como não encontrado (D01)|
+|FE5 a FE7|Pendentes|

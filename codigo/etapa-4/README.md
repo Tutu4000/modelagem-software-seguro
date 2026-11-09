@@ -243,6 +243,8 @@ Em "Pedidos" (`https://localhost/pedidos`), o cliente:
 * paga pelo gateway simulado (a página espera a confirmação), vê o rastreio e cancela até o pagamento, com estorno;
 * confirma uma troca de endereço proposta pelo suporte com o código que chegou no e-mail (Mailpit).
 
+Em "Suporte" (`https://localhost/suporte`), o cliente abre chamados, sobre um pedido ou não, e conversa com a equipe. A resposta do suporte aparece sozinha e também chega por e-mail.
+
 O TypeScript é estrito, sem `any`. O ESLint também barra `dangerouslySetInnerHTML`, `innerHTML` e o uso de `localStorage` e `sessionStorage`. Os tipos da API saem do `openapi.yaml` e do `panel-openapi.yaml` (`npm run gen`), e o `just web-lint` falha se estiverem desatualizados.
 
 Todas as portas mandam os cabeçalhos de segurança:
