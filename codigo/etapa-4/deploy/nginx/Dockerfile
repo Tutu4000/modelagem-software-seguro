@@ -19,6 +19,11 @@ RUN npm run build
 # nginx serves the customer app on the public port and the panel app on the
 # panel's, next to the APIs they talk to.
 FROM nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
+# The pinned base lags behind Alpine's security fixes (brotli, curl, libxml2):
+# take the patched packages at build time.
+USER root
+RUN apk upgrade --no-cache
+USER 101
 COPY deploy/nginx/nginx.conf /etc/nginx/nginx.conf
 COPY deploy/nginx/headers/ /etc/nginx/headers/
 COPY --from=web /web/apps/customer/dist/ /usr/share/nginx/customer/
