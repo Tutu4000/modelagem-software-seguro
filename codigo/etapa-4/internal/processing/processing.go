@@ -76,3 +76,6 @@ func dot(a, b [3]float64) float64 { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2] }
 func cross(a, b [3]float64) [3]float64 {
 	return [3]float64{a[1]*b[2] - a[2]*b[1], a[2]*b[0] - a[0]*b[2], a[0]*b[1] - a[1]*b[0]}
 }
+
+// ErrInvalidMesh means the triangles cannot be a printable solid.
+var ErrInvalidMesh = errors.New("the mesh is not a valid solid")

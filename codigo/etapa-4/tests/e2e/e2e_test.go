@@ -740,6 +740,23 @@ func TestTechnicalReview(t *testing.T) {
 	}
 }
 
+// R14: the assignment is never cleared, so the technician could keep opening
+// the design of an order that is over. The status bounds the access.
+func TestTechnicianCannotOpenTheDesignOfAFinishedOrder(t *testing.T) {
+	customer := login(t, devlogin.CustomerB)
+	o := submittedOrder(t, customer, processedFile(t, customer, 9, 9, 9))
+	orderPath := "/panel/v1/orders/" + o.ID
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/assign", staff(t, devlogin.Admin),
+		`{"technician_id":"`+devlogin.Technician.ID.String()+`"}`), http.StatusOK)
+
+	const justification = `{"justification":"e2e: DFM review of the order"}`
+	tech := staff(t, devlogin.Technician)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/file", tech, justification), http.StatusOK)
+
+	cancel(t, customer, o.ID, http.StatusOK)
+	wantStatus(t, panelDo(t, http.MethodPost, orderPath+"/file", tech, justification), http.StatusConflict)
+}
+
 // D02: a new price table only applies after another admin approves it, and
 // orders keep the price they were quoted with.
 func TestPriceTableNeedsTwoAdmins(t *testing.T) {

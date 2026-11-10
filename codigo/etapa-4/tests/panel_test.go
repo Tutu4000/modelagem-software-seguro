@@ -29,6 +29,8 @@ type fakeIdP struct {
 	revoked []uuid.UUID
 	users   map[string][]idpadmin.User
 	err     error
+	// onDisable runs while Keycloak is still disabling the account.
+	onDisable func()
 }
 
 func (f *fakeIdP) HasRealmRole(context.Context, uuid.UUID, string) (bool, error) { return true, nil }
@@ -43,6 +45,9 @@ func (f *fakeIdP) UsersWithRealmRole(_ context.Context, role string) ([]idpadmin
 func (f *fakeIdP) LogoutAndDisable(_ context.Context, user uuid.UUID) error {
 	if f.err != nil {
 		return f.err
+	}
+	if f.onDisable != nil {
+		f.onDisable()
 	}
 	f.revoked = append(f.revoked, user)
 	return nil

@@ -177,3 +177,6 @@ func DFM(bboxMM, buildVolumeMM [3]float64) []string {
 	}
 	return flags
 }
+
+// ErrTooExpensive means the model is too big to be priced.
+var ErrTooExpensive = errors.New("the model is too big to quote")

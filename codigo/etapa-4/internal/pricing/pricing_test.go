@@ -117,3 +117,13 @@ func TestDFMFlagsPartsBiggerThanThePrinter(t *testing.T) {
 		t.Errorf("flags %v, want exceeds_build_volume", flags)
 	}
 }
+
+// A volume built to overflow the cents may not wrap into a cheap total.
+func TestHugeVolumeIsRefusedInsteadOfOverflowing(t *testing.T) {
+	for _, volume := range []float64{1e20, 4.6e21, 1e30, 1e300} {
+		q, err := rules().Quote(volume, Choice{"pla", "black", "standard", "none", MaxQuantity})
+		if !errors.Is(err, ErrTooExpensive) {
+			t.Errorf("volume %g: quote %+v and error %v, want ErrTooExpensive", volume, q, err)
+		}
+	}
+}
