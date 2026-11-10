@@ -3,11 +3,14 @@ package storage
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 )
 
 type S3Config struct {
@@ -86,4 +89,62 @@ func presign(c *s3.PresignClient, bucket, key string, ttl time.Duration) (string
 		return "", err
 	}
 	return req.URL, nil
+}
+
+// Delete removes an object. Only the retention's key can (E8.5).
+func (s *S3) Delete(ctx context.Context, key string) error {
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	return err
+}
+
+// SetLifecycle is the bucket's safety net for the retention (E8.5): every
+// object expires after expireDays, and an upload left incomplete is aborted
+// after abortDays. It needs an owner key.
+func (s *S3) SetLifecycle(ctx context.Context, expireDays, abortDays int32) error {
+	_, err := s.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{
+		Bucket: aws.String(s.bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: []types.LifecycleRule{{
+			ID:         aws.String("retention-safety-net"),
+			Status:     types.ExpirationStatusEnabled,
+			Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
+			Expiration: &types.LifecycleExpiration{Days: aws.Int32(expireDays)},
+			AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{
+				DaysAfterInitiation: aws.Int32(abortDays),
+			},
+		}}},
+	})
+	return err
+}
+
+// List returns every key under the prefix. Only the backup lists a bucket.
+func (s *S3) List(ctx context.Context, prefix string) ([]string, error) {
+	var keys []string
+	p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(prefix)})
+	for p.HasMorePages() {
+		page, err := p.NextPage(ctx)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range page.Contents {
+			keys = append(keys, aws.ToString(o.Key))
+		}
+	}
+	return keys, nil
+}
+
+// Get reads a whole object, up to max bytes.
+func (s *S3) Get(ctx context.Context, key string, max int64) ([]byte, error) {
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(out.Body, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > max {
+		return nil, fmt.Errorf("object %s is larger than %d bytes", key, max)
+	}
+	return data, nil
 }

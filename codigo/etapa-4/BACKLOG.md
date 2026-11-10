@@ -17,7 +17,7 @@ Os IDs RS, D, FC e os números de seção vêm da [Etapa 3](../../docs/etapa-3-a
 |-|-|-|
 |API back-end (monólito modular)|Go + Gin|Dois binários do mesmo código: `api`, com as rotas do cliente, e `panel`, com as rotas internas (seção 1.1)|
 |Balanceador de carga|nginx|TLS, limite de requisições e de tamanho, N réplicas da API|
-|Identidade|JWT Ed25519 emitido pelo `cmd/devtoken`|A API guarda só a chave pública. Keycloak no P3|
+|Identidade|Keycloak, com tokens assinados em EdDSA|A API confere os tokens pelo JWKS e não guarda nenhuma chave privada|
 |Banco principal e réplica|PostgreSQL com replicação por streaming|Um papel do banco por módulo|
 |Log de auditoria|Instância PostgreSQL separada|A aplicação só tem `INSERT`|
 |Estado compartilhado|Valkey|Cotas (C10) e tokens revogados (C08) valem para todas as réplicas|
@@ -25,7 +25,7 @@ Os IDs RS, D, FC e os números de seção vêm da [Etapa 3](../../docs/etapa-3-a
 |Armazenamento de objetos|Garage (compatível com S3)|Bucket privado, URL pré-assinada e permissão por chave. O MinIO comunitário foi descontinuado|
 |Workers|Go, na mesma imagem da API|Sem acesso a internet, banco ou Valkey|
 |Imagem endurecida|Docker Hardened Images: `dhi.io/golang` (variante dev) no build e `dhi.io/static`, distroless, na execução|Não root, sem shell nem gerenciador de pacotes. O pull exige login com Docker ID|
-|Monitoramento|Grafana lendo o banco de auditoria|Painel e alertas, base da Etapa 6|
+|Monitoramento|Prometheus e Grafana. O Grafana lê o Prometheus e, por papéis só de leitura, o banco de auditoria e o principal|Três dashboards e oito alertas, base da Etapa 6|
 |Segredos|Docker secrets gerados por script|Substituem o cofre no ambiente local|
 |CI|GitHub Actions|Base do pipeline da Etapa 7|
 
@@ -53,7 +53,7 @@ codigo/etapa-4/
 │   ├── worker/               # consome a fila e processa os STL
 │   ├── garage-init/          # prepara layout, bucket e chave do Garage
 │   ├── gensecrets/           # gera os segredos e o certificado TLS local
-│   ├── devtoken/             # emite tokens de teste no lugar do IdP
+│   ├── token/                # login de uma conta fictícia pelo Keycloak
 │   └── seed/                 # envia STLs fictícios pela API
 ├── internal/
 │   ├── server/               # middlewares compartilhados
@@ -70,7 +70,7 @@ codigo/etapa-4/
 │   ├── processing/           # lógica do worker
 │   ├── review/               # revisão técnica, só no painel (E6)
 │   ├── audit/                # eventos de auditoria (auditdb gerado pelo sqlc)
-│   ├── devtoken/             # clientes fictícios e assinatura dos tokens de teste
+│   ├── devlogin/             # contas fictícias e login pelo cliente e2e, para testes e ferramentas
 │   └── problem/              # respostas de erro no formato RFC 9457
 ├── migrations/
 │   ├── main/                 # 01-roles.sh e 02-schema.sql do banco principal
@@ -94,8 +94,9 @@ As redes do compose reproduzem as fronteiras de confiança:
 |Rede|Participantes|O que isola|
 |-|-|-|
 |`public`|nginx|Único contêiner com portas publicadas: a 443 para os clientes (FC1) e, só em `127.0.0.1`, as do painel e do Grafana, o que simula a VPN (FC2)|
-|`internal`|nginx, `api`, `panel`, PostgreSQL, Valkey, RabbitMQ, Garage, backup e Grafana|Sem portas publicadas e sem saída para a internet|
-|`processing`|worker, RabbitMQ e Garage|O worker não alcança banco, Valkey nem internet (FC3)|
+|`internal`|nginx, `api`, `panel`, PostgreSQL, Valkey, RabbitMQ, Garage, Prometheus, Grafana e os exporters|Sem portas publicadas e sem saída para a internet. O Grafana chega ao host pelo nginx, em `127.0.0.1:9446`|
+|`processing`|worker, RabbitMQ e Garage|O worker não alcança banco, Valkey nem internet (FC3), e roda sob o gVisor|
+|`restore`|`restore-db` e `restore`|Só existe durante o `just restore-test`|
 
 ## 3. Marcos
 
@@ -211,7 +212,7 @@ Os testes de cada prática entram num commit antes da implementação, junto com
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `panel.access`, `review.approved`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
+|E7.1|Catálogo de eventos (`authz.denied`, `upload.rejected`, `quota.waiting`, `token.revoked`, `auth.revoked_token_used`, `rate.limited`, `panel.access`, `panel.critical`, `user.revoked`, `order.created`, `order.submitted`, `order.assigned`, `review.approved`, `review.rejected`, `file.staff_download`, `price_table.proposed`, `price_table.approved`, `payment.requested`, `payment.succeeded`, `payment.rejected`, `order.in_production`, `shipment.requested`, `shipment.picked_up`, `shipment.delivered`, `shipment.rejected`, `shipment.exception`, `notify.failed`, `order.cancelled`, `payment.refund_requested`, `payment.refunded`, `ticket.created`, `ticket.replied`, `ticket.closed`, `address.change_requested`, `address.change_failed`, `address.changed`, `file.purged`, `address.purged`) com os campos da seção 3.2|Todo evento tem autor, alvo, operação, horário UTC, origem e resultado|C18|P1|
 |E7.2|Banco de auditoria separado, em que o papel da aplicação só tem `INSERT`|`UPDATE` e `DELETE` feitos pela aplicação recebem permissão negada|C18|P1|
 |E7.3|Logs da aplicação em JSON (`slog`), sem senha, token, cartão ou conteúdo de arquivo|Um teste procura o token da requisição no log e falha se encontrar|C17|P1|
 |E7.4|Grafana com papel só de leitura no banco de auditoria e um painel de negações, uploads recusados e acessos ao painel|O painel mostra os eventos do seed|C19|P2|
@@ -243,29 +244,54 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 
 |Na arquitetura da Etapa 3|No ambiente local|
 |-|-|
-|Workers sem rede|Rede `processing`, sem internet, banco nem Valkey. Para não ter rede nenhuma, seria preciso o sandbox do E4.8|
+|Workers sem rede, num sandbox por tarefa (E4.8)|O worker roda sob o gVisor (`runtime: runsc`): o parser do STL fala com um kernel em espaço de usuário, não com o do host. Continua na rede `processing`, sem internet, banco nem Valkey, e não há um sandbox novo por tarefa. Como o netstack do gVisor não alcança o DNS embutido do Docker, o RabbitMQ e o Garage têm IP fixo nessa rede e o worker os conhece por `extra_hosts`. Numa máquina sem gVisor, `WORKER_RUNTIME=runc`|
+|Réplica de leitura (E3.4)|Uma réplica por streaming, sem failover automático. Só a lista de pedidos do cliente, os relatórios do Grafana e o backup leem dela; um pedido recém-criado pode demorar milissegundos para aparecer na lista|
 |Autoscaler com teto de custo|`--scale worker=N` manual (E4.7)|
-|IdP dos clientes e SSO com MFA|Tokens do `cmd/devtoken`. O Keycloak fica no E5.3|
-|VPN do painel|Porta do nginx publicada só em `127.0.0.1`. A evolução prevista é o Cloudflare Access (E2.7)|
+|IdP dos clientes e SSO com MFA|Keycloak no compose (E5.3). Um cliente `e2e` com login por usuário e senha existe só no realm local, para os testes e as ferramentas|
+|VPN do painel|Porta do nginx publicada só em `127.0.0.1:9445`, e o nginx só aceita o gateway da rede `public`, por onde chegam o loopback e um túnel SSH. A evolução prevista é o Cloudflare Access (E2.7)|
+|MFA no token do painel|Só o login pelo navegador (`panel-web`) comprova o TOTP, com `acr=2` e `auth_time`. Tokens obtidos por usuário e senha trazem `acr=1` mesmo para a equipe com TOTP, e o painel os recusa|
+|Step-up nas operações críticas (E6.4)|Login de no máximo 5 minutos, pedido pelo cabeçalho `WWW-Authenticate` da RFC 9470, no lugar de um segundo código TOTP dentro da mesma sessão. Quem confere os 5 minutos é o painel, pelo `auth_time` do token. No Keycloak, o nível 2 vale pela sessão de SSO, como o nível 1: com 5 minutos ali, a equipe perdia o painel a cada recarga ou renovação. O step-up do app pede `prompt=login`, que sempre exige a senha e o TOTP de novo|
+|Service account do painel no Keycloak|Para revogar um usuário, o painel desativa a conta e encerra as sessões pela Admin API, com o papel `manage-users`. É o papel mais estreito que o Keycloak oferece e também permite editar usuários: **risco aceito**. O segredo só existe no contêiner do painel, a Admin API não é publicada, e cada uso fica no evento `user.revoked`. A mesma conta confere se quem recebe um pedido é técnico e lista os técnicos para a atribuição. Listar os usuários de um papel exige do Keycloak o `view-realm`, que só lê a configuração do realm e não mostra segredos de clientes|
+|DFM no worker (E4.4)|O alerta `exceeds_build_volume` é calculado no módulo de pedidos, a partir da caixa envolvente que o worker já devolve, contra um volume de impressão de 250 mm por eixo (`BUILD_VOLUME_MM`). A mensagem da fila não muda|
+|Aprovar sem laudo, só pelo líder de produção (D02)|Não existe. O MVP não tem o perfil de líder de produção, então toda aprovação exige laudo e técnico atribuído|
+|Papéis do painel|O painel usa papéis próprios no banco (`panel_orders`, `panel_audit`), uma chave do Garage só de leitura e um usuário próprio no Valkey. O `UPDATE` em `orders` é concedido por coluna: nem a API nem o painel conseguem mudar um preço pelo SQL|
 |Cofre de segredos|Docker secrets|
 |Banco criptografado em repouso|Não implementado localmente. Em produção, disco criptografado do provedor|
-|Backup em outra conta|Bucket separado, com uma chave que a API não tem|
-|Serviços externos (FC5)|Ficam para o E8|
+|Backup em outra conta (E3.5)|Bucket `backups` no mesmo Garage, com uma chave própria que só lê `files` e só escreve nele; a API e o painel não têm permissão nenhuma ali. Uma cópia por dia, com `pg_dump` da réplica e da auditoria e um `tar` dos arquivos, tudo criptografado com `age` para uma chave pública. A chave privada só vai para o contêiner do `just restore-test`, que não fica rodando. Os backups expiram em 30 dias pela regra de ciclo de vida. Sem PITR nem arquivamento de WAL, e o backup cabe na memória do contêiner (512 MB)|
+|Serviços externos (FC5)|Gateway e transportadora simulados pelo contêiner `partnersim`, que se comporta como terceiro: chave de API nas chamadas, resposta assíncrona e webhooks assinados (E8.2, E8.3). A API e o painel chegam a ele por uma rede própria, `partners`, sem internet|
+|Webhooks dos parceiros|Rotas públicas pelo nginx, sem JWT, como numa plataforma real. A autenticação é o cabeçalho `X-Nugget-Signature` (HMAC-SHA256 de `t.corpo`, com um segredo por parceiro e tolerância de 5 minutos). O registro de rotas declara o esquema `hmac:payments` ou `hmac:shipping` no lugar dos perfis, e o teste de cobertura aceita só esses casos. O ID do evento é a chave de idempotência|
+|Endereço de entrega|Só o mínimo para entregar: destinatário, logradouro, número, cidade, UF e CEP. O cliente, o suporte e o admin o veem; o técnico não. Vai para a transportadora só na coleta|
+|Provedor de e-mail (E8.4)|Mailpit no compose, com a caixa publicada só em `127.0.0.1:8026`. O `notifier` recebe pela fila só o destinatário, o assunto e o texto, numa rede (`notify`) onde estão só ele, o RabbitMQ e o Mailpit. O SMTP interno não tem TLS nem autenticação. A entrega é pelo menos uma vez: um e-mail pode chegar repetido, com o mesmo `Message-ID`|
+|Canal cadastrado (C21)|O e-mail verificado no Keycloak, copiado para o pedido no orçamento. A troca de endereço proposta pelo suporte só vale com o código de 8 dígitos enviado a esse e-mail e digitado pelo dono, logado. O código fica guardado só como hash, vale 30 minutos e trava a troca depois de 5 erros. Não há confirmação por telefone|
+|Frete depois da troca de endereço|Não é cotado de novo: o pedido mantém o frete do orçamento|
+|Cancelamento (RF10)|O cliente cancela até `paid`. Um pedido pago muda para `cancelled` antes do estorno, na mesma transação da cobrança, para não perder a corrida com o técnico; se o gateway estiver fora, o estorno fica pendente e uma nova chamada o conclui com a mesma chave. Da produção em diante, o cancelamento é com o suporte, fora do sistema|
+|Retenção (E8.5)|Um job próprio (`retention`), com papel de banco, papel de auditoria e chave do Garage próprios. Apaga o STL 90 dias depois da entrega e o STL sem pedido vivo depois de 30 dias, e limpa o endereço 90 dias depois da entrega ou do cancelamento. O Garage não tem permissão só de apagar, então a chave do job também escreve: **risco aceito**, a chave existe só nesse contêiner. A regra de ciclo de vida do bucket (expiração em 400 dias e aborto de upload incompleto em 1 dia) é só a rede de segurança, aplicada pelo `garage-init` com uma chave `owner` temporária, apagada em seguida|
+|Login no Grafana|Usuário `admin` local, com a senha gerada pelo `gensecrets`, a proteção contra força bruta do Grafana e o mesmo isolamento de rede do painel (`127.0.0.1:9446`, só o gateway da rede `public`). Não há SSO com o Keycloak|
+|Notificação dos alertas (E7.5)|Os alertas ficam só no Grafana: o dashboard de segurança mostra o estado, e a API de alertas é o que o e2e confere. Não há contact point, e-mail nem plantão|
+|Métricas por contêiner|Sem cAdvisor, que pediria root, o socket do Docker e o `/sys` do host. Cada serviço expõe as próprias métricas, e o worker, o `notifier` e o `retention` não são raspados: o estado deles aparece nas filas do RabbitMQ e nos eventos de auditoria|
+|Detalhe por conta nas métricas|As métricas do Prometheus usam só a rota registrada e o nome do evento, para a cardinalidade não crescer com os usuários. O detalhe por conta, de que os alertas de enumeração e de upload precisam, vem do banco de auditoria, pelo papel `grafana_reader`|
+|Ator das mudanças feitas pelos parceiros|O histórico de estados guarda `uuid.Nil`, e o evento de auditoria leva `partner:payments` ou `partner:shipping` como autor|
 |Docker Hardened Images|`golang` e `gcr.io/distroless/static-debian13:nonroot`, fixadas por digest. Continuam sem shell e sem root, e não exigem login com Docker ID|
-|Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey entra com o E5|
+|Cota no Valkey (E4.3)|Cota no Postgres, com `pg_advisory_xact_lock` por conta. Também vale para todas as réplicas. O Valkey guarda só as revogações e o limite por usuário (E5)|
+|Tokens de 15 minutos (E5.1)|Tokens de 5 minutos. A revogação vale por 10 minutos, o que cobre todos os tokens emitidos antes dela|
+|Limite por usuário (E5.2)|Janela deslizante aproximada por dois contadores de janela fixa, num script Lua atômico. É mais barata que guardar cada requisição e erra pouco perto da virada da janela|
+|Valkey indisponível|A API falha fechada: responde 503, porque não consegue conferir a revogação (D03). O preço é a API parar junto com o Valkey|
 |Migrações versionadas|SQL em `migrations/`, executado pelo Postgres só na criação do volume. Para mudar o esquema, `just reset`|
-|Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/devtoken`, `cmd/seed`), que rodam no Windows|
+|Makefile e scripts em shell|`justfile` e comandos em Go (`cmd/gensecrets`, `cmd/token`, `cmd/seed`), que rodam no Windows|
 |TLS entre os serviços|Só na borda, no nginx. A rede interna fica sem TLS|
 |Admin API do Garage só para o init|Escuta também na rede de processamento. Exige o token, que o worker não tem|
-|Outbox transacional|A tarefa é publicada antes do commit, e o resultado só recebe ack depois dele. Se o commit falhar, nenhuma tarefa fica parada, mas o worker pode processar uma tarefa que não existe, ou a mesma duas vezes. A idempotência do E4.6 descarta o resultado extra|
-|Cabeçalhos de segurança no nginx|Ficam de fora de propósito, para a verificação da Etapa 5 encontrá-los. A correção é registrada lá|
+|Outbox transacional|A tarefa é publicada antes do commit, e o resultado só recebe ack depois dele. Se o commit falhar, nenhuma tarefa fica parada, mas o worker pode processar uma tarefa que não existe, ou a mesma duas vezes. A idempotência do E4.6 descarta o resultado extra. Uma peça pequena fica pronta em milissegundos, e o resultado pode chegar antes do commit: o consumidor procura a tarefa de novo por até 2 segundos antes de descartá-lo (encontrado pelo Playwright na FE7, quando o arquivo ficava "processando" para sempre)|
+|Cabeçalhos de segurança no nginx|Ficaram de fora até a verificação da Etapa 5 encontrá-los. Desde a FE0 estão ligados em todas as portas: CSP estrita com Trusted Types, HSTS, `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP e CORP. A rodada nova do ZAP está em `evidencias/etapa-5/relatorios-zap-fe0/`. O Keycloak e o Grafana mantêm a CSP que eles mesmos mandam|
+|COEP nos apps|O ZAP pede `Cross-Origin-Embedder-Policy` (90004, baixo). Com `require-corp`, a renovação silenciosa da sessão, num iframe pelo Keycloak, deixa de funcionar. Os apps não usam `SharedArrayBuffer` nem timers de alta resolução, e já mandam COOP e CORP. Ver `evidencias/etapa-5/relatorios-zap-fe7/LEIAME.md`|
+|Leitor de tela|O axe confere as regras WCAG 2.1 A e AA que dá para medir automaticamente, e o Playwright confere o uso pelo teclado. Ninguém testou os apps com um leitor de tela real (NVDA, VoiceOver)|
+|Catálogo editável pelo painel|O editor de tabela de preço (FE6) só muda valores de uma tabela que já existe. Criar material, cor, qualidade ou acabamento pede uma tabela proposta pela API (`POST /panel/v1/price-tables`)|
 
 ## 6. Ligação com as próximas etapas
 
 |Etapa|O que o backlog entrega|
 |-|-|
 |5 — Verificação|O sistema rodando no compose (M2) e o `openapi.yaml` (E2.6), para o ZAP testar o nosso próprio sistema|
-|6 — Detecção|O catálogo de eventos (E7.1) como fonte de dados, e os alertas do E7.5 como evidência|
+|6 — Detecção|O catálogo de eventos (E7.1) como fonte de dados, o dashboard de segurança (E7.4) e os alertas do E7.5 (`deploy/grafana/provisioning/alerting/rules.yaml`) como evidência|
 |7 — DevSecOps|O pipeline do E9.1, com as condições que bloqueiam o merge|
 
 ## 7. Estado
@@ -275,3 +301,13 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |M1|Concluído|E0.1 e E1|
 |M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
 |M3|Pendente|E9.1 e os itens P2|
+|Demonstração local (F9)|Concluída, sem a VM|O `just seed` deixa a demo pronta, com pedidos em todos os estados, chamados, troca de endereço pendente, tabela de preço esperando o segundo admin e os eventos de segurança que o dashboard (aceite do E7.4) e os alertas do E7.5 mostram. A cadeia TLS tem os identificadores de chave e se renova sozinha quando deixa de servir, e `just cert <host>` gera a de outro host. A VM de demonstração e o `PUBLIC_HOST` no compose ficam para quando houver um hypervisor|
+|E6.1, E6.2 e E6.4|Concluídos|Binário `panel` próprio, em `127.0.0.1:9445`, com TOTP exigido no token e evento `panel.access` em toda requisição. Toda rota declara os perfis num registro, e um teste falha se alguma rota não declarar. O binário `api` não depende do painel. A operação crítica "revogar usuário" exige step-up e justificativa|
+|E8.1 e E6.3|Concluídos|Pedido com orçamento calculado só no servidor, que recusa campos desconhecidos no corpo (CA03). Tabela de preços versionada, que só vale depois da aprovação de outro admin, e pedidos que mantêm o preço do orçamento. Revisão técnica só pelo técnico atribuído, com laudo, uma por pedido (CA05). Download do STL pela equipe só pelo técnico atribuído, como operação crítica (CA08). Histórico de estados e alerta de DFM|
+|E3.4, E3.5, E3.6 e E4.8|Concluídos|Worker sob o gVisor. Réplica de leitura por streaming, que recusa escritas e serve a lista de pedidos, o Grafana e o backup. Backup diário criptografado com `age` num bucket que só a chave do backup alcança, com expiração de 30 dias. `just restore-test` restaura o backup mais recente num servidor temporário, confere os hashes, as contagens e o número de arquivos e mede o tempo|
+|E7.4 e E7.5|Concluídos|Prometheus raspando a API (todas as réplicas, por DNS), o painel, os dois Postgres, o Valkey, o RabbitMQ (por fila), o Garage, o Keycloak e o nginx, sem nenhuma porta publicada. Grafana com os dashboards de segurança, operação e negócio, provisionados e só de leitura. O papel `grafana_reader` só lê a auditoria, e o `grafana_main` não vê dados pessoais. Oito alertas no Grafana: enumeração de IDs, abuso de upload, acesso ao painel fora do horário, operações críticas em série, webhooks forjados, serviço fora, erros 5xx e fila de falhas. O e2e dispara os de enumeração e de upload|
+|E8.6|Concluído ([FRONTEND.md](FRONTEND.md))|Os apps do cliente e do painel, da FE0 à FE7: todos os cabeçalhos de segurança com CSP estrita e Trusted Types, login com PKCE e tokens só em memória, step-up com justificativa nas operações críticas, textos sempre como texto, preço só do servidor, Playwright com os casos de abuso e a verificação de acessibilidade (WCAG 2.1 A e AA pelo axe). Fora dele: o catálogo editável pelo painel e testes com leitores de tela reais|
+|E8.4 e E8.5|Concluídos|Avisos ao e-mail cadastrado em cada etapa do pedido, sem o endereço, pelo `notifier`, que não alcança banco nem Garage. Cancelamento pelo cliente até `paid`, com estorno no gateway (RF10, CA06, T11). Chamados de suporte só sobre os próprios pedidos, respondidos pelo suporte no painel (RF11). Troca de endereço proposta pelo suporte como operação crítica e confirmada pelo cliente com o código enviado ao e-mail (C21, CA04). Problema na entrega avisado ao cliente (RF15). Retenção do STL e do endereço por job próprio, com o ciclo de vida do bucket como rede de segurança|
+|E8.2 e E8.3|Concluídos|Frete cotado na transportadora e somado depois do desconto. Pagamento pelo total calculado no servidor, com uma cobrança viva por pedido. O pedido só fica pago com a notificação assinada do gateway, e o valor precisa bater com o total (`payment.rejected` com `amount_mismatch` quando não bate). Evento repetido não tem efeito. Produção e coleta pelo técnico atribuído, coleta e entrega pelos webhooks da transportadora. Com o parceiro fora, 502 `partner_unavailable` e o pedido não muda (D03)|
+|E5.1 e E5.2|Concluídos|Valkey com ACL por usuário. O back-channel logout do Keycloak revoga a sessão em todas as réplicas, e a revogação por usuário já existe para o painel (F3). Limite de 60 requisições por minuto por usuário, com 429 e `Retry-After`. Sem o Valkey, 503|
+|E5.3|Concluído|Keycloak com realm versionado, quatro perfis, TOTP obrigatório para a equipe, bloqueio por tentativas, tokens EdDSA de 5 minutos e clientes `web` e `panel-web` com PKCE. A API confere `iss`, `aud`, tipo e perfil, e um token válido da equipe recebe 403 na API do cliente|

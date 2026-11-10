@@ -7,12 +7,13 @@ package filesdb
 
 import (
 	"context"
+	"time"
 
 	"github.com/google/uuid"
 )
 
 const findFileForOwner = `-- name: FindFileForOwner :one
-SELECT owner_id, size_bytes, sha256
+SELECT owner_id, size_bytes, sha256, purged_at
 FROM files
 WHERE id = $1 AND owner_id = $2
 `
@@ -26,13 +27,19 @@ type FindFileForOwnerRow struct {
 	OwnerID   uuid.UUID
 	SizeBytes int64
 	Sha256    []byte
+	PurgedAt  *time.Time
 }
 
 // There is no lookup by ID alone: the owner is part of the query (D01).
 func (q *Queries) FindFileForOwner(ctx context.Context, arg FindFileForOwnerParams) (FindFileForOwnerRow, error) {
 	row := q.db.QueryRow(ctx, findFileForOwner, arg.ID, arg.OwnerID)
 	var i FindFileForOwnerRow
-	err := row.Scan(&i.OwnerID, &i.SizeBytes, &i.Sha256)
+	err := row.Scan(
+		&i.OwnerID,
+		&i.SizeBytes,
+		&i.Sha256,
+		&i.PurgedAt,
+	)
 	return i, err
 }
 

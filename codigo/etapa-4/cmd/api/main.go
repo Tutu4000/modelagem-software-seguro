@@ -3,27 +3,33 @@ package main
 
 import (
 	"context"
-	"crypto/ed25519"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
 	"nuggetmachine/internal/config"
 	"nuggetmachine/internal/files"
+	"nuggetmachine/internal/metrics"
+	"nuggetmachine/internal/notify"
+	"nuggetmachine/internal/orders"
+	"nuggetmachine/internal/partners"
+	"nuggetmachine/internal/pg"
+	"nuggetmachine/internal/pricing"
 	"nuggetmachine/internal/queue"
 	"nuggetmachine/internal/server/customer"
+	"nuggetmachine/internal/session"
 	"nuggetmachine/internal/storage"
+	"nuggetmachine/internal/support"
 )
 
 func main() {
@@ -37,10 +43,14 @@ func main() {
 func run(log *slog.Logger) error {
 	var env config.Env
 	addr := env.String("API_ADDR", ":8080")
+	internalAddr := env.String("INTERNAL_ADDR", ":8090")
 	trusted := env.List("TRUSTED_PROXIES")
-	pubPEM := env.Secret("AUTH_PUBLIC_KEY")
-	mainDB := dbConfig{host: env.Required("DB_HOST"), name: env.String("DB_NAME", "nugget")}
-	auditDB := dbConfig{host: env.Required("AUDIT_DB_HOST"), name: env.String("AUDIT_DB_NAME", "audit")}
+	issuer := env.Required("OIDC_ISSUER")
+	jwksURL := env.Required("OIDC_JWKS_URL")
+	audience := env.String("OIDC_AUDIENCE", "api")
+	mainHost, mainName := env.Required("DB_HOST"), env.String("DB_NAME", "nugget")
+	replicaHost := env.Required("DB_REPLICA_HOST")
+	auditHost, auditName := env.Required("AUDIT_DB_HOST"), env.String("AUDIT_DB_NAME", "audit")
 	s3cfg := storage.S3Config{
 		Bucket:         env.String("S3_BUCKET", "files"),
 		Region:         env.String("S3_REGION", "garage"),
@@ -51,33 +61,65 @@ func run(log *slog.Logger) error {
 	}
 	filesPassword := env.Secret("DB_FILES_PASSWORD")
 	queuePassword := env.Secret("DB_QUEUE_PASSWORD")
+	ordersPassword := env.Secret("DB_ORDERS_PASSWORD")
+	supportPassword := env.Secret("DB_SUPPORT_PASSWORD")
 	auditPassword := env.Secret("DB_AUDIT_PASSWORD")
+	buildVolume, err := pricing.ParseBuildVolume(env.String("BUILD_VOLUME_MM", "250,250,250"))
+	if err != nil {
+		return err
+	}
 	amqpHost := env.String("AMQP_HOST", "rabbitmq:5672")
 	amqpUser := env.String("AMQP_USER", "api")
 	amqpPassword := env.Secret("AMQP_PASSWORD")
+	paymentsURL, carrierURL := env.Required("PAYMENTS_URL"), env.Required("CARRIER_URL")
+	paymentsKey, carrierKey := env.Secret("PAYMENTS_API_KEY"), env.Secret("CARRIER_API_KEY")
+	paymentsSecret, shippingSecret := env.Secret("PAYMENTS_WEBHOOK_SECRET"), env.Secret("SHIPPING_WEBHOOK_SECRET")
+	valkeyAddr := env.Required("VALKEY_ADDR")
+	valkeyUser := env.String("VALKEY_USER", "api")
+	valkeyPassword := env.Secret("VALKEY_PASSWORD")
+	ratePerMinute, err := strconv.Atoi(env.String("RATE_LIMIT_PER_MINUTE", "60"))
+	if err != nil || ratePerMinute < 1 {
+		return fmt.Errorf("RATE_LIMIT_PER_MINUTE: want a positive integer")
+	}
 	if err := env.Err(); err != nil {
 		return err
-	}
-
-	pub, err := jwt.ParseEdPublicKeyFromPEM(pubPEM)
-	if err != nil {
-		return fmt.Errorf("AUTH_PUBLIC_KEY: %w", err)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	filesPool, err := mainDB.open(ctx, "files", filesPassword)
+	keys, err := auth.JWKS(ctx, jwksURL)
+	if err != nil {
+		return err
+	}
+
+	filesPool, err := pg.Open(ctx, mainHost, mainName, "files", filesPassword)
 	if err != nil {
 		return err
 	}
 	defer filesPool.Close()
-	queuePool, err := mainDB.open(ctx, "queue", queuePassword)
+	queuePool, err := pg.Open(ctx, mainHost, mainName, "queue", queuePassword)
 	if err != nil {
 		return err
 	}
 	defer queuePool.Close()
-	auditPool, err := auditDB.open(ctx, "audit_app", auditPassword)
+	ordersPool, err := pg.Open(ctx, mainHost, mainName, "orders", ordersPassword)
+	if err != nil {
+		return err
+	}
+	defer ordersPool.Close()
+	// Same role on the read replica: the grants come with the replication.
+	ordersReplica, err := pg.Open(ctx, replicaHost, mainName, "orders", ordersPassword)
+	if err != nil {
+		return err
+	}
+	defer ordersReplica.Close()
+	supportPool, err := pg.Open(ctx, mainHost, mainName, "support", supportPassword)
+	if err != nil {
+		return err
+	}
+	defer supportPool.Close()
+	auditPool, err := pg.Open(ctx, auditHost, auditName, "audit_app", auditPassword)
 	if err != nil {
 		return err
 	}
@@ -90,23 +132,63 @@ func run(log *slog.Logger) error {
 	defer broker.Close()
 	closed := broker.Closed()
 
+	sessions, err := session.NewValkey(valkeyAddr, valkeyUser, valkeyPassword)
+	if err != nil {
+		return fmt.Errorf("Valkey at %s: %w", valkeyAddr, err)
+	}
+	defer sessions.Close()
+
 	store := storage.NewS3(s3cfg)
 	auditLog := audit.NewWithStore(os.Stdout, audit.NewPostgres(auditPool))
 	tasks := queue.NewRabbit(queuePool, broker, store, auditLog, log)
+	verifier := auth.NewVerifier(auth.VerifierConfig{Keys: keys, Issuer: issuer, Audience: audience, Now: time.Now})
 
 	gin.SetMode(gin.ReleaseMode)
 	router, err := customer.New(customer.Deps{
-		Verifier:       auth.NewVerifier(pub.(ed25519.PublicKey), time.Now),
-		Files:          files.NewPostgresRepo(filesPool),
-		Store:          store,
-		Queue:          tasks,
-		Tasks:          tasks,
-		Audit:          auditLog,
-		Log:            log,
-		TrustedProxies: trusted,
+		Verifier:              verifier,
+		Files:                 files.NewPostgresRepo(filesPool),
+		Store:                 store,
+		Queue:                 tasks,
+		Tasks:                 tasks,
+		Audit:                 auditLog,
+		Sessions:              sessions,
+		Limiter:               sessions,
+		RatePerMinute:         ratePerMinute,
+		Orders:                orders.NewStore(ordersPool).WithReplica(ordersReplica),
+		Support:               support.NewStore(supportPool),
+		Notify:                notify.NewRabbit(broker),
+		BuildVolume:           buildVolume,
+		Now:                   time.Now,
+		Gateway:               partners.NewClient(paymentsURL, paymentsKey),
+		Carrier:               partners.NewClient(carrierURL, carrierKey),
+		PaymentsWebhookSecret: paymentsSecret,
+		ShippingWebhookSecret: shippingSecret,
+		Log:                   log,
+		TrustedProxies:        trusted,
 	})
 	if err != nil {
 		return err
+	}
+
+	// The internal listener is reachable only on the internal network: nginx
+	// never forwards to it. Keycloak calls it for the back-channel logout.
+	internal := http.NewServeMux()
+	// Prometheus scrapes on the internal network: nginx never forwards here.
+	internal.Handle("GET /metrics", metrics.Handler())
+	internal.Handle("POST /oidc/backchannel-logout", session.LogoutHandler{
+		Verifier: verifier,
+		Clients:  []string{"web", "panel-web", "e2e"},
+		Store:    sessions,
+		Audit:    auditLog,
+		Log:      log,
+	})
+	internalSrv := &http.Server{
+		Addr:              internalAddr,
+		Handler:           internal,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		MaxHeaderBytes:    16 << 10,
 	}
 
 	// The timeouts cover a 100 MB upload over a slow connection without leaving
@@ -120,10 +202,11 @@ func run(log *slog.Logger) error {
 		IdleTimeout:       time.Minute,
 		MaxHeaderBytes:    16 << 10,
 	}
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
 	go func() { errc <- srv.ListenAndServe() }()
+	go func() { errc <- internalSrv.ListenAndServe() }()
 	go func() { errc <- tasks.ConsumeResults(ctx) }()
-	log.Info("API up", "addr", addr)
+	log.Info("API up", "addr", addr, "internal_addr", internalAddr)
 
 	// Without RabbitMQ the API exits, and Docker restarts it once it is back.
 	select {
@@ -138,31 +221,8 @@ func run(log *slog.Logger) error {
 	if err := srv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
+	if err := internalSrv.Shutdown(shutdown); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
 	return nil
-}
-
-type dbConfig struct {
-	host, name string
-}
-
-// open connects with the module's role. The internal network has no TLS in
-// the local environment (backlog section 5).
-func (d dbConfig) open(ctx context.Context, user string, password []byte) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(fmt.Sprintf("host=%s dbname=%s user=%s sslmode=disable", d.host, d.name, user))
-	if err != nil {
-		return nil, err
-	}
-	cfg.ConnConfig.Password = string(password)
-	cfg.MaxConns = 10
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("database %s: %w", d.name, err)
-	}
-	pingCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := pool.Ping(pingCtx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("database %s with role %s: %w", d.name, user, err)
-	}
-	return pool, nil
 }

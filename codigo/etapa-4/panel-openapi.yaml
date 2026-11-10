@@ -1,0 +1,775 @@
+openapi: 3.0.3
+info:
+  title: nugget-machine — internal panel API
+  version: 0.4.0
+  description: >
+    Staff routes (technician, support, admin), served by the panel binary on
+    an address of its own, reachable only from the host's loopback or an SSH
+    tunnel (D02). Every request needs a panel-web token from a browser login
+    with password and TOTP (acr 2). Critical operations also need a login at
+    most 5 minutes old (step-up, RFC 9470) and a written justification. Every
+    request is recorded in the audit log.
+servers:
+  - url: https://localhost:9445
+security:
+  - oidc: []
+paths:
+  /panel/v1/me:
+    get:
+      summary: Who is logged in, and until when a critical operation is allowed
+      responses:
+        "200":
+          description: The logged-in staff member
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, role, session, authenticated_at, step_up_needed_at]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  role:
+                    type: string
+                    enum: [technician, support, admin]
+                  session:
+                    type: string
+                  authenticated_at:
+                    type: string
+                    format: date-time
+                  step_up_needed_at:
+                    type: string
+                    format: date-time
+                    description: After this, a critical operation answers step_up_required
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/users/{id}/revoke:
+    post:
+      summary: Revoke a user (incident response, critical, admin only)
+      description: >
+        Cuts every existing token of the user in all replicas at once, then
+        disables the account and ends its sessions in Keycloak. An admin
+        cannot revoke themselves.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Justification"
+      responses:
+        "200":
+          description: User revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, tokens, enabled, sessions]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  tokens:
+                    type: string
+                  enabled:
+                    type: boolean
+                  sessions:
+                    type: string
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "502":
+          description: >
+            Keycloak did not answer (idp_unavailable). The tokens were already
+            cut; retry to disable the account.
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /panel/v1/technicians:
+    get:
+      summary: The accounts with the technician role (admin)
+      description: >
+        Read from Keycloak, so the admin picks the technician of an order by
+        name. Only the ID and the username: no e-mail.
+      responses:
+        "200":
+          description: The technicians
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [technicians]
+                properties:
+                  technicians:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Technician"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "502":
+          description: Keycloak did not answer (idp_unavailable)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /panel/v1/orders:
+    get:
+      summary: List orders, optionally by status (admin, support)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/OrderList"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/assigned:
+    get:
+      summary: Orders assigned to the logged-in technician
+      responses:
+        "200":
+          $ref: "#/components/responses/OrderList"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}:
+    get:
+      summary: One order with volume, bounding box, DFM flags, history and review
+      description: >
+        Support and admin see any order; a technician only the orders assigned
+        to them. Someone else's order and a missing one get the same 403.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffOrder"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/assign:
+    post:
+      summary: Assign an order awaiting review to a technician (admin)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [technician_id]
+              properties:
+                technician_id:
+                  type: string
+                  format: uuid
+      responses:
+        "200":
+          description: Order assigned
+        "400":
+          description: The account is not a technician (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/file:
+    post:
+      summary: URL to the customer's design (assigned technician, critical)
+      description: >
+        Needs a recent login and a justification. The URL lasts 5 minutes and
+        is signed with a read-only storage key. Not even an admin can open a
+        design.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Justification"
+      responses:
+        "200":
+          description: Presigned URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expires_in]
+                properties:
+                  url:
+                    type: string
+                    format: uri
+                  expires_in:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "410":
+          description: The retention already deleted the design (file_purged)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/review:
+    post:
+      summary: Technical review with the DFM report (assigned technician)
+      description: >
+        Only from awaiting_review. Approved moves the order to
+        awaiting_payment, rejected to rejected. A second review gets 409.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [decision, report]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+                report:
+                  type: string
+                  minLength: 10
+                  maxLength: 5000
+      responses:
+        "200":
+          description: Review recorded
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/production:
+    post:
+      summary: Start printing a paid order (assigned technician)
+      description: Only from paid, to in_production. Otherwise 409.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order in production
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/orders/{id}/ship:
+    post:
+      summary: Book the pickup with the carrier (assigned technician)
+      description: >
+        Only in production and once per order. The panel sends the delivery
+        address to the carrier without showing it to the technician. The
+        order becomes shipped when the carrier's signed pickup notification
+        arrives at the public API.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "202":
+          description: Pickup booked
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [id, shipment_id, tracking_code]
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                  shipment_id:
+                    type: string
+                  tracking_code:
+                    type: string
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "502":
+          description: The carrier did not answer (partner_unavailable); nothing changed
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /panel/v1/orders/{id}/address-change:
+    post:
+      summary: Propose a new delivery address (support and admin, critical, C21)
+      description: >
+        Step-up and justification, as every critical operation. Support never
+        changes the address: the change waits for the 8-digit code sent to
+        the e-mail registered with the order, which only the customer, logged
+        in, can type in the public API. The answer never carries the code. A
+        new proposal replaces the pending one. No change after the dispatch.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [address, justification]
+              properties:
+                address:
+                  type: object
+                  required: [recipient, street, number, city, state, postal_code]
+                  properties:
+                    recipient:
+                      type: string
+                    street:
+                      type: string
+                    number:
+                      type: string
+                    city:
+                      type: string
+                    state:
+                      type: string
+                      pattern: "^[A-Z]{2}$"
+                    postal_code:
+                      type: string
+                      pattern: "^[0-9]{5}-?[0-9]{3}$"
+                ticket_id:
+                  type: string
+                  format: uuid
+                justification:
+                  type: string
+                  minLength: 10
+                  maxLength: 500
+      responses:
+        "202":
+          description: Change pending, code sent to the customer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [change_id, status, expires_at]
+                properties:
+                  change_id:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [pending]
+                  expires_at:
+                    type: string
+                    format: date-time
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order was dispatched or has no registered e-mail (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "503":
+          description: The code could not be queued; the change was withdrawn
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /panel/v1/tickets:
+    get:
+      summary: Support tickets, most recently updated first (support and admin)
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [open, answered, closed]
+      responses:
+        "200":
+          description: Tickets, without the messages
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tickets]
+                properties:
+                  tickets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/StaffTicket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}:
+    get:
+      summary: One ticket with the messages (support and admin)
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTicket"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}/messages:
+    post:
+      summary: Answer the customer (support and admin)
+      description: >
+        The ticket becomes answered, and the customer gets an e-mail that only
+        says there is an answer: the conversation stays behind the login.
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "200":
+          description: The ticket with the new message
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StaffTicket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/tickets/{id}/close:
+    post:
+      summary: Close a ticket (support and admin)
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: Ticket closed
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/price-tables:
+    get:
+      summary: Price table versions (admin)
+      responses:
+        "200":
+          description: Versions, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [price_tables]
+                properties:
+                  price_tables:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PriceTable"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      summary: Propose a new price table (admin)
+      description: The table is created as a draft and changes no price until another admin approves it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [rules]
+              properties:
+                rules:
+                  $ref: "openapi.yaml#/components/schemas/PriceRules"
+      responses:
+        "201":
+          description: Draft created
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, status]
+                properties:
+                  version:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [draft]
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /panel/v1/price-tables/{version}/approve:
+    post:
+      summary: Activate a draft (another admin, critical)
+      description: >
+        Needs a recent login and a justification. The admin who proposed it
+        gets 403. The previous table is retired in the same transaction, and
+        existing orders keep the price they were quoted with.
+      parameters:
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Justification"
+      responses:
+        "200":
+          description: Table active
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, status]
+                properties:
+                  version:
+                    type: integer
+                  status:
+                    type: string
+                    enum: [active]
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+components:
+  parameters:
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  securitySchemes:
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
+      description: >
+        Client panel-web, authorization code with PKCE. The client always asks
+        for acr 2 (password and TOTP).
+  responses:
+    OrderList:
+      description: Orders, newest first
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [orders]
+            properties:
+              orders:
+                type: array
+                items:
+                  $ref: "#/components/schemas/StaffOrder"
+    Problem:
+      description: Error in the Problem Details format (RFC 9457)
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthenticated:
+      description: >
+        No valid token (unauthenticated), no second factor (mfa_required), or,
+        on a critical operation, a login older than 5 minutes
+        (step_up_required). The last one carries the step-up challenge.
+      headers:
+        WWW-Authenticate:
+          description: >
+            On step_up_required: Bearer error="insufficient_user_authentication",
+            max_age=300, acr_values="2". The front-end logs the user in again
+            with these parameters.
+          schema:
+            type: string
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    StaffOrder:
+      description: >
+        The customer view of the order (Order in openapi.yaml) plus the review
+        data. The payment and the tracking code come for every staff role;
+        the shipping address only for support and admin.
+      allOf:
+        - $ref: "openapi.yaml#/components/schemas/Order"
+        - type: object
+          required: [owner_id, volume_mm3, bbox_mm, assigned_technician]
+          properties:
+            owner_id:
+              type: string
+              format: uuid
+            volume_mm3:
+              type: number
+            bbox_mm:
+              type: array
+              items:
+                type: number
+            assigned_technician:
+              type: string
+              format: uuid
+              nullable: true
+    Technician:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+    StaffTicket:
+      description: >
+        The ticket as the customer sees it (Ticket in openapi.yaml), plus the
+        owner. The message bodies are plain text: show them as text, never as
+        HTML.
+      allOf:
+        - $ref: "openapi.yaml#/components/schemas/Ticket"
+        - type: object
+          required: [owner_id]
+          properties:
+            owner_id:
+              type: string
+              format: uuid
+    PriceTable:
+      type: object
+      required: [version, status, rules, created_by, created_at, approved_by, approved_at]
+      properties:
+        version:
+          type: integer
+        status:
+          type: string
+          enum: [draft, active, retired]
+        rules:
+          $ref: "openapi.yaml#/components/schemas/PriceRules"
+        created_by:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        approved_by:
+          type: string
+          format: uuid
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+    Justification:
+      type: object
+      required: [justification]
+      properties:
+        justification:
+          type: string
+          minLength: 10
+          maxLength: 500
+          description: Why the operation is needed. It goes to the audit log.
+    Problem:
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+        title:
+          type: string
+        status:
+          type: integer
+        code:
+          type: string
+          enum:
+            - unauthenticated
+            - mfa_required
+            - step_up_required
+            - forbidden
+            - invalid_request
+            - justification_required
+            - rate_limited
+            - unavailable
+            - idp_unavailable
+            - conflict
+            - internal

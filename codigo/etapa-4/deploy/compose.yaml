@@ -16,22 +16,130 @@ x-hardened: &hardened
   tmpfs: ["/tmp:size=16m"]
 
 services:
+  # nginx with the two web apps built in (deploy/nginx/Dockerfile).
   nginx:
     <<: *hardened
-    image: nginxinc/nginx-unprivileged:1.30-alpine@sha256:f5116ed4606f3eb015dd4a8e28cb9b351476dc0ad4bc6e9f93b19cec130cdf03
-    ports: ["443:8443", "8443:9443"]
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    build:
+      context: ..
+      dockerfile: deploy/nginx/Dockerfile
+    # The panel listens only on the host's loopback: reaching it from another
+    # machine takes an SSH tunnel, which stands for the VPN (FC2).
+    ports: ["443:8443", "8443:9443", "8444:10443", "127.0.0.1:9445:11443", "127.0.0.1:9446:12443"]
     tmpfs: ["/tmp:size=128m"]
     secrets: [tls_crt, tls_key]
     networks:
       public: {}
       internal:
         ipv4_address: 172.28.10.10
-    depends_on: [api, garage]
+    depends_on: [api, panel, garage, keycloak, grafana]
     deploy:
       resources:
         limits: { cpus: "1", memory: 256m, pids: 128 }
+
+  # Internal panel (D02): own binary, own address, own database role and own
+  # Valkey user. It never shares a process with the public API.
+  panel:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: panel
+    environment:
+      TRUSTED_PROXIES: 172.28.10.10
+      OIDC_ISSUER: https://localhost:8444/realms/nugget
+      OIDC_JWKS_URL: http://keycloak:8080/realms/nugget/protocol/openid-connect/certs
+      OIDC_AUDIENCE: panel
+      AUDIT_DB_HOST: postgres-audit
+      DB_PANEL_AUDIT_PASSWORD_FILE: /run/secrets/db_panel_audit_password
+      DB_HOST: postgres
+      DB_PANEL_ORDERS_PASSWORD_FILE: /run/secrets/db_panel_orders_password
+      DB_PANEL_SUPPORT_PASSWORD_FILE: /run/secrets/db_panel_support_password
+      # The panel only publishes notifications (E8.4).
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_panel_password
+      # Read-only storage key: the panel only opens designs (D02).
+      S3_ENDPOINT: http://garage:3900
+      S3_PUBLIC_ENDPOINT: https://localhost:8443
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_panel_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
+      VALKEY_ADDR: valkey:6379
+      VALKEY_USER: panel
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_panel_password
+      KEYCLOAK_ADMIN_URL: http://keycloak:8080
+      KEYCLOAK_PANEL_ADMIN_SECRET_FILE: /run/secrets/keycloak_panel_admin_secret
+      CARRIER_URL: http://partnersim:8200
+      CARRIER_API_KEY_FILE: /run/secrets/partner_carrier_api_key_panel
+      RATE_LIMIT_PER_MINUTE: "60"
+      PANEL_STEP_UP_MAX_AGE: 5m
+      INTERNAL_ADDR: ":8090"
+      GOMEMLIMIT: 200MiB
+    secrets:
+      - db_panel_audit_password
+      - db_panel_orders_password
+      - db_panel_support_password
+      - rabbitmq_panel_password
+      - valkey_panel_password
+      - keycloak_panel_admin_secret
+      - s3_panel_access_key_id
+      - s3_panel_secret_access_key
+      - partner_carrier_api_key_panel
+    networks: [internal, partners]
+    depends_on:
+      garage-init: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+      valkey: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 128 }
+
+  # Identity provider (E5.3): customer login and staff SSO with MFA. Reached
+  # from outside only through nginx, which hides the admin console.
+  keycloak:
+    <<: *hardened
+    build:
+      context: ./keycloak
+    environment:
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_HOSTNAME: https://localhost:8444
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_PROXY_HEADERS: xforwarded
+      JAVA_OPTS_KC_HEAP: -XX:MaxRAMPercentage=70
+    # Keycloak has no *_FILE option for the database password: it is read
+    # from the secret inside the container, so it never shows in the compose
+    # file or in `docker inspect`.
+    entrypoint: ["bash", "-c"]
+    command:
+      - >-
+        export KC_DB_PASSWORD="$$(cat /run/secrets/db_keycloak_password)" &&
+        exec /opt/keycloak/bin/kc.sh start --optimized --import-realm
+    tmpfs: ["/tmp:size=64m", "/opt/keycloak/data:size=64m,uid=1000"]
+    secrets:
+      - db_keycloak_password
+      - source: keycloak_realm
+        target: /opt/keycloak/data/import/realm.json
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test:
+        - CMD
+        - bash
+        - -c
+        - >-
+          exec 3<>/dev/tcp/localhost/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -m1 '"status"' <&3 | grep -q '"UP"'
+      interval: 5s
+      timeout: 5s
+      retries: 60
+    deploy:
+      resources:
+        limits: { cpus: "2", memory: 1g, pids: 512 }
 
   api:
     <<: *hardened
@@ -41,9 +149,22 @@ services:
       target: api
     environment:
       TRUSTED_PROXIES: 172.28.10.10
-      AUTH_PUBLIC_KEY_FILE: /run/secrets/auth_public_key
+      OIDC_ISSUER: https://localhost:8444/realms/nugget
+      OIDC_JWKS_URL: http://keycloak:8080/realms/nugget/protocol/openid-connect/certs
+      OIDC_AUDIENCE: api
       DB_HOST: postgres
       DB_FILES_PASSWORD_FILE: /run/secrets/db_files_password
+      DB_ORDERS_PASSWORD_FILE: /run/secrets/db_orders_password
+      DB_SUPPORT_PASSWORD_FILE: /run/secrets/db_support_password
+      # The customer's order list reads the replica (E3.4).
+      DB_REPLICA_HOST: postgres-replica
+      BUILD_VOLUME_MM: "250,250,250"
+      PAYMENTS_URL: http://partnersim:8100
+      PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
+      CARRIER_URL: http://partnersim:8200
+      CARRIER_API_KEY_FILE: /run/secrets/partner_carrier_api_key_api
+      PAYMENTS_WEBHOOK_SECRET_FILE: /run/secrets/partner_payments_webhook_secret
+      SHIPPING_WEBHOOK_SECRET_FILE: /run/secrets/partner_shipping_webhook_secret
       DB_QUEUE_PASSWORD_FILE: /run/secrets/db_queue_password
       AUDIT_DB_HOST: postgres-audit
       DB_AUDIT_PASSWORD_FILE: /run/secrets/db_audit_password
@@ -53,30 +174,278 @@ services:
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
       AMQP_HOST: rabbitmq:5672
       AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_api_password
+      VALKEY_ADDR: valkey:6379
+      VALKEY_USER: api
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey_api_password
+      RATE_LIMIT_PER_MINUTE: "60"
+      INTERNAL_ADDR: ":8090"
       GOMEMLIMIT: 400MiB
     secrets:
-      - auth_public_key
+      - valkey_api_password
       - db_files_password
+      - db_orders_password
+      - db_support_password
+      - partner_payments_api_key
+      - partner_carrier_api_key_api
+      - partner_payments_webhook_secret
+      - partner_shipping_webhook_secret
       - db_queue_password
       - db_audit_password
       - s3_access_key_id
       - s3_secret_access_key
       - rabbitmq_api_password
-    networks: [internal]
+    networks: [internal, partners]
     depends_on:
       garage-init: { condition: service_completed_successfully }
+      keycloak: { condition: service_healthy }
+      valkey: { condition: service_healthy }
       rabbitmq: { condition: service_healthy }
       postgres: { condition: service_healthy }
+      postgres-replica: { condition: service_healthy }
       postgres-audit: { condition: service_healthy }
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
 
+  # The payment gateway and the carrier (FC5), simulated. The API and the
+  # panel call it on the partners network; it calls back the platform's public
+  # address, like a third party on the internet would, with signed webhooks.
+  partnersim:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: partnersim
+    environment:
+      WEBHOOK_BASE_URL: https://nginx:8443
+      WEBHOOK_CA_FILE: /run/secrets/tls_ca
+      PAYMENTS_API_KEY_FILE: /run/secrets/partner_payments_api_key
+      CARRIER_API_KEY_API_FILE: /run/secrets/partner_carrier_api_key_api
+      CARRIER_API_KEY_PANEL_FILE: /run/secrets/partner_carrier_api_key_panel
+      PAYMENTS_WEBHOOK_SECRET_FILE: /run/secrets/partner_payments_webhook_secret
+      SHIPPING_WEBHOOK_SECRET_FILE: /run/secrets/partner_shipping_webhook_secret
+      # Long enough for the e2e webhook attacks to land before the
+      # simulator's own notification.
+      SIM_DELAY: 3s
+    secrets:
+      - tls_ca
+      - partner_payments_api_key
+      - partner_carrier_api_key_api
+      - partner_carrier_api_key_panel
+      - partner_payments_webhook_secret
+      - partner_shipping_webhook_secret
+    networks: [public, partners]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 64m, pids: 64 }
+
+  # Delivers the notifications (E8.4). It receives only the recipient and the
+  # text: no database, no Garage, no order data. Its network reaches only the
+  # queue and the mail server.
+  notifier:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: notifier
+    environment:
+      AMQP_HOST: rabbitmq:5672
+      AMQP_PASSWORD_FILE: /run/secrets/rabbitmq_notifier_password
+      SMTP_ADDR: mailpit:1025
+      MAIL_FROM: nao-responda@nugget.local
+    secrets: [rabbitmq_notifier_password]
+    networks: [notify]
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      mailpit: { condition: service_started }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  # Stands for the e-mail provider. Its inbox is published only on the host's
+  # loopback, like the panel: http://127.0.0.1:8026.
+  mailpit:
+    <<: *hardened
+    image: axllent/mailpit:v1.32.0@sha256:0790692be935ea4420d085694f7985b1f692ca6a8771ab0e0bd8ba75ac180498
+    ports: ["127.0.0.1:8026:8025"]
+    environment:
+      MP_MAX_MESSAGES: "2000"
+    tmpfs: ["/tmp:size=64m"]
+    networks: [notify, mailui]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 128m, pids: 64 }
+
+  # Deletes the designs and addresses the platform no longer needs (E8.5).
+  # Own database role, own audit role and the only storage key that deletes.
+  retention:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: retention
+    environment:
+      DB_HOST: postgres
+      DB_RETENTION_PASSWORD_FILE: /run/secrets/db_retention_password
+      AUDIT_DB_HOST: postgres-audit
+      DB_RETENTION_AUDIT_PASSWORD_FILE: /run/secrets/db_retention_audit_password
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_retention_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_retention_secret_access_key
+      RETENTION_AFTER_DELIVERY: 2160h
+      RETENTION_UNORDERED: 720h
+      RETENTION_INTERVAL: 1h
+    secrets:
+      - db_retention_password
+      - db_retention_audit_password
+      - s3_retention_access_key_id
+      - s3_retention_secret_access_key
+    networks: [internal]
+    depends_on:
+      garage-init: { condition: service_completed_successfully }
+      postgres: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  # Monitoring (C19). Prometheus scrapes on the internal network only and is
+  # not published; Grafana is reached through nginx on the host's loopback.
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    secrets: [garage_metrics_token]
+    networks: [internal]
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512m, pids: 128 }
+
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      GF_SERVER_ROOT_URL: https://localhost:9446/
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_SNAPSHOTS_EXTERNAL_ENABLED: "false"
+      # No internet on the internal network: nothing to download.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_UNIFIED_ALERTING_MIN_INTERVAL: 10s
+      GF_LOG_MODE: console
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    tmpfs: ["/tmp:size=64m"]
+    secrets: [grafana_admin_password, db_grafana_reader_password, db_grafana_main_password]
+    networks: [internal]
+    depends_on: [prometheus, postgres, postgres-audit]
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  postgres-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres:5432/nugget?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
+    secrets: [db_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  postgres-replica-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres-replica:5432/nugget?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_exporter_password
+    secrets: [db_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres-replica: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  postgres-audit-exporter:
+    <<: *hardened
+    image: prometheuscommunity/postgres-exporter:v0.20.1@sha256:ac5ec343104fae0e2d84a27bb8d69b38430a11910c5382cad85d478d2bab713e
+    environment:
+      DATA_SOURCE_URI: postgres-audit:5432/audit?sslmode=disable
+      DATA_SOURCE_USER: exporter
+      DATA_SOURCE_PASS_FILE: /run/secrets/db_audit_exporter_password
+    secrets: [db_audit_exporter_password]
+    networks: [internal]
+    depends_on:
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  # The password is read from the secret inside the container, so it never
+  # shows in the compose file or in `docker inspect`.
+  valkey-exporter:
+    <<: *hardened
+    image: oliver006/redis_exporter:v1.95.0-alpine@sha256:19bb5c732f5812d5b60b2e0af3c6d82c5b3e418cd020068d65f588a56df4a118
+    environment:
+      REDIS_ADDR: redis://valkey:6379
+      REDIS_USER: metrics
+    entrypoint: ["sh", "-c"]
+    command:
+      - REDIS_PASSWORD="$$(cat /run/secrets/valkey_metrics_password)" exec /redis_exporter
+    secrets: [valkey_metrics_password]
+    networks: [internal]
+    depends_on:
+      valkey: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 64m, pids: 64 }
+
+  nginx-exporter:
+    <<: *hardened
+    image: nginx/nginx-prometheus-exporter:1.5.3@sha256:85666e7fde7e253f1c6d978f9a961245df4c9cdb7677e1866d9bb28e8f9ee41d
+    command: ["--nginx.scrape-uri=http://nginx:8081/stub_status"]
+    networks: [internal]
+    depends_on: [nginx]
+    deploy:
+      resources:
+        limits: { cpus: "0.25", memory: 32m, pids: 32 }
+
   # Only on the processing network: no database, Valkey or internet, and no
   # Garage key. It reads the files through the message's presigned URL (FC3,
-  # E4.2).
+  # E4.2). It runs under gVisor (E4.8): the STL parser talks to a user-space
+  # kernel, not to the host's. WORKER_RUNTIME=runc is the way out on a host
+  # without gVisor.
   worker:
     <<: *hardened
+    runtime: ${WORKER_RUNTIME:-runsc}
+    # gVisor's network stack does not reach Docker's embedded DNS, so the two
+    # names the worker needs are fixed here.
+    extra_hosts:
+      - rabbitmq:172.28.40.10
+      - garage:172.28.40.11
     build:
       context: ..
       dockerfile: deploy/Dockerfile
@@ -96,6 +465,33 @@ services:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 128 }
 
+  # Shared state of the API replicas: revoked sessions and per-user rate
+  # limits (E5.1, E5.2).
+  valkey:
+    <<: *hardened
+    image: valkey/valkey:9.1.1-alpine@sha256:15568b9cb7eb67f4aed4de018c23f13d344e0e6437b31fe8fb8823dc81ebb3a9
+    # Runs directly as the image's valkey user: the entrypoint does not need
+    # to chown or switch users, so no capability is required.
+    user: valkey
+    command: ["valkey-server", "/etc/valkey/valkey.conf"]
+    volumes:
+      - ./valkey/valkey.conf:/etc/valkey/valkey.conf:ro
+      - valkey:/data
+    secrets: [valkey_users_acl, valkey_health_password]
+    networks: [internal]
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          REDISCLI_AUTH="$$(cat /run/secrets/valkey_health_password)"
+          valkey-cli --user healthcheck --no-auth-warning ping | grep -q PONG
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 128m, pids: 64 }
+
   rabbitmq:
     <<: *limits
     image: rabbitmq:4.3.6-alpine@sha256:6931816af1a943f471c038b278835d36692d55dec769232739296bb91b7de0f5
@@ -107,7 +503,11 @@ services:
     secrets:
       - source: rabbitmq_users
         target: /etc/rabbitmq/definitions/01-users.json
-    networks: [internal, processing]
+    networks:
+      internal: {}
+      processing:
+        ipv4_address: 172.28.40.10
+      notify: {}
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
       interval: 5s
@@ -130,8 +530,11 @@ services:
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage:/var/lib/garage
-    secrets: [garage_rpc_secret, garage_admin_token]
-    networks: [internal, processing]
+    secrets: [garage_rpc_secret, garage_admin_token, garage_metrics_token]
+    networks:
+      internal: {}
+      processing:
+        ipv4_address: 172.28.40.11
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
@@ -148,7 +551,23 @@ services:
       GARAGE_ADMIN_TOKEN_FILE: /run/secrets/garage_admin_token
       S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_access_key_id
       S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_secret_access_key
-    secrets: [garage_admin_token, s3_access_key_id, s3_secret_access_key]
+      S3_PANEL_ACCESS_KEY_ID_FILE: /run/secrets/s3_panel_access_key_id
+      S3_PANEL_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_panel_secret_access_key
+      S3_RETENTION_ACCESS_KEY_ID_FILE: /run/secrets/s3_retention_access_key_id
+      S3_RETENTION_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_retention_secret_access_key
+      S3_BACKUP_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_BACKUP_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
+      S3_ENDPOINT: http://garage:3900
+    secrets:
+      - garage_admin_token
+      - s3_access_key_id
+      - s3_secret_access_key
+      - s3_panel_access_key_id
+      - s3_panel_secret_access_key
+      - s3_retention_access_key_id
+      - s3_retention_secret_access_key
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
     networks: [internal]
     depends_on: [garage]
     deploy:
@@ -164,7 +583,20 @@ services:
     volumes:
       - main:/var/lib/postgresql
       - ../migrations/main:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_password, db_files_password, db_queue_password]
+    secrets:
+      - postgres_password
+      - db_files_password
+      - db_queue_password
+      - db_orders_password
+      - db_panel_orders_password
+      - db_keycloak_password
+      - db_support_password
+      - db_panel_support_password
+      - db_retention_password
+      - db_grafana_main_password
+      - db_exporter_password
+      - db_backup_password
+      - db_replicator_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
@@ -174,6 +606,110 @@ services:
     deploy:
       resources:
         limits: { cpus: "1", memory: 512m, pids: 256 }
+
+  # Read replica by streaming (E3.4). On an empty volume it copies the primary
+  # with pg_basebackup, then follows it. It refuses every write.
+  postgres-replica:
+    <<: *limits
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    user: postgres
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        if [ ! -s "$$PGDATA/PG_VERSION" ]; then
+        mkdir -p "$$PGDATA" && chmod 700 "$$PGDATA" &&
+        PGPASSWORD="$$(cat /run/secrets/db_replicator_password)"
+        pg_basebackup -h postgres -U replicator -D "$$PGDATA" -R -X stream;
+        fi &&
+        exec postgres
+    volumes:
+      - replica:/var/lib/postgresql
+    secrets: [db_replicator_password]
+    networks: [internal]
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres", "-d", "nugget"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 256m, pids: 128 }
+
+  # Daily backup (E3.5): the main database from the replica, the trail and the
+  # files, encrypted with age to a public key, in a bucket only its key
+  # reaches. The image is the database's, for pg_dump.
+  backup:
+    <<: *hardened
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: backup
+    environment:
+      DB_HOST: postgres-replica
+      DB_BACKUP_PASSWORD_FILE: /run/secrets/db_backup_password
+      AUDIT_DB_HOST: postgres-audit
+      DB_AUDIT_BACKUP_PASSWORD_FILE: /run/secrets/db_audit_backup_password
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
+      AGE_RECIPIENT_FILE: /run/secrets/backup_age_recipient
+      BACKUP_INTERVAL: 24h
+    secrets:
+      - db_backup_password
+      - db_audit_backup_password
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
+      - backup_age_recipient
+    networks: [internal]
+    depends_on:
+      garage-init: { condition: service_completed_successfully }
+      postgres-replica: { condition: service_healthy }
+      postgres-audit: { condition: service_healthy }
+    deploy:
+      resources:
+        limits: { cpus: "0.5", memory: 512m, pids: 64 }
+
+  # `just restore-test` (E3.6): an empty server that lives only for the test,
+  # on its own network, and the only container that gets the age identity.
+  restore-db:
+    <<: *limits
+    image: postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395
+    profiles: [restore]
+    restart: "no"
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    tmpfs: ["/var/lib/postgresql:size=512m"]
+    networks: [restore]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  restore:
+    <<: *hardened
+    profiles: [restore]
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: backup
+    command: ["-restore-test"]
+    environment:
+      RESTORE_DB_HOST: restore-db
+      S3_ENDPOINT: http://garage:3900
+      S3_ACCESS_KEY_ID_FILE: /run/secrets/s3_backup_access_key_id
+      S3_SECRET_ACCESS_KEY_FILE: /run/secrets/s3_backup_secret_access_key
+      AGE_IDENTITY_FILE: /run/secrets/backup_age_identity
+    secrets:
+      - s3_backup_access_key_id
+      - s3_backup_secret_access_key
+      - backup_age_identity
+    networks: [internal, restore]
+    depends_on:
+      restore-db: { condition: service_healthy }
 
   # Separate instance: whoever compromises the main database cannot reach the
   # trail (C18).
@@ -186,7 +722,14 @@ services:
     volumes:
       - audit:/var/lib/postgresql
       - ../migrations/audit:/docker-entrypoint-initdb.d:ro
-    secrets: [postgres_audit_password, db_audit_password]
+    secrets:
+      - postgres_audit_password
+      - db_audit_password
+      - db_panel_audit_password
+      - db_retention_audit_password
+      - db_grafana_reader_password
+      - db_audit_exporter_password
+      - db_audit_backup_password
     networks: [internal]
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "audit"]
@@ -200,7 +743,7 @@ services:
   # Stage 5 verification (`just zap`): only starts with the profile, and sits
   # on the public network, like a customer. The token belongs to a test
   # customer with a short validity, and the reports go to
-  # evidencias/etapa-5/relatorios-zap.
+  # evidencias/etapa-5/$ZAP_OUT (relatorios-zap by default).
   zap:
     image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
     profiles: [zap]
@@ -209,7 +752,7 @@ services:
     volumes:
       - ../openapi.yaml:/zap/api/openapi.yaml:ro
       - ../secrets/zap_token:/zap/token:ro
-      - ../../../evidencias/etapa-5/relatorios-zap:/zap/wrk
+      - ../../../evidencias/etapa-5/${ZAP_OUT:-relatorios-zap}:/zap/wrk
     entrypoint: ["bash", "-c"]
     command:
       - >-
@@ -217,29 +760,97 @@ services:
         exec zap-api-scan.py -t /zap/api/openapi.yaml -f openapi -O https://nginx:8443
         -r zap-relatorio.html -J zap-relatorio.json -w zap-relatorio.md -I
 
+  # Baseline of the customer app (FE0): spider and passive checks, the ones
+  # the security headers answer.
+  zap-front:
+    image: zaproxy/zap-stable:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
+    profiles: [zap]
+    networks: [public]
+    depends_on: [nginx]
+    volumes:
+      - ../../../evidencias/etapa-5/${ZAP_OUT:-relatorios-zap}:/zap/wrk
+    command:
+      - zap-baseline.py
+      - -t
+      - https://nginx:8443/
+      - -r
+      - zap-front-relatorio.html
+      - -J
+      - zap-front-relatorio.json
+      - -w
+      - zap-front-relatorio.md
+      - -I
+
 networks:
-  # The only network with published ports, and only nginx is on it.
-  public: {}
-  # No way out to the internet.
+  # The only network with published ports besides the Mailpit inbox. The fixed
+  # subnet lets nginx allow the panel only from its gateway, which is where
+  # connections to the loopback-only port arrive. Every network has a fixed
+  # subnet, so none takes another's range.
+  public:
+    ipam:
+      config:
+        - subnet: 172.28.20.0/24
+          gateway: 172.28.20.1
+  # No way out to the internet. Dynamic addresses come from the upper half,
+  # so no container takes nginx's fixed one.
   internal:
     internal: true
     ipam:
       config:
         - subnet: 172.28.10.0/24
+          ip_range: 172.28.10.128/25
   # Worker, queue and storage. The worker reaches no database or internet (FC3).
   processing:
     internal: true
+    ipam:
+      config:
+        - subnet: 172.28.40.0/24
+          ip_range: 172.28.40.128/25
+  # API and panel to the partners (FC5), with no way out to the internet.
+  partners:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.50.0/24
+  # Queue, notifier and mail server only (E8.4).
+  notify:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.60.0/24
+  # The restore test's temporary server and nothing else (E3.6).
+  restore:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.70.0/24
+  # Only for the Mailpit inbox published on the host's loopback.
+  mailui:
+    ipam:
+      config:
+        - subnet: 172.28.30.0/24
 
 volumes:
   main: {}
   audit: {}
   garage: {}
   rabbitmq: {}
+  valkey: {}
+  prometheus: {}
+  grafana: {}
+  replica: {}
 
 secrets:
   tls_crt: { file: ../secrets/tls.crt }
+  tls_ca: { file: ../secrets/tls_ca.pem }
+  partner_payments_api_key: { file: ../secrets/partner_payments_api_key }
+  partner_carrier_api_key_api: { file: ../secrets/partner_carrier_api_key_api }
+  partner_carrier_api_key_panel: { file: ../secrets/partner_carrier_api_key_panel }
+  partner_payments_webhook_secret: { file: ../secrets/partner_payments_webhook_secret }
+  partner_shipping_webhook_secret: { file: ../secrets/partner_shipping_webhook_secret }
   tls_key: { file: ../secrets/tls.key }
-  auth_public_key: { file: ../secrets/auth_ed25519.pub.pem }
+  db_keycloak_password: { file: ../secrets/db_keycloak_password }
+  keycloak_realm: { file: ../secrets/keycloak_realm.json }
   postgres_password: { file: ../secrets/postgres_password }
   postgres_audit_password: { file: ../secrets/postgres_audit_password }
   db_files_password: { file: ../secrets/db_files_password }
@@ -249,6 +860,38 @@ secrets:
   garage_admin_token: { file: ../secrets/garage_admin_token }
   s3_access_key_id: { file: ../secrets/s3_access_key_id }
   s3_secret_access_key: { file: ../secrets/s3_secret_access_key }
+  s3_panel_access_key_id: { file: ../secrets/s3_panel_access_key_id }
+  s3_panel_secret_access_key: { file: ../secrets/s3_panel_secret_access_key }
+  db_orders_password: { file: ../secrets/db_orders_password }
+  db_panel_orders_password: { file: ../secrets/db_panel_orders_password }
   rabbitmq_api_password: { file: ../secrets/rabbitmq_api_password }
   rabbitmq_worker_password: { file: ../secrets/rabbitmq_worker_password }
   rabbitmq_users: { file: ../secrets/rabbitmq_users.json }
+  valkey_api_password: { file: ../secrets/valkey_api_password }
+  valkey_health_password: { file: ../secrets/valkey_health_password }
+  valkey_users_acl: { file: ../secrets/valkey_users.acl }
+  valkey_panel_password: { file: ../secrets/valkey_panel_password }
+  db_panel_audit_password: { file: ../secrets/db_panel_audit_password }
+  keycloak_panel_admin_secret: { file: ../secrets/keycloak_panel_admin_secret }
+  rabbitmq_panel_password: { file: ../secrets/rabbitmq_panel_password }
+  rabbitmq_notifier_password: { file: ../secrets/rabbitmq_notifier_password }
+  db_support_password: { file: ../secrets/db_support_password }
+  db_panel_support_password: { file: ../secrets/db_panel_support_password }
+  db_retention_password: { file: ../secrets/db_retention_password }
+  db_retention_audit_password: { file: ../secrets/db_retention_audit_password }
+  s3_retention_access_key_id: { file: ../secrets/s3_retention_access_key_id }
+  s3_retention_secret_access_key: { file: ../secrets/s3_retention_secret_access_key }
+  grafana_admin_password: { file: ../secrets/grafana_admin_password }
+  db_grafana_main_password: { file: ../secrets/db_grafana_main_password }
+  db_grafana_reader_password: { file: ../secrets/db_grafana_reader_password }
+  db_exporter_password: { file: ../secrets/db_exporter_password }
+  db_audit_exporter_password: { file: ../secrets/db_audit_exporter_password }
+  valkey_metrics_password: { file: ../secrets/valkey_metrics_password }
+  garage_metrics_token: { file: ../secrets/garage_metrics_token }
+  db_backup_password: { file: ../secrets/db_backup_password }
+  db_audit_backup_password: { file: ../secrets/db_audit_backup_password }
+  db_replicator_password: { file: ../secrets/db_replicator_password }
+  s3_backup_access_key_id: { file: ../secrets/s3_backup_access_key_id }
+  s3_backup_secret_access_key: { file: ../secrets/s3_backup_secret_access_key }
+  backup_age_recipient: { file: ../secrets/backup_age_recipient }
+  backup_age_identity: { file: ../secrets/backup_age_identity }

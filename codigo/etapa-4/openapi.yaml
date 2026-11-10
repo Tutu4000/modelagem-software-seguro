@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: nugget-machine — public API
-  version: 0.3.0
+  version: 0.8.0
   description: >
     Customer routes. The panel routes live in another binary and do not exist
     here. Errors follow Problem Details (RFC 9457), without the internal cause.
@@ -37,7 +37,9 @@ paths:
         "422":
           $ref: "#/components/responses/Problem"
         "429":
-          description: Rate limit exceeded
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/files/{id}:
     get:
       summary: Processing status of one of the customer's own files
@@ -54,12 +56,17 @@ paths:
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
   /api/v1/files/{id}/download:
     get:
       summary: Presigned URL to download one of the customer's own files
       description: >
         Only the owner gets the URL (RS01). Someone else's file and a missing
-        file get the same 403 response. The URL is valid for 5 minutes.
+        file get the same 403 response. The URL is valid for 5 minutes. A
+        file the retention already deleted gets 410 file_purged.
       parameters:
         - $ref: "#/components/parameters/FileID"
       responses:
@@ -78,13 +85,519 @@ paths:
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
+        "410":
+          description: Deleted by the retention policy (file_purged)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /api/v1/catalog:
+    get:
+      summary: Active price table, to build the order form
+      responses:
+        "200":
+          description: Materials, colors, qualities, finishings, setup fee and volume discounts
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [version, currency, rules]
+                properties:
+                  version:
+                    type: integer
+                  currency:
+                    type: string
+                    example: BRL
+                  rules:
+                    $ref: "#/components/schemas/PriceRules"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders:
+    post:
+      summary: Quote an order from one of the customer's processed files
+      description: >
+        The price is computed only on the server, from the model volume and
+        the active price table (CA03). The body has no price field, and any
+        unknown field (such as total_cents or status) is refused with 400.
+        The shipping price is quoted by the carrier for the address and
+        added after the volume discount. The quote holds for 24 hours. The
+        account needs a verified e-mail: it is where the notices and the
+        address confirmations go.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [file_id, material, color, quality, finishing, quantity, shipping]
+              properties:
+                file_id:
+                  type: string
+                  format: uuid
+                material:
+                  type: string
+                color:
+                  type: string
+                quality:
+                  type: string
+                finishing:
+                  type: string
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000
+                shipping:
+                  $ref: "#/components/schemas/Address"
+      responses:
+        "201":
+          description: Order quoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The file is not processed yet (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/PartnerUnavailable"
+    get:
+      summary: The customer's orders, newest first (RF09)
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}:
+    get:
+      summary: One of the customer's orders, with its history, review, payment and tracking (RF12, RF20)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/submit:
+    post:
+      summary: Send a quoted order to technical review
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: Order awaiting review
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order is not quoted (conflict) or the quote expired (quote_expired)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/payment:
+    post:
+      summary: Pay an approved order through the gateway (RF08)
+      description: >
+        Creates the charge for the order total computed on the server. The
+        answer is pending: the order becomes paid only when the gateway's
+        signed notification arrives (see the callback). Calling again while
+        the charge is live returns the same charge.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "202":
+          description: Charge pending at the gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Payment"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order is not awaiting payment (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "502":
+          $ref: "#/components/responses/PartnerUnavailable"
+      callbacks:
+        paymentSucceeded:
+          "https://localhost/api/v1/webhooks/payments":
+            post:
+              $ref: "#/paths/~1api~1v1~1webhooks~1payments/post"
+  /api/v1/orders/{id}/cancel:
+    post:
+      summary: Cancel an order, up to paid (RF10)
+      description: >
+        Only the owner. From quoted, awaiting_review or awaiting_payment
+        (without a charge in flight) the order is cancelled at once. A paid
+        order is cancelled and refunded at the gateway; if the gateway does
+        not answer, the answer is 202 with the refund pending, and calling
+        again finishes it. From production on, 409: the support handles it.
+        The customer gets a confirmation e-mail.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Order cancelled, and refunded when it was paid
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancellation"
+        "202":
+          description: Order cancelled, refund pending at the gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Cancellation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The order cannot be cancelled from its status, or a payment is in flight (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/address-change:
+    get:
+      summary: The address change support proposed, waiting for the code (C21)
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      responses:
+        "200":
+          description: The pending change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddressChange"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: There is no pending change (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/orders/{id}/address-change/confirm:
+    post:
+      summary: Confirm the address change with the code sent to the registered e-mail (C21)
+      description: >
+        Support alone cannot change a delivery address: the change only
+        applies when the owner, logged in, types the 8-digit code sent to the
+        registered e-mail. The code holds for 30 minutes; a wrong code gets
+        400 invalid_code, and the fifth wrong code locks the change (409). No
+        change applies after the dispatch.
+      parameters:
+        - $ref: "#/components/parameters/OrderID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [code]
+              properties:
+                code:
+                  type: string
+                  pattern: "^[0-9]{8}$"
+      responses:
+        "200":
+          description: Address changed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AddressChange"
+        "400":
+          description: Wrong code (invalid_code) or invalid body (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: No pending change, or it expired, was locked or the order was dispatched (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets:
+    post:
+      summary: Open a support ticket, optionally about one of the customer's orders (RF11)
+      description: >
+        At most 10 tickets not closed per customer. The texts are plain text,
+        kept as typed: a front-end must show them as text, never as HTML.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [subject, message]
+              properties:
+                order_id:
+                  type: string
+                  format: uuid
+                subject:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                message:
+                  type: string
+                  minLength: 1
+                  maxLength: 2000
+      responses:
+        "201":
+          description: Ticket opened
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          description: The order is not the customer's
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "409":
+          description: Too many open tickets (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+    get:
+      summary: The customer's tickets, newest first
+      responses:
+        "200":
+          description: Tickets, without the messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets/{id}:
+    get:
+      summary: One of the customer's tickets, with the messages
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      responses:
+        "200":
+          description: The ticket
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/tickets/{id}/messages:
+    post:
+      summary: Add a message to one of the customer's tickets
+      parameters:
+        - $ref: "#/components/parameters/TicketID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TicketMessageRequest"
+      responses:
+        "200":
+          description: The ticket, open again, with the messages
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Ticket"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          description: The ticket is closed (conflict)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+  /api/v1/webhooks/payments:
+    post:
+      summary: Payment notification from the gateway (C14)
+      description: >
+        Public route with no bearer token: the authentication is the
+        X-Nugget-Signature header. A replayed event ID answers 200 with
+        status duplicate and changes nothing. An event whose charge, order or
+        amount does not match the order answers 400 and is audited as
+        payment.rejected.
+      security:
+        - webhookSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PaymentEvent"
+      responses:
+        "200":
+          $ref: "#/components/responses/WebhookAccepted"
+        "400":
+          description: Bad signature (invalid_signature) or an event that does not match (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
+  /api/v1/webhooks/shipping:
+    post:
+      summary: Pickup and delivery notifications from the carrier (C15)
+      description: >
+        Same scheme as the payments webhook, with the carrier's own secret.
+        shipment.picked_up moves the order from in_production to shipped and
+        shipment.delivered from shipped to delivered. shipment.exception, a
+        problem on the way (RF15), keeps the order shipped and tells the
+        customer. The shipment must be the one booked for the order.
+      security:
+        - webhookSignature: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShippingEvent"
+      responses:
+        "200":
+          $ref: "#/components/responses/WebhookAccepted"
+        "400":
+          description: Bad signature (invalid_signature) or an event that does not match (invalid_request)
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/Problem"
 components:
   securitySchemes:
+    # Access token issued by Keycloak (realm "nugget") with audience "api"
+    # and the realm role "customer". Browser apps use the "web" client with
+    # authorization code + PKCE.
     bearerAuth:
       type: http
       scheme: bearer
       bearerFormat: JWT
+    # t=<unix seconds>,v1=<hex HMAC-SHA256 of "<t>.<raw body>"> with the
+    # partner's secret. Timestamps more than 5 minutes off are refused.
+    webhookSignature:
+      type: apiKey
+      in: header
+      name: X-Nugget-Signature
+    oidc:
+      type: openIdConnect
+      openIdConnectUrl: https://localhost:8444/realms/nugget/.well-known/openid-configuration
   parameters:
+    OrderID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    TicketID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
     FileID:
       name: id
       in: path
@@ -94,12 +607,201 @@ components:
         format: uuid
   responses:
     Problem:
-      description: Error in the Problem Details format
+      description: >
+        Error in the Problem Details format. A 401 also covers a token whose
+        session was logged out or revoked. A 503 means the session store is
+        down: the API fails closed instead of trusting the token.
       content:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    RateLimited:
+      description: >
+        Rate limit exceeded: per IP at nginx, or per user (60 requests per
+        minute) across all replicas, with code rate_limited.
+      headers:
+        Retry-After:
+          description: Seconds until the user may try again
+          schema:
+            type: integer
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PartnerUnavailable:
+      description: >
+        The gateway or the carrier did not answer (partner_unavailable). The
+        order stays as it was (D03).
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    WebhookAccepted:
+      description: Event applied, or a replay of one already applied
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [applied, duplicate]
   schemas:
+    Address:
+      type: object
+      description: >
+        The minimum to deliver (LGPD). Shown to the customer, support and
+        admin, never to the technician, and sent to the carrier only at
+        pickup.
+      additionalProperties: false
+      required: [recipient, street, number, city, state, postal_code]
+      properties:
+        recipient:
+          type: string
+          minLength: 1
+          maxLength: 120
+        street:
+          type: string
+          minLength: 1
+          maxLength: 120
+        number:
+          type: string
+          minLength: 1
+          maxLength: 120
+        city:
+          type: string
+          minLength: 1
+          maxLength: 120
+        state:
+          type: string
+          pattern: "^[A-Z]{2}$"
+        postal_code:
+          type: string
+          pattern: "^[0-9]{5}-?[0-9]{3}$"
+    Payment:
+      type: object
+      required: [charge_id, amount_cents, status, created_at]
+      properties:
+        charge_id:
+          type: string
+        amount_cents:
+          type: integer
+        status:
+          type: string
+          enum: [pending, succeeded, refund_pending, refunded]
+        refund_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    Cancellation:
+      type: object
+      required: [id, status, payment]
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [cancelled]
+        payment:
+          allOf:
+            - $ref: "#/components/schemas/Payment"
+          nullable: true
+    AddressChange:
+      type: object
+      required: [id, address, expires_at, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        address:
+          $ref: "#/components/schemas/Address"
+        expires_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, confirmed]
+    Ticket:
+      type: object
+      required: [id, order_id, subject, status, created_at, updated_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        order_id:
+          type: string
+          format: uuid
+          nullable: true
+        subject:
+          type: string
+        status:
+          type: string
+          enum: [open, answered, closed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        messages:
+          type: array
+          items:
+            type: object
+            required: [id, author_kind, body, created_at]
+            properties:
+              id:
+                type: string
+                format: uuid
+              author_kind:
+                type: string
+                enum: [customer, staff]
+              body:
+                type: string
+                description: Plain text, as typed. Show it as text, never as HTML.
+              created_at:
+                type: string
+                format: date-time
+    TicketMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 2000
+    PaymentEvent:
+      type: object
+      required: [event_id, type, charge_id, order_id, amount_cents]
+      properties:
+        event_id:
+          type: string
+        type:
+          type: string
+          enum: [payment.succeeded]
+        charge_id:
+          type: string
+        order_id:
+          type: string
+          format: uuid
+        amount_cents:
+          type: integer
+    ShippingEvent:
+      type: object
+      required: [event_id, type, shipment_id, order_id]
+      properties:
+        event_id:
+          type: string
+        type:
+          type: string
+          enum: [shipment.picked_up, shipment.delivered, shipment.exception]
+        shipment_id:
+          type: string
+        order_id:
+          type: string
+          format: uuid
     UploadAccepted:
       type: object
       required: [id, status]
@@ -118,9 +820,11 @@ components:
           format: uuid
         status:
           type: string
-          enum: [waiting, processing, done, failed]
+          enum: [waiting, processing, done, failed, purged]
+          description: purged means the retention deleted the file (E8.5)
         result:
           type: object
+          required: [volume_mm3, bbox_mm]
           properties:
             volume_mm3:
               type: number
@@ -130,6 +834,144 @@ components:
                 type: number
               minItems: 3
               maxItems: 3
+    PriceRules:
+      type: object
+      required: [materials, qualities, finishings, setup_cents, discounts]
+      properties:
+        materials:
+          type: object
+          additionalProperties:
+            type: object
+            required: [name, cents_per_cm3, colors]
+            properties:
+              name:
+                type: string
+              cents_per_cm3:
+                type: integer
+              colors:
+                type: array
+                items:
+                  type: string
+        qualities:
+          type: object
+          description: Multiplier in per mille (1000 keeps the material price)
+          additionalProperties:
+            type: integer
+        finishings:
+          type: object
+          description: Cents per unit
+          additionalProperties:
+            type: integer
+        setup_cents:
+          type: integer
+        discounts:
+          type: array
+          items:
+            type: object
+            required: [min_quantity, percent_off]
+            properties:
+              min_quantity:
+                type: integer
+              percent_off:
+                type: integer
+    Order:
+      type: object
+      required:
+        - id
+        - file_id
+        - material
+        - color
+        - quality
+        - finishing
+        - quantity
+        - price_table_version
+        - unit_cents
+        - discount_cents
+        - shipping_cents
+        - total_cents
+        - currency
+        - status
+        - quote_expires_at
+        - created_at
+        - dfm_flags
+      properties:
+        id:
+          type: string
+          format: uuid
+        file_id:
+          type: string
+          format: uuid
+        material:
+          type: string
+        color:
+          type: string
+        quality:
+          type: string
+        finishing:
+          type: string
+        quantity:
+          type: integer
+        price_table_version:
+          type: integer
+        unit_cents:
+          type: integer
+        discount_cents:
+          type: integer
+        shipping_cents:
+          type: integer
+          description: Carrier quote, added after the discount
+        total_cents:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [quoted, awaiting_review, awaiting_payment, rejected, paid, in_production, shipped, delivered, cancelled]
+        quote_expires_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+        dfm_flags:
+          type: array
+          description: Manufacturability warnings (RF19), such as exceeds_build_volume
+          items:
+            type: string
+            enum: [exceeds_build_volume]
+        shipping:
+          $ref: "#/components/schemas/Address"
+        tracking_code:
+          type: string
+        payment:
+          $ref: "#/components/schemas/Payment"
+        history:
+          type: array
+          items:
+            type: object
+            required: [from, to, at]
+            properties:
+              from:
+                type: string
+                nullable: true
+              to:
+                type: string
+              at:
+                type: string
+                format: date-time
+        review:
+          type: object
+          nullable: true
+          required: [decision, report, reviewed_at]
+          properties:
+            decision:
+              type: string
+              enum: [approved, rejected]
+            report:
+              type: string
+            reviewed_at:
+              type: string
+              format: date-time
     Problem:
       type: object
       required: [type, title, status, code]

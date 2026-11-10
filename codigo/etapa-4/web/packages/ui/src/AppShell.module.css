@@ -1,0 +1,131 @@
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--navy-900);
+  color: var(--gray-000);
+}
+.barInner {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  height: var(--shell-height);
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  letter-spacing: 0.02em;
+}
+.brandMark {
+  width: 14px;
+  height: 14px;
+  background: var(--signal-600);
+}
+.nav {
+  display: none;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+}
+.actions {
+  display: none;
+  gap: var(--space-2);
+}
+.menuButton {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgb(255 255 255 / 30%);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.drawer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4) var(--space-4);
+  border-top: 1px solid rgb(255 255 255 / 15%);
+}
+.main {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+}
+.footer {
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+.footerInner {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: var(--space-4);
+}
+
+/* Navigation links rendered by the apps inside nav and drawer. */
+.nav a,
+.drawer a {
+  padding: var(--space-2) var(--space-3);
+  color: rgb(255 255 255 / 85%);
+  text-decoration: none;
+  font-size: var(--text-sm);
+}
+.nav a:hover,
+.drawer a:hover,
+.nav a[aria-current="page"],
+.drawer a[aria-current="page"] {
+  color: var(--gray-000);
+  background: rgb(255 255 255 / 10%);
+}
+.nav [aria-disabled="true"],
+.drawer [aria-disabled="true"] {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .nav,
+  .actions {
+    display: flex;
+  }
+  .menuButton,
+  .drawer {
+    display: none;
+  }
+}
+
+/* Hidden until it gets the keyboard focus, then above the bar. */
+.skip {
+  position: absolute;
+  left: var(--space-4);
+  top: -100px;
+  z-index: 20;
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+}
+.skip:focus {
+  top: var(--space-2);
+}
+.main:focus {
+  outline: none;
+}

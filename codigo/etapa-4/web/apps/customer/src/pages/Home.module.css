@@ -1,0 +1,46 @@
+.hero {
+  display: grid;
+  gap: var(--space-5);
+  padding: var(--space-6) 0 var(--space-5);
+}
+.hero h1 {
+  font-size: var(--text-xl);
+}
+.lead {
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  max-width: 40ch;
+}
+.drop {
+  display: grid;
+  place-items: center;
+  gap: var(--space-2);
+  min-height: 180px;
+  padding: var(--space-5);
+  border: 2px dashed var(--gray-400);
+  background: var(--gray-050);
+  color: var(--text-muted);
+  text-align: center;
+}
+.stepNumber {
+  font-family: var(--font-mono);
+  color: var(--signal-700);
+  font-weight: 600;
+}
+.materialPrice {
+  font-family: var(--font-mono);
+  color: var(--navy-900);
+}
+.section {
+  padding-top: var(--space-6);
+}
+@media (min-width: 1024px) {
+  .hero {
+    grid-template-columns: minmax(0, 1fr) 440px;
+    align-items: center;
+    padding: var(--space-8) 0 var(--space-6);
+  }
+  .hero h1 {
+    font-size: var(--text-2xl);
+  }
+}

@@ -17,19 +17,53 @@ const (
 	FileTooLarge     Code = "file_too_large"
 	InvalidSTL       Code = "invalid_stl"
 	TooManyTriangles Code = "too_many_triangles"
-	Internal         Code = "internal"
+	RateLimited      Code = "rate_limited"
+	Unavailable      Code = "unavailable"
+	InvalidRequest   Code = "invalid_request"
+	// MFARequired: the token does not prove a second factor (panel, D02).
+	MFARequired Code = "mfa_required"
+	// StepUpRequired: a critical operation needs a recent login (E6.4).
+	StepUpRequired Code = "step_up_required"
+	// JustificationRequired: a critical operation needs a written reason.
+	JustificationRequired Code = "justification_required"
+	IdPUnavailable        Code = "idp_unavailable"
+	// Conflict: the resource is not in the status the operation needs.
+	Conflict     Code = "conflict"
+	QuoteExpired Code = "quote_expired"
+	// PartnerUnavailable: the gateway or the carrier did not answer (D03).
+	PartnerUnavailable Code = "partner_unavailable"
+	// InvalidSignature: a webhook without a valid signature (C14, C15).
+	InvalidSignature Code = "invalid_signature"
+	// InvalidCode: a wrong confirmation code for an address change (C21).
+	InvalidCode Code = "invalid_code"
+	// FilePurged: the retention already deleted the file (E8.5).
+	FilePurged Code = "file_purged"
+	Internal   Code = "internal"
 )
 
 var catalog = map[Code]struct {
 	status int
 	title  string
 }{
-	Unauthenticated:  {http.StatusUnauthorized, "Authentication required"},
-	Forbidden:        {http.StatusForbidden, "Access denied"},
-	FileTooLarge:     {http.StatusRequestEntityTooLarge, "File too large"},
-	InvalidSTL:       {http.StatusUnprocessableEntity, "Invalid STL"},
-	TooManyTriangles: {http.StatusUnprocessableEntity, "STL with too many triangles"},
-	Internal:         {http.StatusInternalServerError, "Internal error"},
+	Unauthenticated:       {http.StatusUnauthorized, "Authentication required"},
+	Forbidden:             {http.StatusForbidden, "Access denied"},
+	FileTooLarge:          {http.StatusRequestEntityTooLarge, "File too large"},
+	InvalidSTL:            {http.StatusUnprocessableEntity, "Invalid STL"},
+	TooManyTriangles:      {http.StatusUnprocessableEntity, "STL with too many triangles"},
+	RateLimited:           {http.StatusTooManyRequests, "Too many requests"},
+	Unavailable:           {http.StatusServiceUnavailable, "Service unavailable"},
+	InvalidRequest:        {http.StatusBadRequest, "Invalid request"},
+	MFARequired:           {http.StatusUnauthorized, "Multi-factor authentication required"},
+	StepUpRequired:        {http.StatusUnauthorized, "Recent authentication required"},
+	JustificationRequired: {http.StatusUnprocessableEntity, "Justification required"},
+	IdPUnavailable:        {http.StatusBadGateway, "Identity provider unavailable"},
+	Conflict:              {http.StatusConflict, "Conflict with the current status"},
+	QuoteExpired:          {http.StatusConflict, "Quote expired"},
+	PartnerUnavailable:    {http.StatusBadGateway, "Partner unavailable"},
+	InvalidSignature:      {http.StatusBadRequest, "Invalid signature"},
+	InvalidCode:           {http.StatusBadRequest, "Invalid confirmation code"},
+	FilePurged:            {http.StatusGone, "File deleted by the retention policy"},
+	Internal:              {http.StatusInternalServerError, "Internal error"},
 }
 
 type Error struct {

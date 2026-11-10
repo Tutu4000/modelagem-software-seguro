@@ -59,3 +59,14 @@ func Parse(data []byte) (Validated, error) {
 }
 
 func expectedSize(n uint32) int64 { return headerSize + triangleSize*int64(n) }
+
+// HeaderSize is how many bytes Declared needs.
+const HeaderSize = headerSize
+
+// Declared reads the triangle count from the header and the exact size a file
+// with that header must have. It lets an upload be refused before its body is
+// read into memory.
+func Declared(header []byte) (triangles uint32, size int64) {
+	n := binary.LittleEndian.Uint32(header[80:headerSize])
+	return n, expectedSize(n)
+}

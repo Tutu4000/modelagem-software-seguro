@@ -1,0 +1,60 @@
+/* Design tokens. Square corners everywhere: --radius is 0 and no component
+   overrides it. */
+:root {
+  --radius: 0;
+
+  --navy-900: #0b1f3a;
+  --navy-800: #13294b;
+  --navy-700: #1d3a63;
+  /* 600 is the brand accent with no text on it (bars, marks, the focus
+     outline at 3:1). Text on orange and orange text use 700 and 800, at least
+     4.5:1 on white (WCAG 1.4.3). */
+  --signal-600: #f26b1d;
+  --signal-700: #c2410c;
+  --signal-800: #9a3412;
+  --signal-050: #fff1e8;
+
+  --gray-000: #ffffff;
+  --gray-050: #f5f6f8;
+  --gray-100: #eceef2;
+  --gray-200: #dde1e8;
+  --gray-400: #9aa3b2;
+  --gray-600: #5b6678;
+  --gray-900: #1c2430;
+
+  --tone-neutral: #5b6678;
+  --tone-info: #1f5fbf;
+  --tone-progress: #7a4fd1;
+  /* Every tone is text on white or on gray-050: at least 4.5:1. */
+  --tone-success: #17693a;
+  --tone-warning: #8a5a12;
+  --tone-danger: #c53030;
+
+  --bg: var(--gray-050);
+  --surface: var(--gray-000);
+  --text: var(--gray-900);
+  --text-muted: var(--gray-600);
+  --line: var(--gray-200);
+  --focus: var(--signal-600);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --text-xs: 0.75rem;
+  --text-sm: 0.875rem;
+  --text-md: 1rem;
+  --text-lg: 1.25rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.5rem;
+
+  --shell-height: 56px;
+  --content-max: 1280px;
+}

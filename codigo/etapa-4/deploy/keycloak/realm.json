@@ -1,0 +1,411 @@
+{
+  "realm": "nugget",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "rememberMe": false,
+  "passwordPolicy": "length(12) and notUsername",
+  "bruteForceProtected": true,
+  "permanentLockout": false,
+  "failureFactor": 5,
+  "waitIncrementSeconds": 60,
+  "maxFailureWaitSeconds": 900,
+  "maxDeltaTimeSeconds": 43200,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "defaultSignatureAlgorithm": "EdDSA",
+  "browserFlow": "browser-step-up",
+  "attributes": {
+    "acr.loa.map": "{\"1\":1,\"2\":2}"
+  },
+  "authenticationFlows": [
+    {
+      "alias": "browser-step-up",
+      "description": "Browser login with levels of authentication: level 1 is the password, level 2 adds TOTP (D02, E6.4)",
+      "providerId": "basic-flow",
+      "topLevel": true,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "auth-cookie", "authenticatorFlow": false, "requirement": "ALTERNATIVE", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up forms", "requirement": "ALTERNATIVE", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up forms",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up level 1", "requirement": "CONDITIONAL", "priority": 10, "userSetupAllowed": false},
+        {"authenticatorFlow": true, "flowAlias": "browser-step-up level 2", "requirement": "CONDITIONAL", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up level 1",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "conditional-level-of-authentication", "authenticatorConfig": "level-1", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "auth-username-password-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false}
+      ]
+    },
+    {
+      "alias": "browser-step-up level 2",
+      "providerId": "basic-flow",
+      "topLevel": false,
+      "builtIn": false,
+      "authenticationExecutions": [
+        {"authenticator": "conditional-level-of-authentication", "authenticatorConfig": "level-2", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 10, "userSetupAllowed": false},
+        {"authenticator": "auth-otp-form", "authenticatorFlow": false, "requirement": "REQUIRED", "priority": 20, "userSetupAllowed": false}
+      ]
+    }
+  ],
+  "authenticatorConfig": [
+    {"alias": "level-1", "config": {"loa-condition-level": "1", "loa-max-age": "36000"}},
+    {"alias": "level-2", "config": {"loa-condition-level": "2", "loa-max-age": "36000"}}
+  ],
+  "browserSecurityHeaders": {
+    "contentSecurityPolicy": "frame-src 'self'; frame-ancestors 'self' https://{{PUBLIC_HOST}} https://{{PUBLIC_HOST}}:9445; object-src 'none';",
+    "xFrameOptions": "",
+    "xContentTypeOptions": "nosniff",
+    "xRobotsTag": "none",
+    "strictTransportSecurity": "max-age=31536000"
+  },
+  "otpPolicyType": "totp",
+  "otpPolicyAlgorithm": "HmacSHA1",
+  "otpPolicyDigits": 6,
+  "otpPolicyPeriod": 30,
+  "roles": {
+    "realm": [
+      {"name": "customer", "description": "Uploads, configures, pays and tracks their own orders"},
+      {"name": "technician", "description": "Reviews and approves the orders assigned to them"},
+      {"name": "support", "description": "Answers tickets and changes delivery data after confirmation"},
+      {"name": "admin", "description": "Manages prices, materials and internal accounts"}
+    ]
+  },
+  "components": {
+    "org.keycloak.keys.KeyProvider": [
+      {
+        "name": "eddsa-generated",
+        "providerId": "eddsa-generated",
+        "subComponents": {},
+        "config": {"priority": ["100"], "eddsaEllipticCurveKey": ["Ed25519"]}
+      },
+      {
+        "name": "hmac-generated-hs512",
+        "providerId": "hmac-generated",
+        "subComponents": {},
+        "config": {"priority": ["100"], "algorithm": ["HS512"]}
+      },
+      {
+        "name": "aes-generated",
+        "providerId": "aes-generated",
+        "subComponents": {},
+        "config": {"priority": ["100"]}
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "api",
+      "name": "Public API (audience only)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "panel",
+      "name": "Internal panel API (audience only)",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false
+    },
+    {
+      "clientId": "web",
+      "name": "Customer web app",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://{{PUBLIC_HOST}}/*"],
+      "webOrigins": ["https://{{PUBLIC_HOST}}"],
+      "frontchannelLogout": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://{{PUBLIC_HOST}}/*",
+        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {"included.client.audience": "api", "access.token.claim": "true", "id.token.claim": "false"}
+        }
+      ]
+    },
+    {
+      "clientId": "panel-web",
+      "name": "Internal panel web app",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["https://localhost:9445/*"],
+      "webOrigins": ["https://localhost:9445"],
+      "frontchannelLogout": false,
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "https://localhost:9445/*",
+        "backchannel.logout.url": "http://panel:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true",
+        "backchannel.logout.revoke.offline.tokens": "true",
+        "default.acr.values": "2",
+        "minimum.acr.value": "2"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-panel",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {"included.client.audience": "panel", "access.token.claim": "true", "id.token.claim": "false"}
+        }
+      ]
+    },
+    {
+      "clientId": "e2e",
+      "name": "Tests and tools (local realm only)",
+      "description": "Password grant for the e2e tests, the seed and ZAP. Must never exist outside the local environment.",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "{{E2E_CLIENT_SECRET}}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "attributes": {
+        "backchannel.logout.url": "http://api:8090/oidc/backchannel-logout",
+        "backchannel.logout.session.required": "true"
+      },
+      "protocolMappers": [
+        {
+          "name": "audience-api",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "config": {"included.client.audience": "api", "access.token.claim": "true", "id.token.claim": "false"}
+        }
+      ]
+    },
+    {
+      "clientId": "panel-admin",
+      "name": "Panel service account (Keycloak Admin API)",
+      "description": "Used only by the panel to log out and disable a user in an incident (realm-management/manage-users, the narrowest Keycloak role that can do it) and to list the technicians (view-realm, read-only, which Keycloak requires to read the users of a role).",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "{{PANEL_ADMIN_SECRET}}",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "frontchannelLogout": false
+    }
+  ],
+  "users": [
+    {
+      "username": "service-account-panel-admin",
+      "enabled": true,
+      "serviceAccountClientId": "panel-admin",
+      "clientRoles": {"realm-management": ["manage-users", "view-realm"]}
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0a01",
+      "username": "customer-a",
+      "email": "customer-a@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "A",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0b02",
+      "username": "customer-b",
+      "email": "customer-b@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "B",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0c03",
+      "username": "customer-c",
+      "email": "customer-c@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "C",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0d04",
+      "username": "customer-d",
+      "email": "customer-d@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "D",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0e05",
+      "username": "customer-e",
+      "email": "customer-e@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "E",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d0f06",
+      "username": "customer-f",
+      "email": "customer-f@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "F",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1007",
+      "username": "customer-g",
+      "email": "customer-g@nugget.local",
+      "emailVerified": true,
+      "firstName": "Customer",
+      "lastName": "G",
+      "enabled": true,
+      "realmRoles": ["customer"],
+      "credentials": [{"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false}]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a01",
+      "username": "technician",
+      "email": "technician@nugget.local",
+      "emailVerified": true,
+      "firstName": "Production",
+      "lastName": "Technician",
+      "enabled": true,
+      "realmRoles": ["technician"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1b02",
+      "username": "support",
+      "email": "support@nugget.local",
+      "emailVerified": true,
+      "firstName": "Support",
+      "lastName": "Agent",
+      "enabled": true,
+      "realmRoles": ["support"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c03",
+      "username": "admin",
+      "email": "admin@nugget.local",
+      "emailVerified": true,
+      "firstName": "Platform",
+      "lastName": "Admin",
+      "enabled": true,
+      "realmRoles": ["admin"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1a02",
+      "username": "technician-2",
+      "email": "technician-2@nugget.local",
+      "emailVerified": true,
+      "firstName": "Second",
+      "lastName": "Technician",
+      "enabled": true,
+      "realmRoles": ["technician"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    },
+    {
+      "id": "0b7e3a52-5f1d-4c3e-9a51-7f6a1c2d1c04",
+      "username": "admin-2",
+      "email": "admin-2@nugget.local",
+      "emailVerified": true,
+      "firstName": "Second",
+      "lastName": "Admin",
+      "enabled": true,
+      "realmRoles": ["admin"],
+      "credentials": [
+        {"type": "password", "value": "{{DEMO_PASSWORD}}", "temporary": false},
+        {
+          "type": "otp",
+          "userLabel": "demo",
+          "secretData": "{\"value\":\"{{TOTP_SECRET}}\"}",
+          "credentialData": "{\"subType\":\"totp\",\"digits\":6,\"counter\":0,\"period\":30,\"algorithm\":\"HmacSHA1\"}"
+        }
+      ]
+    }
+  ]
+}

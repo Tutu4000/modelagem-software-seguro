@@ -154,7 +154,12 @@ func (q *Rabbit) ConsumeResults(ctx context.Context) error {
 				_ = d.Reject(false)
 				continue
 			}
-			if err := q.handleResult(ctx, m); err != nil {
+			err := waitForTask(ctx, unknownTaskAttempts, unknownTaskWait, func() error { return q.handleResult(ctx, m) })
+			switch {
+			case errors.Is(err, errUnknownTask):
+				// The publishing transaction failed: the task never existed.
+				q.log.Warn("result for an unknown task", "task", m.TaskID)
+			case err != nil:
 				q.log.Error("failed to store the result", "task", m.TaskID, "error", err)
 				_ = d.Nack(false, true)
 				continue
@@ -162,6 +167,32 @@ func (q *Rabbit) ConsumeResults(ctx context.Context) error {
 			_ = d.Ack(false)
 		}
 	}
+}
+
+// The task is published before its transaction commits, and a small part is
+// processed in milliseconds: its result can arrive before the task is
+// visible. The consumer looks again for a while before it concludes the
+// transaction failed.
+const (
+	unknownTaskAttempts = 20
+	unknownTaskWait     = 100 * time.Millisecond
+)
+
+var errUnknownTask = errors.New("unknown task")
+
+// waitForTask runs fn again while it reports an unknown task, up to attempts
+// times in all.
+func waitForTask(ctx context.Context, attempts int, wait time.Duration, fn func() error) error {
+	err := fn()
+	for i := 1; i < attempts && errors.Is(err, errUnknownTask); i++ {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		err = fn()
+	}
+	return err
 }
 
 // handleResult is idempotent: only a task that is processing changes state,
@@ -177,8 +208,7 @@ func (q *Rabbit) handleResult(ctx context.Context, m ResultMessage) error {
 
 	owner, err := qtx.TaskOwner(ctx, m.TaskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		q.log.Warn("result for an unknown task", "task", m.TaskID)
-		return nil
+		return errUnknownTask
 	}
 	if err != nil {
 		return err

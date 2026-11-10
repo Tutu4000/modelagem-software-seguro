@@ -8,10 +8,11 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdsa"
-	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha1" // #nosec G505 -- key identifiers only (RFC 5280)
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -29,6 +30,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"filippo.io/age"
 )
 
 type generator struct {
@@ -39,6 +42,8 @@ type generator struct {
 func main() {
 	dir := flag.String("dir", "secrets", "output directory")
 	force := flag.Bool("force", false, "regenerate secrets that already exist")
+	host := flag.String("host", "localhost", "public host name: certificate SAN and Keycloak redirect URIs")
+	realmTemplate := flag.String("realm", "deploy/keycloak/realm.json", "Keycloak realm template")
 	flag.Parse()
 
 	g := generator{dir: *dir, force: *force}
@@ -58,6 +63,38 @@ func main() {
 		"rabbitmq_api_password",
 		"rabbitmq_worker_password",
 		"garage_admin_token",
+		"db_keycloak_password",
+		"keycloak_demo_password",
+		"keycloak_totp_secret",
+		"keycloak_e2e_client_secret",
+		"valkey_api_password",
+		"valkey_health_password",
+		"valkey_panel_password",
+		"db_panel_audit_password",
+		"keycloak_panel_admin_secret",
+		"db_orders_password",
+		"db_panel_orders_password",
+		"partner_payments_api_key",
+		"partner_carrier_api_key_api",
+		"partner_carrier_api_key_panel",
+		"partner_payments_webhook_secret",
+		"partner_shipping_webhook_secret",
+		"rabbitmq_panel_password",
+		"rabbitmq_notifier_password",
+		"db_support_password",
+		"db_panel_support_password",
+		"db_retention_password",
+		"db_retention_audit_password",
+		"grafana_admin_password",
+		"db_grafana_main_password",
+		"db_grafana_reader_password",
+		"db_exporter_password",
+		"db_audit_exporter_password",
+		"valkey_metrics_password",
+		"garage_metrics_token",
+		"db_backup_password",
+		"db_audit_backup_password",
+		"db_replicator_password",
 	} {
 		g.once([]string{name}, func() map[string][]byte {
 			return map[string][]byte{name: randomText(32)}
@@ -68,21 +105,80 @@ func main() {
 	})
 	// Garage only imports keys in its own format: GK + 12 bytes in hex and a
 	// 32-byte secret in hex.
-	g.once([]string{"s3_access_key_id", "s3_secret_access_key"}, func() map[string][]byte {
+	for _, prefix := range []string{"s3", "s3_panel", "s3_retention", "s3_backup"} {
+		id, secret := prefix+"_access_key_id", prefix+"_secret_access_key"
+		g.once([]string{id, secret}, func() map[string][]byte {
+			return map[string][]byte{id: append([]byte("GK"), randomHex(12)...), secret: randomHex(32)}
+		})
+	}
+	// The chain is renewed on its own when it no longer fits: no AKI, close
+	// to expiring or for another host. The other secrets stay.
+	if !g.force && g.allExist([]string{"tls_ca.pem", "tls.crt", "tls.key"}) && !tlsCurrent(g.read("tls_ca.pem"), g.read("tls.crt"), *host, time.Now()) {
+		fmt.Println("renewed  tls_ca.pem, tls.crt, tls.key")
+		for name, data := range tlsChain(*host) {
+			g.write(name, data)
+		}
+	}
+	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, func() map[string][]byte { return tlsChain(*host) })
+	// The backups are encrypted to the public key only: the backup service
+	// never holds what decrypts them. The identity goes only to the restore
+	// test (E3.5, E3.6).
+	g.once([]string{"backup_age_identity", "backup_age_recipient"}, func() map[string][]byte {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			log.Fatal(err)
+		}
 		return map[string][]byte{
-			"s3_access_key_id":     append([]byte("GK"), randomHex(12)...),
-			"s3_secret_access_key": randomHex(32),
+			"backup_age_identity":  []byte(id.String() + "\n"),
+			"backup_age_recipient": []byte(id.Recipient().String() + "\n"),
 		}
 	})
-	g.once([]string{"devtoken_ed25519.pem", "auth_ed25519.pub.pem"}, ed25519Pair)
-	g.once([]string{"tls_ca.pem", "tls.crt", "tls.key"}, tlsChain)
 
-	// Derived from the passwords: always regenerated, so it never goes stale.
-	users, err := rabbitUsers(g.read("rabbitmq_api_password"), g.read("rabbitmq_worker_password"))
+	// Derived from the secrets above: always regenerated, so they never go
+	// stale.
+	users, err := rabbitUsers(map[string][]byte{
+		"api":      g.read("rabbitmq_api_password"),
+		"worker":   g.read("rabbitmq_worker_password"),
+		"panel":    g.read("rabbitmq_panel_password"),
+		"notifier": g.read("rabbitmq_notifier_password"),
+	})
 	if err != nil {
 		log.Fatal(err)
 	}
 	g.write("rabbitmq_users.json", users)
+	g.write("valkey_users.acl", valkeyACL(g.read("valkey_api_password"), g.read("valkey_panel_password"),
+		g.read("valkey_health_password"), g.read("valkey_metrics_password")))
+	realm, err := renderRealm(*realmTemplate, map[string][]byte{
+		"PUBLIC_HOST":        []byte(*host),
+		"DEMO_PASSWORD":      g.read("keycloak_demo_password"),
+		"TOTP_SECRET":        g.read("keycloak_totp_secret"),
+		"E2E_CLIENT_SECRET":  g.read("keycloak_e2e_client_secret"),
+		"PANEL_ADMIN_SECRET": g.read("keycloak_panel_admin_secret"),
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	g.write("keycloak_realm.json", realm)
+}
+
+// renderRealm fills the {{NAME}} placeholders of the realm template. The
+// values are base64url, hex or a host name, so they need no JSON escaping, and
+// a placeholder left unfilled is an error.
+func renderRealm(path string, values map[string][]byte) ([]byte, error) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path given by whoever runs the tool
+	if err != nil {
+		return nil, err
+	}
+	for name, value := range values {
+		data = bytes.ReplaceAll(data, []byte("{{"+name+"}}"), value)
+	}
+	if i := bytes.Index(data, []byte("{{")); i >= 0 {
+		return nil, fmt.Errorf("%s: unfilled placeholder near %q", path, data[i:min(i+30, len(data))])
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("%s: the rendered realm is not valid JSON", path)
+	}
+	return data, nil
 }
 
 // once generates a group of files that depend on each other, such as the two
@@ -144,32 +240,16 @@ func randomHex(n int) []byte {
 	return []byte(hex.EncodeToString(randomBytes(n)))
 }
 
-func ed25519Pair() map[string][]byte {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		log.Fatal(err)
-	}
-	privDER, err := x509.MarshalPKCS8PrivateKey(priv)
-	if err != nil {
-		log.Fatal(err)
-	}
-	pubDER, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		log.Fatal(err)
-	}
-	return map[string][]byte{
-		"devtoken_ed25519.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privDER}),
-		"auth_ed25519.pub.pem": pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: pubDER}),
-	}
-}
-
 // tlsChain generates a local CA and the nginx certificate. The CA key is
-// discarded: to renew, run again with -force.
-func tlsChain() map[string][]byte {
+// discarded: a renewal makes a new CA, which the browsers must import again.
+// Both certificates carry their key identifiers, and the nginx one names its
+// CA's (AKI), which strict verifiers such as Python 3.14 require.
+func tlsChain(host string) map[string][]byte {
 	now := time.Now()
 	caKey := newECKey()
 	ca := &x509.Certificate{
 		SerialNumber:          serial(),
+		SubjectKeyId:          keyID(caKey),
 		Subject:               pkix.Name{CommonName: "nugget-machine local CA"},
 		NotBefore:             now.Add(-time.Hour),
 		NotAfter:              now.AddDate(1, 0, 0),
@@ -182,19 +262,32 @@ func tlsChain() map[string][]byte {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// Signing with the parsed CA as parent fills in the AuthorityKeyId.
+	caCert, err := x509.ParseCertificate(caDER)
+	if err != nil {
+		log.Fatal(err)
+	}
 
+	dnsNames := []string{"localhost", "nginx"}
+	ips := []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}
+	if ip := net.ParseIP(host); ip != nil {
+		ips = append(ips, ip)
+	} else if host != "localhost" {
+		dnsNames = append(dnsNames, host)
+	}
 	key := newECKey()
 	leaf := &x509.Certificate{
 		SerialNumber: serial(),
-		Subject:      pkix.Name{CommonName: "localhost"},
-		DNSNames:     []string{"localhost", "nginx"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		SubjectKeyId: keyID(key),
+		Subject:      pkix.Name{CommonName: host},
+		DNSNames:     dnsNames,
+		IPAddresses:  ips,
 		NotBefore:    now.Add(-time.Hour),
 		NotAfter:     now.AddDate(1, 0, 0),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
-	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, ca, &key.PublicKey, caKey)
+	leafDER, err := x509.CreateCertificate(rand.Reader, leaf, caCert, &key.PublicKey, caKey)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -207,6 +300,43 @@ func tlsChain() map[string][]byte {
 		"tls.crt":    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER}),
 		"tls.key":    pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER}),
 	}
+}
+
+// keyID is method 1 of RFC 5280, 4.2.1.2: the SHA-1 of the public key bits.
+// It names the key; it protects nothing.
+func keyID(k *ecdsa.PrivateKey) []byte {
+	pub, err := k.PublicKey.ECDH()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sum := sha1.Sum(pub.Bytes()) // #nosec G401 -- an identifier, not a signature or a MAC
+	return sum[:]
+}
+
+// tlsCurrent says whether the existing chain still serves: the nginx
+// certificate verifies against the CA, names it (AKI), covers the host and
+// holds for more than 30 days.
+func tlsCurrent(caPEM, crtPEM []byte, host string, now time.Time) bool {
+	ca, err1 := parsePEMCert(caPEM)
+	crt, err2 := parsePEMCert(crtPEM)
+	if err1 != nil || err2 != nil || len(crt.AuthorityKeyId) == 0 || !bytes.Equal(crt.AuthorityKeyId, ca.SubjectKeyId) {
+		return false
+	}
+	if now.Add(30 * 24 * time.Hour).After(crt.NotAfter) {
+		return false
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(ca)
+	_, err := crt.Verify(x509.VerifyOptions{Roots: pool, DNSName: host, CurrentTime: now})
+	return err == nil
+}
+
+func parsePEMCert(data []byte) (*x509.Certificate, error) {
+	b, _ := pem.Decode(data)
+	if b == nil {
+		return nil, errors.New("no PEM block")
+	}
+	return x509.ParseCertificate(b.Bytes)
 }
 
 func newECKey() *ecdsa.PrivateKey {
@@ -228,10 +358,13 @@ func serial() *big.Int {
 // rabbitUsers builds the part of the RabbitMQ definitions that holds secrets.
 // The topology lives in deploy/rabbitmq. Neither user can declare or delete
 // queues and exchanges (configure "^$"), and each one only publishes and
-// consumes what belongs to it (E4.1).
-func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
-	if len(apiPassword) == 0 || len(workerPassword) == 0 {
-		return nil, errors.New("empty RabbitMQ passwords")
+// consumes what belongs to it (E4.1). The panel only publishes notifications
+// and the notifier only consumes them (E8.4).
+func rabbitUsers(passwords map[string][]byte) ([]byte, error) {
+	for _, name := range []string{"api", "worker", "panel", "notifier"} {
+		if len(passwords[name]) == 0 {
+			return nil, fmt.Errorf("empty RabbitMQ password for %s", name)
+		}
 	}
 	type user struct {
 		Name      string   `json:"name"`
@@ -250,14 +383,42 @@ func rabbitUsers(apiPassword, workerPassword []byte) ([]byte, error) {
 	return json.MarshalIndent(map[string]any{
 		"vhosts": []map[string]string{{"name": "/"}},
 		"users": []user{
-			{"api", rabbitHash(apiPassword), algorithm, []string{}},
-			{"worker", rabbitHash(workerPassword), algorithm, []string{}},
+			{"api", rabbitHash(passwords["api"]), algorithm, []string{}},
+			{"worker", rabbitHash(passwords["worker"]), algorithm, []string{}},
+			{"panel", rabbitHash(passwords["panel"]), algorithm, []string{}},
+			{"notifier", rabbitHash(passwords["notifier"]), algorithm, []string{}},
 		},
 		"permissions": []permission{
-			{"api", "/", "^$", "^tasks$", "^results$"},
+			{"api", "/", "^$", "^(tasks|notifications)$", "^results$"},
 			{"worker", "/", "^$", "^results$", "^tasks$"},
+			{"panel", "/", "^$", "^notifications$", "^$"},
+			{"notifier", "/", "^$", "^$", "^notifications$"},
 		},
 	}, "", "  ")
+}
+
+// valkeyACL keeps only SHA-256 hashes of the passwords. The default user is
+// off, the API reaches only its own key prefixes with the commands it uses,
+// and the health check user can only PING (E5.1). The panel has a user of its
+// own with the same keys: it reads the revocations and writes the per-user
+// cut of an incident. The metrics user only reads the server statistics,
+// with no key at all.
+func valkeyACL(apiPassword, panelPassword, healthPassword, metricsPassword []byte) []byte {
+	hash := func(p []byte) string {
+		sum := sha256.Sum256(bytes.TrimSpace(p))
+		return hex.EncodeToString(sum[:])
+	}
+	const app = " resetkeys ~session:* ~ratelimit:* resetchannels -@all" +
+		" +get +mget +set +exists +incr +pexpire +pttl +eval +evalsha +ping +hello +client|setinfo"
+	return []byte(strings.Join([]string{
+		"user default off",
+		"user api on #" + hash(apiPassword) + app,
+		"user panel on #" + hash(panelPassword) + app,
+		"user healthcheck on #" + hash(healthPassword) + " resetkeys resetchannels -@all +ping",
+		"user metrics on #" + hash(metricsPassword) + " resetkeys resetchannels -@all" +
+			" +ping +info +hello +client|setinfo +config|get +latency|latest +slowlog|get +slowlog|len +memory|stats",
+		"",
+	}, "\n"))
 }
 
 // rabbitHash follows the RabbitMQ format: base64(salt + SHA-256(salt +

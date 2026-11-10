@@ -1,7 +1,8 @@
 // Command garage-init prepares Garage through the Admin API v2: node layout,
-// private bucket and the API key, with read and write only (E3.3). Running it
-// again has no effect. It exists because the Garage image has no shell for a
-// script.
+// private bucket and the API key, with read and write only (E3.3), plus the
+// panel's read-only key, the retention's key and the bucket's lifecycle rule
+// (E8.5). Running it again has no effect. It exists because the Garage image
+// has no shell for a script.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"nuggetmachine/internal/config"
+	"nuggetmachine/internal/storage"
 )
 
 type admin struct {
@@ -35,8 +37,23 @@ func main() {
 		http:  &http.Client{Timeout: 10 * time.Second},
 	}
 	bucket := env.String("S3_BUCKET", "files")
-	keyID := string(env.Secret("S3_ACCESS_KEY_ID"))
-	secret := string(env.Secret("S3_SECRET_ACCESS_KEY"))
+	apiKey := key{name: "api", write: true,
+		id: string(env.Secret("S3_ACCESS_KEY_ID")), secret: string(env.Secret("S3_SECRET_ACCESS_KEY"))}
+	// The panel only opens designs for the assigned technician: read only (D02).
+	panelKey := key{name: "panel", write: false,
+		id: string(env.Secret("S3_PANEL_ACCESS_KEY_ID")), secret: string(env.Secret("S3_PANEL_SECRET_ACCESS_KEY"))}
+	// The retention deletes objects. Garage has no delete-only permission, so
+	// the key can also write: an accepted risk, the key lives only in the
+	// retention container.
+	retentionKey := key{name: "retention", write: true,
+		id: string(env.Secret("S3_RETENTION_ACCESS_KEY_ID")), secret: string(env.Secret("S3_RETENTION_SECRET_ACCESS_KEY"))}
+	// The backup reads the files and writes only to its own bucket, which no
+	// other key can reach (E3.5).
+	backupBucket := env.String("BACKUP_BUCKET", "backups")
+	backupKey := key{name: "backup",
+		id: string(env.Secret("S3_BACKUP_ACCESS_KEY_ID")), secret: string(env.Secret("S3_BACKUP_SECRET_ACCESS_KEY"))}
+	s3Endpoint := env.String("S3_ENDPOINT", "http://garage:3900")
+	region := env.String("S3_REGION", "garage")
 	if err := env.Err(); err != nil {
 		log.Fatal(err)
 	}
@@ -52,19 +69,93 @@ func main() {
 	if err != nil {
 		log.Fatalf("bucket: %v", err)
 	}
-	if err := a.ensureKey(ctx, keyID, secret); err != nil {
-		log.Fatalf("key: %v", err)
+	for _, k := range []key{apiKey, panelKey, retentionKey} {
+		if err := a.grant(ctx, bucketID, k); err != nil {
+			log.Fatalf("key %s: %v", k.name, err)
+		}
+		log.Printf("Garage ready: bucket %q with key %s (%s), write=%v", bucket, k.id, k.name, k.write)
 	}
-	// No owner: the API key cannot change permissions or delete the bucket.
-	err = a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
-		"bucketId":    bucketID,
-		"accessKeyId": keyID,
-		"permissions": map[string]bool{"read": true, "write": true, "owner": false},
+	backupID, err := a.ensureBucket(ctx, backupBucket)
+	if err != nil {
+		log.Fatalf("bucket %s: %v", backupBucket, err)
+	}
+	readOnly := backupKey
+	readOnly.write = false
+	if err := a.grant(ctx, bucketID, readOnly); err != nil {
+		log.Fatalf("key backup on %s: %v", bucket, err)
+	}
+	readWrite := backupKey
+	readWrite.write = true
+	if err := a.grant(ctx, backupID, readWrite); err != nil {
+		log.Fatalf("key backup on %s: %v", backupBucket, err)
+	}
+	log.Printf("Garage ready: bucket %q with key %s (backup), read on %q", backupBucket, backupKey.id, bucket)
+
+	// The file rule is a safety net: the retention job deletes the designs
+	// much earlier, from the order dates (E8.5). The backups expire after 30
+	// days (E3.5).
+	for _, l := range []struct {
+		alias, id string
+		days      int32
+	}{{bucket, bucketID, 400}, {backupBucket, backupID, 30}} {
+		if err := a.lifecycle(ctx, l.id, l.alias, s3Endpoint, region, l.days); err != nil {
+			log.Fatalf("lifecycle of %s: %v", l.alias, err)
+		}
+		log.Printf("lifecycle applied: objects of %q expire after %d days, incomplete uploads after %d", l.alias, l.days, abortDays)
+	}
+}
+
+const abortDays = 1
+
+// lifecycle needs an owner key, which no application key is. A temporary one
+// is created, used once and deleted.
+func (a admin) lifecycle(ctx context.Context, bucketID, bucket, endpoint, region string, expireDays int32) error {
+	var k struct {
+		ID     string `json:"accessKeyId"`
+		Secret string `json:"secretAccessKey"`
+	}
+	if err := a.call(ctx, http.MethodPost, "/v2/CreateKey", map[string]string{"name": "garage-init-lifecycle"}, &k); err != nil {
+		return err
+	}
+	defer func() {
+		if err := a.call(ctx, http.MethodPost, "/v2/DeleteKey?id="+url.QueryEscape(k.ID), nil, nil); err != nil {
+			log.Printf("temporary key %s not deleted: %v", k.ID, err)
+		}
+	}()
+	if err := a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.ID,
+		// Garage refuses the lifecycle call to an owner-only key.
+		"permissions": map[string]bool{"read": true, "write": true, "owner": true},
+	}, nil); err != nil {
+		return err
+	}
+	owner := storage.NewS3(storage.S3Config{Bucket: bucket, Region: region, Endpoint: endpoint, PublicEndpoint: endpoint, AccessKey: k.ID, SecretKey: k.Secret})
+	return owner.SetLifecycle(ctx, expireDays, abortDays)
+}
+
+type key struct {
+	name, id, secret string
+	write            bool
+}
+
+// grant imports the key and sets exactly its permissions. No key is an owner:
+// none can change permissions or delete the bucket. AllowBucketKey only adds,
+// so what a key must not have is denied explicitly.
+func (a admin) grant(ctx context.Context, bucketID string, k key) error {
+	if err := a.ensureKey(ctx, k.id, k.secret, k.name); err != nil {
+		return err
+	}
+	err := a.call(ctx, http.MethodPost, "/v2/AllowBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.id,
+		"permissions": map[string]bool{"read": true, "write": k.write},
 	}, nil)
 	if err != nil {
-		log.Fatalf("key permission: %v", err)
+		return err
 	}
-	log.Printf("Garage ready: bucket %q with key %s (read and write)", bucket, keyID)
+	return a.call(ctx, http.MethodPost, "/v2/DenyBucketKey", map[string]any{
+		"bucketId": bucketID, "accessKeyId": k.id,
+		"permissions": map[string]bool{"write": !k.write, "owner": true},
+	}, nil)
 }
 
 func (a admin) waitUp(ctx context.Context) error {
@@ -129,7 +220,7 @@ func (a admin) ensureBucket(ctx context.Context, alias string) (string, error) {
 	return info.ID, err
 }
 
-func (a admin) ensureKey(ctx context.Context, id, secret string) error {
+func (a admin) ensureKey(ctx context.Context, id, secret, name string) error {
 	err := a.call(ctx, http.MethodGet, "/v2/GetKeyInfo?id="+url.QueryEscape(id), nil, nil)
 	if !errors.Is(err, errNotFound) {
 		return err
@@ -137,7 +228,7 @@ func (a admin) ensureKey(ctx context.Context, id, secret string) error {
 	return a.call(ctx, http.MethodPost, "/v2/ImportKey", map[string]string{
 		"accessKeyId":     id,
 		"secretAccessKey": secret,
-		"name":            "api",
+		"name":            name,
 	}, nil)
 }
 

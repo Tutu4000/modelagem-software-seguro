@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"golang.org/x/sync/semaphore"
 
 	"nuggetmachine/internal/audit"
 	"nuggetmachine/internal/auth"
@@ -29,6 +30,10 @@ const downloadTTL = 5 * time.Minute // RS01
 
 // FileID is also the object key in the storage. It is a UUIDv4 because the
 // customer sees it: a v7 would reveal when each design was uploaded (C02).
+// StatusPurged replaces the processing status once the retention deleted the
+// file.
+const StatusPurged = "purged"
+
 type FileID uuid.UUID
 
 func NewFileID() FileID { return FileID(uuid.New()) }
@@ -45,6 +50,8 @@ type File struct {
 	Owner  auth.UserID
 	Size   int64
 	SHA256 [32]byte
+	// Purged means the retention deleted the object (E8.5).
+	Purged bool
 }
 
 // Repo has no lookup by ID alone: every read goes through the central
@@ -111,6 +118,9 @@ type Handler struct {
 	Queue Enqueuer
 	Tasks TaskReader
 	Audit *audit.Logger
+
+	budgetOnce sync.Once
+	budget     *semaphore.Weighted
 }
 
 // Status shows the progress to the owner only, with the same denial as
@@ -130,6 +140,10 @@ func (h *Handler) Status(c *gin.Context) {
 		return
 	}
 
+	if f.Purged {
+		c.JSON(http.StatusOK, gin.H{"id": f.ID.String(), "status": StatusPurged})
+		return
+	}
 	st, err := h.Tasks.StatusOf(c.Request.Context(), f.ID)
 	if err != nil {
 		problem.Abort(c, err)
@@ -157,6 +171,10 @@ func (h *Handler) Download(c *gin.Context) {
 		return
 	}
 
+	if f.Purged {
+		problem.Abort(c, problem.New(problem.FilePurged, fmt.Errorf("file %s was purged", f.ID)))
+		return
+	}
 	url, err := h.Store.PresignGet(f.ID.String(), downloadTTL)
 	if err != nil {
 		problem.Abort(c, err)
@@ -170,12 +188,13 @@ func (h *Handler) Download(c *gin.Context) {
 func (h *Handler) Upload(c *gin.Context) {
 	user := auth.MustUser(c)
 
-	data, err := readBody(c)
+	data, release, err := h.readBody(c)
 	if err != nil {
 		h.recordRejected(c, user, err)
 		problem.Abort(c, err)
 		return
 	}
+	defer release()
 	model, err := stl.Parse(data)
 	if err != nil {
 		err = stlProblem(err)
@@ -201,19 +220,88 @@ func (h *Handler) Upload(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"id": f.ID.String(), "status": "processing"})
 }
 
-// readBody rejects a Content-Length above the limit without reading the body,
-// and cuts the read at the limit when the size is not declared.
-func readBody(c *gin.Context) ([]byte, error) {
+// readBody never holds more than the size the STL header declares. Junk is
+// refused from the Content-Length or discarded without being buffered, and
+// uploadBudget bounds what all the uploads together keep in memory: a few
+// parallel 100 MiB bodies would otherwise kill the container. The caller
+// calls release when it is done with data.
+func (h *Handler) readBody(c *gin.Context) (data []byte, release func(), err error) {
 	tooLarge := problem.New(problem.FileTooLarge, fmt.Errorf("upload above %d bytes", stl.MaxSize))
-	if c.Request.ContentLength > stl.MaxSize {
-		return nil, tooLarge
+	declared := c.Request.ContentLength
+	if declared > stl.MaxSize {
+		return nil, nil, tooLarge
 	}
-	data, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, stl.MaxSize))
+	body := http.MaxBytesReader(c.Writer, c.Request.Body, stl.MaxSize)
+
+	header := make([]byte, stl.HeaderSize)
+	if n, err := io.ReadFull(body, header); err != nil {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, nil, stlProblem(&stl.FormatError{Size: n})
+		}
+		return nil, nil, err
+	}
+	triangles, size := stl.Declared(header)
+	if declared >= 0 && declared != size {
+		return nil, nil, stlProblem(&stl.FormatError{Size: int(declared), Triangles: triangles})
+	}
+	if triangles > stl.MaxTriangles {
+		// Without a Content-Length, only the byte count tells a real STL from
+		// a file that is not one.
+		if declared < 0 {
+			rest, err := discard(body, tooLarge)
+			if err != nil {
+				return nil, nil, err
+			}
+			if stl.HeaderSize+rest != size {
+				return nil, nil, stlProblem(&stl.FormatError{Size: int(stl.HeaderSize + rest), Triangles: triangles})
+			}
+		}
+		return nil, nil, stlProblem(&stl.TooManyTrianglesError{Triangles: triangles})
+	}
+
+	if !h.uploadBudget().TryAcquire(size) {
+		return nil, nil, problem.New(problem.Unavailable, errors.New("too many uploads in memory"))
+	}
+	release = func() { h.uploadBudget().Release(size) }
+	data = make([]byte, size)
+	copy(data, header)
+	n, err := io.ReadFull(body, data[stl.HeaderSize:])
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		release()
+		return nil, nil, stlProblem(&stl.FormatError{Size: stl.HeaderSize + n, Triangles: triangles})
+	}
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	extra, err := discard(body, tooLarge)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	if extra > 0 {
+		release()
+		return nil, nil, stlProblem(&stl.FormatError{Size: int(size + extra), Triangles: triangles})
+	}
+	return data, release, nil
+}
+
+// discard counts what is left of the body without keeping it.
+func discard(body io.Reader, tooLarge error) (int64, error) {
+	n, err := io.Copy(io.Discard, body)
 	var maxErr *http.MaxBytesError
 	if errors.As(err, &maxErr) {
-		return nil, tooLarge
+		return n, tooLarge
 	}
-	return data, err
+	return n, err
+}
+
+// maxUploadBytes fits the API's 512 MB container with room for the rest.
+const maxUploadBytes = 256 << 20
+
+func (h *Handler) uploadBudget() *semaphore.Weighted {
+	h.budgetOnce.Do(func() { h.budget = semaphore.NewWeighted(maxUploadBytes) })
+	return h.budget
 }
 
 func stlProblem(err error) error {

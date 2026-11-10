@@ -1,0 +1,5 @@
+# Estes arquivos são montados em contêineres Linux. Com CRLF, que o Git do
+# Windows põe no checkout, os scripts de inicialização do Postgres não rodam.
+*.sh text eol=lf
+codigo/etapa-4/deploy/** text eol=lf
+codigo/etapa-4/migrations/** text eol=lf

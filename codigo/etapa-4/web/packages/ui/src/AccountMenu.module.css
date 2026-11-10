@@ -1,0 +1,62 @@
+.menu {
+  position: relative;
+}
+.menu summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 40px;
+  padding: 0 var(--space-3);
+  border: 1px solid rgb(255 255 255 / 30%);
+  color: var(--gray-000);
+  font-size: var(--text-sm);
+  cursor: pointer;
+  list-style: none;
+}
+.menu summary::-webkit-details-marker {
+  display: none;
+}
+.role {
+  padding: 0 var(--space-1);
+  background: var(--signal-700);
+  color: var(--gray-000);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+}
+.items {
+  position: absolute;
+  right: 0;
+  z-index: 20;
+  min-width: 220px;
+  margin-top: var(--space-1);
+  border: 1px solid var(--navy-900);
+  background: var(--surface);
+  color: var(--text);
+}
+.items > * {
+  display: block;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: none;
+  color: var(--navy-900);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.items > *:hover {
+  background: var(--gray-100);
+}
+.email {
+  color: var(--text-muted);
+  cursor: default;
+}
+/* In the mobile drawer the menu is flat: no pop-over. */
+@media (max-width: 1023px) {
+  .items {
+    position: static;
+  }
+}

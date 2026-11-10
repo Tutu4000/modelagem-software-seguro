@@ -4,6 +4,7 @@
 set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 
 compose := "docker compose -f deploy/compose.yaml"
+playwright := "mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f"
 sqlc := "sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537"
 
 default:
@@ -12,6 +13,12 @@ default:
 # Generate the secrets in secrets/ (use `just secrets -force` to regenerate)
 secrets *args:
     go run ./cmd/gensecrets {{ args }}
+
+# Renew only the TLS chain when it no longer fits (no AKI, expiring or another
+# host) and restart what serves or trusts it. The other secrets stay.
+cert host="localhost":
+    go run ./cmd/gensecrets -host {{ host }}
+    {{ compose }} restart nginx partnersim
 
 # Start the environment, rebuilding the images
 up:
@@ -34,13 +41,35 @@ ps:
 logs service="":
     {{ compose }} logs -f {{ service }}
 
-# Print a test token: who is "a", "b" or a UUID
-token who="a" ttl="15m":
-    go run ./cmd/devtoken -sub {{ who }} -ttl {{ ttl }}
+# Log a fictitious user in through Keycloak and print the token: "a" to "f", "technician", "support" or "admin"
+token who="a":
+    go run ./cmd/token -user {{ who }}
 
-# Upload fictitious STLs for customers A and B through the public API
+# Log a staff account in to the panel through the browser flow (password and TOTP) and print the token
+panel-token who="admin":
+    go run ./cmd/token -panel -user {{ who }}
+
+# Upload fictitious STLs for customers A and B and walk their orders up to production
 seed:
     go run ./cmd/seed
+
+# Where the Grafana is and where its admin password lives
+grafana:
+    @echo "Grafana: https://localhost:9446 (user admin)"
+    @echo "Password: secrets/grafana_admin_password"
+
+# Make one encrypted backup now, instead of waiting for the daily one
+backup:
+    {{ compose }} run --rm backup -once
+
+# Restore the latest backup into a temporary server and check it
+restore-test:
+    {{ compose }} --profile restore run --rm restore
+    {{ compose }} --profile restore rm -sf restore-db
+
+# Run one pass of the retention rules now, instead of waiting for the hourly one
+retention:
+    {{ compose }} run --rm retention -once
 
 test:
     go test ./...
@@ -59,14 +88,39 @@ sqlc:
     docker run --rm -v "{{ justfile_directory() }}:/src" -w /src {{ sqlc }} generate
 
 # go vet, gosec, govulncheck, gitleaks (on the git history) and sqlc code up to date
-lint:
+lint: web-lint
     go vet ./...
     docker run --rm -v "{{ justfile_directory() }}:/src:ro" -w /src {{ sqlc }} diff
     go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet ./...
     go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
     docker run --rm -v "{{ justfile_directory() }}/../..:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner
 
-# ZAP scan driven by openapi.yaml, authenticated as customer A (Stage 5)
-zap:
-    go run ./cmd/devtoken -sub a -ttl 2h -out secrets/zap_token
-    {{ compose }} --profile zap run --rm zap
+# ZAP scans (Stage 5): the API driven by openapi.yaml, authenticated as
+# customer A, and a baseline of the customer app. The reports go to
+# evidencias/etapa-5/<out>.
+zap out="relatorios-zap":
+    mkdir -p ../../evidencias/etapa-5/{{ out }}
+    go run ./cmd/token -user a -out secrets/zap_token
+    ZAP_OUT={{ out }} {{ compose }} --profile zap run --rm zap
+    ZAP_OUT={{ out }} {{ compose }} --profile zap run --rm zap-front
+
+# Install the web dependencies from the lockfile, with no install script
+web-install:
+    cd web && npm ci --ignore-scripts
+
+# Vite dev server of the customer app (proxying the compose's API)
+web-dev app="customer":
+    cd web && npm run dev:{{ app }}
+
+# Web checks: generated API types up to date, types, lint, unit tests and audit
+web-lint:
+    cd web && npm run gen
+    git diff --exit-code -- web/packages/api/src/customer.gen.ts web/packages/api/src/panel.gen.ts
+    cd web && npm run typecheck && npm run lint && npm run test && npm audit --audit-level=high
+
+# End-to-end web tests against the compose (needs `just up`), in the
+# official Playwright image on the host network
+web-e2e:
+    docker run --rm --network host --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "{{ justfile_directory() }}/web:/web" -v "{{ justfile_directory() }}/secrets:/secrets:ro" -e SECRETS_DIR=/secrets \
+        -w /web {{ playwright }} npx playwright test

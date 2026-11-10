@@ -19,6 +19,14 @@ FROM base AS api
 COPY --from=build /out/api /api
 ENTRYPOINT ["/api"]
 
+FROM base AS panel
+COPY --from=build /out/panel /panel
+ENTRYPOINT ["/panel"]
+
+FROM base AS partnersim
+COPY --from=build /out/partnersim /partnersim
+ENTRYPOINT ["/partnersim"]
+
 FROM base AS garage-init
 COPY --from=build /out/garage-init /garage-init
 ENTRYPOINT ["/garage-init"]
@@ -26,3 +34,18 @@ ENTRYPOINT ["/garage-init"]
 FROM base AS worker
 COPY --from=build /out/worker /worker
 ENTRYPOINT ["/worker"]
+
+FROM base AS notifier
+COPY --from=build /out/notifier /notifier
+ENTRYPOINT ["/notifier"]
+
+FROM base AS retention
+COPY --from=build /out/retention /retention
+ENTRYPOINT ["/retention"]
+
+# The backup needs pg_dump and pg_restore of the same major version as the
+# server, so it runs on the database image, as its postgres user.
+FROM postgres:18-alpine@sha256:123b17998ccaf47e53b502e8c6a1e79afd8f579c6f3eec83c563da026f957395 AS backup
+COPY --from=build /out/backup /usr/local/bin/backup
+USER postgres
+ENTRYPOINT ["/usr/local/bin/backup"]

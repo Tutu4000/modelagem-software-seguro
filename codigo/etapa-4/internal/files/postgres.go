@@ -43,7 +43,7 @@ func (r *PostgresRepo) FindForUser(ctx context.Context, u auth.User, id FileID) 
 	if err != nil {
 		return File{}, err
 	}
-	f := File{ID: id, Owner: auth.UserID(row.OwnerID), Size: row.SizeBytes}
+	f := File{ID: id, Owner: auth.UserID(row.OwnerID), Size: row.SizeBytes, Purged: row.PurgedAt != nil}
 	if authz.CanReadFile(u, f.Owner) != nil {
 		return File{}, ErrNotFound
 	}

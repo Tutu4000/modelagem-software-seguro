@@ -107,6 +107,10 @@ func TestTS03_RequestWithoutValidTokenGets401(t *testing.T) {
 		{"expired customer B token", sign(t, e.key, e.claims(b, -time.Minute))},
 		{"unsigned token (alg none)", unsigned},
 		{"customer A token with the user swapped to B", swapSubject(t, e.token(a), b)},
+		{"token from another issuer", sign(t, e.key, with(e.claims(b, 15*time.Minute), "iss", "https://evil.test/realms/nugget"))},
+		{"token issued for another audience", sign(t, e.key, with(e.claims(b, 15*time.Minute), "aud", []string{"panel"}))},
+		{"ID token instead of an access token", sign(t, e.key, with(e.claims(b, 15*time.Minute), "typ", "ID"))},
+		{"token without an application role", sign(t, e.key, with(e.claims(b, 15*time.Minute), "realm_access", map[string]any{"roles": []string{"offline_access"}}))},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -116,6 +120,22 @@ func TestTS03_RequestWithoutValidTokenGets401(t *testing.T) {
 				t.Errorf("code %q, want \"unauthenticated\"", code)
 			}
 		})
+	}
+}
+
+// A valid staff token is authenticated, but the public API only serves
+// customers (D02): 403, not 401.
+func TestStaffTokenGets403OnCustomerAPI(t *testing.T) {
+	e := newEnv(t)
+	tech := newUser()
+	fileB := e.seedFile(newUser(), []byte("confidential design of customer B"))
+	staff := with(e.claims(tech, 15*time.Minute), "realm_access", map[string]any{"roles": []string{"technician"}})
+
+	rec := e.get(downloadPath(fileB.ID), sign(t, e.key, staff))
+
+	wantStatus(t, rec, http.StatusForbidden)
+	if code := problemCode(t, rec); code != "forbidden" {
+		t.Errorf("code %q, want \"forbidden\"", code)
 	}
 }
 
