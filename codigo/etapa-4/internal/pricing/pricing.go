@@ -88,6 +88,13 @@ type Choice struct {
 	Quantity  int
 }
 
+// ErrTooExpensive means the model is too big to be priced.
+var ErrTooExpensive = errors.New("the model is too big to quote")
+
+// maxUnitCents is 1 billion reais a unit: far above any real part, and far
+// below what overflows an int64 when multiplied by MaxQuantity.
+const maxUnitCents = 1e11
+
 type Quote struct {
 	UnitCents     int64
 	DiscountCents int64
@@ -127,6 +134,11 @@ func (r Rules) Quote(volumeMM3 float64, c Choice) (Quote, error) {
 	}
 
 	material := math.Ceil(volumeMM3 / 1000 * float64(m.CentsPerCM3) * float64(quality) / 1000)
+	// Above this the conversion to int64 and the product by the quantity
+	// could overflow and wrap to a small or negative total.
+	if material > maxUnitCents {
+		return Quote{}, fmt.Errorf("%w: a unit above %d cents", ErrTooExpensive, int64(maxUnitCents))
+	}
 	unit := int64(material) + finishing
 	units := unit * int64(c.Quantity)
 	discount := units * int64(r.discount(c.Quantity)) / 100
@@ -177,6 +189,3 @@ func DFM(bboxMM, buildVolumeMM [3]float64) []string {
 	}
 	return flags
 }
-
-// ErrTooExpensive means the model is too big to be priced.
-var ErrTooExpensive = errors.New("the model is too big to quote")

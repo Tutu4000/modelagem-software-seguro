@@ -43,6 +43,14 @@ func (h LogoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), storeTimeout)
 	defer cancel()
+	// The revocation comes first and is idempotent. If the jti were burned
+	// first and the revocation failed, Keycloak's retry would be refused as a
+	// replay and the session would stay valid.
+	if err := h.Store.RevokeSession(ctx, token.SessionID, RevocationTTL); err != nil {
+		h.Log.Error("session store unavailable", "error", err)
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	first, err := h.Store.FirstUse(ctx, token.ID, RevocationTTL)
 	if err != nil {
 		h.Log.Error("session store unavailable", "error", err)
@@ -52,11 +60,6 @@ func (h LogoutHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !first {
 		h.Log.Warn("logout token replayed", "jti", token.ID)
 		http.Error(w, "invalid logout token", http.StatusBadRequest)
-		return
-	}
-	if err := h.Store.RevokeSession(ctx, token.SessionID, RevocationTTL); err != nil {
-		h.Log.Error("session store unavailable", "error", err)
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		return
 	}
 

@@ -54,6 +54,14 @@ func (h handlers) revoke(c *gin.Context) {
 		return
 	}
 	idpErr := h.d.IdP.LogoutAndDisable(ctx, target)
+	if idpErr == nil {
+		// A token refreshed while Keycloak was still disabling the account is
+		// newer than the first cutoff: cut again now that no new one can come.
+		if err := h.d.Sessions.RevokeUser(ctx, target.String(), h.d.Now()); err != nil {
+			problem.Abort(c, problem.New(problem.Unavailable, fmt.Errorf("session store: %w", err)))
+			return
+		}
+	}
 
 	result := "revoked"
 	if idpErr != nil {

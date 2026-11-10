@@ -174,6 +174,14 @@ func (h handlers) file(c *gin.Context) {
 	if !ok {
 		return
 	}
+	// The assignment is never cleared, so the status bounds the access: once
+	// the order is over, the technician has no reason to open the design.
+	switch orders.Status(o.Status) {
+	case orders.StatusAwaitingReview, orders.StatusAwaitingPayment, orders.StatusPaid, orders.StatusInProduction:
+	default:
+		problem.Abort(c, problem.New(problem.Conflict, fmt.Errorf("order %s is %s", o.ID, o.Status)))
+		return
+	}
 	purged, err := h.d.Orders.FilePurged(c.Request.Context(), o.FileID)
 	if err != nil {
 		problem.Abort(c, err)
