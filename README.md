@@ -27,7 +27,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 |2|Análise, priorização e tratamento de riscos com o NIST CSF 2.0|[docs/etapa-2-riscos-nist.md](docs/etapa-2-riscos-nist.md)|Concluída|
 |3|Projeto de uma arquitetura segura|[docs/etapa-3-arquitetura-segura.md](docs/etapa-3-arquitetura-segura.md) e [diagramas/etapa-3/](diagramas/etapa-3/)|Concluída|
 |4|Código seguro e testes de segurança|[docs/etapa-4-codigo-seguro.md](docs/etapa-4-codigo-seguro.md) e [codigo/etapa-4/](codigo/etapa-4/)|Concluída|
-|5|Verificação de vulnerabilidades|[docs/etapa-5-verificacao-vulnerabilidades.md](docs/etapa-5-verificacao-vulnerabilidades.md) e [evidencias/etapa-5/](evidencias/etapa-5/)|Pendente|
+|5|Verificação de vulnerabilidades|[docs/etapa-5-verificacao-vulnerabilidades.md](docs/etapa-5-verificacao-vulnerabilidades.md) e [evidencias/etapa-5/](evidencias/etapa-5/)|Concluída|
 |6|Monitoramento e detecção de intrusões|[roteiros/etapa-6-deteccao-de-intrusoes.md](roteiros/etapa-6-deteccao-de-intrusoes.md)|Pendente|
 |7|DevSecOps e apresentação final|[roteiros/etapa-7-devsecops-e-video-final.md](roteiros/etapa-7-devsecops-e-video-final.md)|Pendente|
 |-|Artigo (template SBC ou IEEE)|-|Pendente|
@@ -49,6 +49,10 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
   * respostas de erro no formato Problem Details (RFC 9457), sem expor a causa interna;
   * dependências verificadas com o govulncheck;
   * um [backlog](codigo/etapa-4/BACKLOG.md) que leva o resto da arquitetura da Etapa 3 para o código.
+* **Etapa 5:**
+  * 4 rodadas do OWASP ZAP contra o próprio sistema: três automáticas, na API e no app do cliente, e uma dirigida, que inclui o painel interno;
+  * 5 achados analisados: cabeçalhos de segurança ausentes (corrigido), um SQL Injection que era falso positivo, dois da revisão manual, que o ZAP não alcança (estouro de inteiro no preço e negação de serviço pelo upload), e um erro interno por byte nulo no endereço, que a varredura dirigida provocou;
+  * cada correção tem um teste que falha no código anterior.
 * **Ambiente para a Etapa 5 (marco M2 do backlog):**
   * o sistema roda no Docker Compose: nginx com TLS, réplicas da API, worker isolado, PostgreSQL, banco de auditoria separado, RabbitMQ e Garage;
   * testes de ponta a ponta para os aceites;
