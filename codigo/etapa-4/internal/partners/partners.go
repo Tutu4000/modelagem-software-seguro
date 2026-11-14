@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -89,6 +90,11 @@ func (a Address) Validate() error {
 	for name, v := range fields {
 		if n := utf8.RuneCountInString(strings.TrimSpace(v)); n < 1 || n > 120 {
 			return fmt.Errorf("shipping %s must have 1 to 120 characters", name)
+		}
+		// The address goes to the database, to the carrier and to an e-mail:
+		// a NUL makes Postgres fail, and a line break could forge lines there.
+		if !utf8.ValidString(v) || strings.ContainsFunc(v, unicode.IsControl) {
+			return fmt.Errorf("shipping %s must not have control characters", name)
 		}
 	}
 	if !state.MatchString(a.State) {
