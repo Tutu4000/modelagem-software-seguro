@@ -1,6 +1,6 @@
 # Etapa 5 — Verificação de Vulnerabilidades
 
-Esta etapa verifica o sistema construído na [Etapa 4](etapa-4-codigo-seguro.md) com o OWASP ZAP e analisa cinco achados: os três pedidos pelo enunciado e dois extras. Dois vieram dos alertas do ZAP, dois de uma revisão manual do código, que alcança falhas fora do alcance da ferramenta, e um de uma varredura dirigida, em que o ZAP provocou um erro que só os logs do servidor mostraram. Os relatórios, as capturas de tela e as evidências brutas estão em [evidencias/etapa-5/](../evidencias/etapa-5/), descritos no [relatório da verificação](../evidencias/etapa-5/relatorio-da-verificacao.md).
+Esta etapa verifica o sistema construído na [Etapa 4](etapa-4-codigo-seguro.md) com o OWASP ZAP e analisa cinco achados: os três pedidos pelo enunciado e dois extras. Dois vieram dos alertas do ZAP, dois de testes manuais extensivos pela interface, depois confirmados no código, que alcançam falhas fora do alcance da ferramenta, e um de uma varredura dirigida, em que o ZAP provocou um erro que só os logs do servidor mostraram. Os relatórios, as capturas de tela e as evidências brutas estão em [evidencias/etapa-5/](../evidencias/etapa-5/), descritos no [relatório da verificação](../evidencias/etapa-5/relatorio-da-verificacao.md).
 
 ## 1. Sistema testado
 
@@ -11,7 +11,8 @@ O alvo é o nosso próprio sistema, a plataforma de impressão 3D sob demanda, r
 |API do cliente|ZAP, com varredura ativa|
 |App web do cliente|ZAP, com spider e regras passivas|
 |Painel interno|ZAP, só na rodada 4, com um token de cada papel (admin, técnico e suporte). Nas rodadas automáticas ele ficou de fora, porque só escuta no loopback do host|
-|Código Go e imagens|Revisão manual, `gosec`, `govulncheck`, `gitleaks` e Trivy|
+|Aplicação inteira|Testes manuais extensivos pela interface, no app do cliente e no painel, com cada comportamento estranho confirmado no código|
+|Código Go e imagens|`gosec`, `govulncheck`, `gitleaks` e Trivy|
 
 ## 2. Ferramenta e configuração
 
@@ -42,8 +43,8 @@ Na rodada 3, o ZAP aprovou 113 regras na API e 61 no app, sem nenhuma reprovaç�
 |-|-|-|-|-|-|-|
 |A01|Cabeçalho `Strict-Transport-Security` ausente e versão do servidor exposta (`Server: nginx/1.30.6`)|ZAP, rodada 1|3 ocorrências de cada alerta no [relatório da rodada 1][cap-1]|Sem HSTS, o navegador aceita voltar para HTTP numa rede hostil. A versão exposta ajuda o atacante a escolher falhas conhecidas|[CWE-319], [CWE-497] e [A02:2025] Security Misconfiguration|**Aplicada:** HSTS em todas as respostas e `server_tokens off` no nginx. Os dois alertas sumiram na rodada 2|
 |A02|SQL Injection em `subject` (chamados) e `event_id` (webhook de pagamento)|ZAP, rodada 3|2 ocorrências de risco alto no [relatório da rodada 3][cap-3]|Se fosse real, leitura ou alteração do banco inteiro|[CWE-89] e [A05:2025] Injection|**Falso positivo.** Nenhuma correção: o código já usa consultas parametrizadas|
-|A03|Estouro de inteiro no cálculo do preço, a partir do volume do STL|Revisão manual|Teste que devolve um total de R$ 10,00 para um volume de 4,6 × 10²¹ mm³, e três respostas 500 no teste pela interface|Uma peça de volume absurdo sai pelo preço mínimo, ou o cliente provoca erros internos quando quiser|[CWE-190] e [CWE-681]; [A10:2025] Mishandling of Exceptional Conditions; risco [R07]|**Aplicada:** o orçamento recusa o volume antes da conversão para inteiro, com 400|
-|A04 (extra)|Negação de serviço pelo upload: o corpo inteiro ia para a memória antes da validação|Revisão manual|Teste em que a API lê 52.428.884 bytes de um corpo recusável pelos primeiros 84, e aceita um terceiro upload de 100 MB com dois presos|De 4 a 6 uploads paralelos de 100 MB estouram os 512 MB do contêiner e derrubam a API para todos|[CWE-770] e [CWE-400]; [API4:2023] Unrestricted Resource Consumption; riscos [R19] e [R20], requisito [RS03]|**Aplicada:** leitura limitada ao tamanho que o cabeçalho declara e um orçamento de 256 MiB para todos os uploads juntos|
+|A03|Estouro de inteiro no cálculo do preço, a partir do volume do STL|Testes manuais, confirmados no código|Teste que devolve um total de R$ 10,00 para um volume de 4,6 × 10²¹ mm³, e três respostas 500 no teste pela interface|Uma peça de volume absurdo sai pelo preço mínimo, ou o cliente provoca erros internos quando quiser|[CWE-190] e [CWE-681]; [A10:2025] Mishandling of Exceptional Conditions; risco [R07]|**Aplicada:** o orçamento recusa o volume antes da conversão para inteiro, com 400|
+|A04 (extra)|Negação de serviço pelo upload: o corpo inteiro ia para a memória antes da validação|Testes manuais, confirmados no código|Teste em que a API lê 52.428.884 bytes de um corpo recusável pelos primeiros 84, e aceita um terceiro upload de 100 MB com dois presos|De 4 a 6 uploads paralelos de 100 MB estouram os 512 MB do contêiner e derrubam a API para todos|[CWE-770] e [CWE-400]; [API4:2023] Unrestricted Resource Consumption; riscos [R19] e [R20], requisito [RS03]|**Aplicada:** leitura limitada ao tamanho que o cabeçalho declara e um orçamento de 256 MiB para todos os uploads juntos|
 |A05 (extra)|Byte nulo no endereço de entrega provoca erro interno|ZAP dirigido, rodada 4, e log do servidor|8 respostas `500` em `POST /api/v1/orders` e 8 em `POST /panel/v1/orders/{id}/address-change`, com o erro `invalid byte sequence for encoding "UTF8": 0x00`|Qualquer cliente provoca erros internos quando quiser, o que suja os logs e dispara o alerta de 5xx. Quebras de linha no endereço seguiriam para a transportadora e para o e-mail|[CWE-20] e [CWE-158]; [A10:2025] Mishandling of Exceptional Conditions|**Aplicada:** o endereço recusa caracteres de controle, com 400|
 
 ### A01 — Cabeçalhos de segurança ausentes
@@ -108,9 +109,9 @@ A análise completa de cada rodada está nos arquivos `LEIAME.md` das pastas de 
 
 ## 6. O que o ZAP não alcança
 
-O ZAP encontrou o que aparece na resposta HTTP: cabeçalhos, versão do servidor e formato dos erros. O único alerta alto dele era falso. As falhas mais graves desta etapa vieram da leitura do código, e nenhuma delas é visível para uma varredura:
+O ZAP encontrou o que aparece na resposta HTTP: cabeçalhos, versão do servidor e formato dos erros. O único alerta alto dele era falso. As falhas mais graves desta etapa apareceram nos testes manuais e foram confirmadas no código, e nenhuma delas é visível para uma varredura:
 
-|Achado da revisão manual|Por que o ZAP não vê|Situação|
+|Achado dos testes manuais|Por que o ZAP não vê|Situação|
 |-|-|-|
 |Estouro de inteiro no preço (A03)|Exige montar um STL binário com coordenadas escolhidas, e o ZAP não conhece o formato|Corrigido|
 |Negação de serviço pelo upload (A04)|O ZAP envia uma requisição por vez e não mede a memória do servidor|Corrigido|
@@ -126,7 +127,7 @@ Cada correção tem um teste que falha no código anterior e passa com ela. Os t
 
 ## 7. Considerações finais
 
-* **A ferramenta e a revisão manual se completam.** O ZAP é rápido e repetível e pegou dois problemas reais de configuração. Ele não entende regra de negócio, formato de arquivo, concorrência nem consumo de recursos.
+* **A ferramenta e os testes manuais se completam.** O ZAP é rápido e repetível e pegou dois problemas reais de configuração. Ele não entende regra de negócio, formato de arquivo, concorrência nem consumo de recursos.
 * **Um alerta de risco alto não é uma falha confirmada.** O SQL Injection do relatório era efeito do limite de requisições da própria API.
 * **Defesa em profundidade funcionou, mas por acaso.** No A03, a restrição do banco segurou o que a aplicação deixou passar. A correção põe a checagem no lugar certo.
 * **A varredura só é boa se alcançar o código.** Nas rodadas automáticas, o limite de requisições barrou mais da metade dos ataques. A rodada dirigida, com token renovado e limites folgados, achou o A05 em 17 minutos.

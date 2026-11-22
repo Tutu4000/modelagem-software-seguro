@@ -51,7 +51,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
   * um [backlog](codigo/etapa-4/BACKLOG.md) que leva o resto da arquitetura da Etapa 3 para o código.
 * **Etapa 5:**
   * 4 rodadas do OWASP ZAP contra o próprio sistema: três automáticas, na API e no app do cliente, e uma dirigida, que inclui o painel interno;
-  * 5 achados analisados: cabeçalhos de segurança ausentes (corrigido), um SQL Injection que era falso positivo, dois da revisão manual, que o ZAP não alcança (estouro de inteiro no preço e negação de serviço pelo upload), e um erro interno por byte nulo no endereço, que a varredura dirigida provocou;
+  * 5 achados analisados: cabeçalhos de segurança ausentes (corrigido), um SQL Injection que era falso positivo, dois dos testes manuais extensivos, confirmados no código, que o ZAP não alcança (estouro de inteiro no preço e negação de serviço pelo upload), e um erro interno por byte nulo no endereço, que a varredura dirigida provocou;
   * cada correção tem um teste que falha no código anterior.
 * **Etapa 6:**
   * roteiro de detecção com o Wazuh como SIEM, lendo os eventos de segurança que a aplicação já grava em JSON;
