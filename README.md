@@ -28,8 +28,8 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 |3|Projeto de uma arquitetura segura|[docs/etapa-3-arquitetura-segura.md](docs/etapa-3-arquitetura-segura.md) e [diagramas/etapa-3/](diagramas/etapa-3/)|Concluída|
 |4|Código seguro e testes de segurança|[docs/etapa-4-codigo-seguro.md](docs/etapa-4-codigo-seguro.md) e [codigo/etapa-4/](codigo/etapa-4/)|Concluída|
 |5|Verificação de vulnerabilidades|[docs/etapa-5-verificacao-vulnerabilidades.md](docs/etapa-5-verificacao-vulnerabilidades.md) e [evidencias/etapa-5/](evidencias/etapa-5/)|Concluída|
-|6|Monitoramento e detecção de intrusões|[roteiros/etapa-6-deteccao-de-intrusoes.md](roteiros/etapa-6-deteccao-de-intrusoes.md)|Pendente|
-|7|DevSecOps e apresentação final|[roteiros/etapa-7-devsecops-e-video-final.md](roteiros/etapa-7-devsecops-e-video-final.md)|Pendente|
+|6|Monitoramento e detecção de intrusões|[roteiros/etapa-6-deteccao-de-intrusoes.md](roteiros/etapa-6-deteccao-de-intrusoes.md)|Concluída|
+|7|DevSecOps e apresentação final|[roteiros/etapa-7-devsecops-e-video-final.md](roteiros/etapa-7-devsecops-e-video-final.md)|Concluída|
 |-|Artigo (template SBC ou IEEE)|-|Pendente|
 
 **Resultados até agora:**
@@ -53,6 +53,15 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
   * 4 rodadas do OWASP ZAP contra o próprio sistema: três automáticas, na API e no app do cliente, e uma dirigida, que inclui o painel interno;
   * 5 achados analisados: cabeçalhos de segurança ausentes (corrigido), um SQL Injection que era falso positivo, dois da revisão manual, que o ZAP não alcança (estouro de inteiro no preço e negação de serviço pelo upload), e um erro interno por byte nulo no endereço, que a varredura dirigida provocou;
   * cada correção tem um teste que falha no código anterior.
+* **Etapa 6:**
+  * roteiro de detecção com o Wazuh como SIEM, lendo os eventos de segurança que a aplicação já grava em JSON;
+  * 3 regras de detecção em XML do Wazuh (enumeração de IDs, abuso de upload e acesso ao painel fora do horário), mais duas extras, com notificação e resposta automática só onde o falso positivo custa pouco;
+  * resposta a incidentes com a revogação de contas pelo painel;
+  * as mesmas regras já rodam no Grafana do ambiente local, e os testes de ponta a ponta disparam duas delas.
+* **Etapa 7:**
+  * pipeline DevSecOps em oito momentos, com seis condições que barram a mudança;
+  * o que já roda com `just` e o que falta automatizar;
+  * roteiro da apresentação final, com o CA01 como fio condutor.
 * **Ambiente para a Etapa 5 (marco M2 do backlog):**
   * o sistema roda no Docker Compose: nginx com TLS, réplicas da API, worker isolado, PostgreSQL, banco de auditoria separado, RabbitMQ e Garage;
   * testes de ponta a ponta para os aceites;
