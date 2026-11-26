@@ -6,6 +6,8 @@ set windows-shell := ["powershell.exe", "-NoLogo", "-Command"]
 compose := "docker compose -f deploy/compose.yaml"
 playwright := "mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f"
 sqlc := "sqlc/sqlc:1.31.1@sha256:70f53171d27b2424e9358869975455a6e955a5aa8e58a998a270a6e34e525537"
+gitleaks := "ghcr.io/gitleaks/gitleaks:v8.30.1"
+trivy := "aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb"
 
 default:
     @just --list
@@ -87,13 +89,45 @@ sqlc:
 sqlc:
     docker run --rm -v "{{ justfile_directory() }}:/src" -w /src {{ sqlc }} generate
 
+# Secrets anywhere in the git history (docs and diagrams included)
+gitleaks:
+    docker run --rm -v "{{ justfile_directory() }}/../..:/repo:ro" {{ gitleaks }} git /repo --no-banner
+
 # go vet, gosec, govulncheck, gitleaks (on the git history) and sqlc code up to date
-lint: web-lint
+lint: web-lint gitleaks
     go vet ./...
     docker run --rm -v "{{ justfile_directory() }}:/src:ro" -w /src {{ sqlc }} diff
     go run github.com/securego/gosec/v2/cmd/gosec@v2.30.0 -quiet ./...
     go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
-    docker run --rm -v "{{ justfile_directory() }}/../..:/repo:ro" ghcr.io/gitleaks/gitleaks:v8.30.1 git /repo --no-banner
+
+# What the pre-push hook runs: lint (web checks included) and the unit tests
+ci: lint test
+
+# Trivy on one image already built or pulled: fails on HIGH or CRITICAL findings
+[unix]
+scan-image image:
+    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache {{ trivy }} image --no-progress --severity HIGH,CRITICAL --exit-code 1 {{ image }}
+
+# Build and scan every image, and fail at the end if any of them has findings
+[unix]
+scan-images: build-images
+    #!/usr/bin/env bash
+    status=0
+    for image in api panel worker nginx keycloak; do
+        {{ just_executable() }} scan-image "nuggetmachine-$image" || status=1
+    done
+    exit $status
+
+# No cache: a cached `apk upgrade` layer would be scanned as if it were fresh
+build-images:
+    {{ compose }} build --no-cache
+
+# The whole Stage 7 pipeline except the ZAP: ci, image scan and e2e tests
+ci-full: up ci scan-images test-e2e
+
+# Point git at the versioned hooks in .githooks/ (once per clone)
+hooks:
+    git -C ../.. config core.hooksPath .githooks
 
 # ZAP scans (Stage 5): the API driven by openapi.yaml, authenticated as
 # customer A, and a baseline of the customer app. The reports go to

@@ -234,9 +234,9 @@ Os testes de cada prática entram num commit antes da implementação, junto com
 
 |ID|Item|Aceite|Ref.|P|
 |-|-|-|-|-|
-|E9.1|`ci.yml` com `go vet`, testes, `gosec`, `govulncheck`, `gitleaks`, build da imagem e `trivy`. O token do Docker Hub fica num segredo do GitHub|Qualquer falha bloqueia o merge. São as condições de parada da Etapa 7|C12|P1|
+|E9.1|CI local, sem *workflow* do GitHub: `just ci` (`go vet`, `gosec`, `govulncheck`, `gitleaks`, `sqlc`, front-end e testes), `just scan-images` (Trivy) e `just ci-full`, com o hook `.githooks/pre-push` ligado por `just hooks`|Qualquer falha barra o `git push`. São as condições de parada da Etapa 7|C12|P1|
 |E9.2|SBOM da imagem em CycloneDX|Gerado a cada build|C12|P2|
-|E9.3|ZAP baseline contra o ambiente do compose|O relatório fica anexado ao build|—|P2|
+|E9.3|ZAP baseline contra o ambiente do compose|`just zap` já gera o relatório em `evidencias/`. Falta chamá-lo de um passo automático|—|P2|
 
 ## 5. Simplificações do ambiente local
 
@@ -300,7 +300,7 @@ A aula *Por que uma arquitetura segura ainda pode resultar em software vulneráv
 |-|-|-|
 |M1|Concluído|E0.1 e E1|
 |M2|Concluído, em versão simples|E0.2, E0.3, E2.1 a E2.6, E3.1 a E3.3, E4.1 a E4.6 e E7.1 a E7.3, com as simplificações da seção 5. O `just test-e2e` cobre os aceites|
-|M3|Pendente|E9.1 e os itens P2|
+|M3|Parcial|E9.1 concluído em versão local (`just ci`, `just scan-images`, `just ci-full` e o hook de `pre-push`). O `just scan-images` deixa as imagens limpas, menos o Keycloak (26.8.0, com 19 achados, porque a 26.8.2-3 quebra a API de administração usada pelo painel). Faltam o SBOM (E9.2) e o ZAP automático (E9.3)|
 |Demonstração local (F9)|Concluída, sem a VM|O `just seed` deixa a demo pronta, com pedidos em todos os estados, chamados, troca de endereço pendente, tabela de preço esperando o segundo admin e os eventos de segurança que o dashboard (aceite do E7.4) e os alertas do E7.5 mostram. A cadeia TLS tem os identificadores de chave e se renova sozinha quando deixa de servir, e `just cert <host>` gera a de outro host. A VM de demonstração e o `PUBLIC_HOST` no compose ficam para quando houver um hypervisor|
 |E6.1, E6.2 e E6.4|Concluídos|Binário `panel` próprio, em `127.0.0.1:9445`, com TOTP exigido no token e evento `panel.access` em toda requisição. Toda rota declara os perfis num registro, e um teste falha se alguma rota não declarar. O binário `api` não depende do painel. A operação crítica "revogar usuário" exige step-up e justificativa|
 |E8.1 e E6.3|Concluídos|Pedido com orçamento calculado só no servidor, que recusa campos desconhecidos no corpo (CA03). Tabela de preços versionada, que só vale depois da aprovação de outro admin, e pedidos que mantêm o preço do orçamento. Revisão técnica só pelo técnico atribuído, com laudo, uma por pedido (CA05). Download do STL pela equipe só pelo técnico atribuído, como operação crítica (CA08). Histórico de estados e alerta de DFM|

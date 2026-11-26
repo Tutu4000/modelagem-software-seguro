@@ -120,7 +120,7 @@ O ZAP encontrou o que aparece na resposta HTTP: cabeçalhos, versão do servidor
 |Logout que deixava a sessão válida depois de uma falha do Valkey|Depende de uma falha de infraestrutura no meio da operação|Corrigido|
 |Token renovado durante a revogação de um usuário continuava aceito|É uma condição de corrida entre a API e o Keycloak|Corrigido|
 |Técnico abria o projeto de um pedido já encerrado|É regra de negócio: para o scanner, a resposta `200` com a URL do arquivo é um sucesso normal|Corrigido|
-|10 CVEs altas ou críticas na imagem do nginx|O ZAP olha o tráfego, e não os pacotes instalados. Quem achou foi o Trivy|Corrigido|
+|10 CVEs altas ou críticas na imagem do nginx|O ZAP olha o tráfego, e não os pacotes instalados. Quem achou foi o Trivy|Corrigido com `apk upgrade`. Na Etapa 7, o scan sem cache achou mais 6, porque a base fixa o pacote, e a correção foi refeita (ver o [roteiro da Etapa 7](../roteiros/etapa-7-devsecops-e-video-final.md#3-o-que-já-existe-e-o-que-falta))|
 |Backup que quebra com cerca de 200 MB de arquivos, falta de cota de armazenamento por conta e corrida entre pagar e cancelar|Dependem de volume de dados e de concorrência|Pendentes|
 |Peça com volume quase zero orçada pelo preço mínimo|É uma fraude de regra de negócio, indistinguível de uma peça oca legítima. A defesa hoje é a revisão técnica obrigatória|Pendente|
 
