@@ -2,7 +2,7 @@ import { expect, request, test } from "@playwright/test";
 
 const appCSP =
   "default-src 'none'; script-src 'self'; style-src 'self'; font-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://localhost:8444 https://localhost:8443; frame-src 'self' https://localhost:8444; worker-src 'self' blob:; manifest-src 'self'; form-action 'self' https://localhost:8444; base-uri 'none'; frame-ancestors 'self'; object-src 'none'; require-trusted-types-for 'script'; trusted-types nugget-worker";
-const jsonCSP = "default-src 'none'; frame-ancestors 'none'";
+const jsonCSP = "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'";
 
 const common: Record<string, string> = {
   "strict-transport-security": "max-age=31536000",

@@ -1756,7 +1756,7 @@ func TestSecurityHeaders(t *testing.T) {
 		"X-Content-Type-Options":    "nosniff",
 		"Referrer-Policy":           "no-referrer",
 	}
-	const jsonCSP = "default-src 'none'; frame-ancestors 'none'"
+	const jsonCSP = "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'none'"
 	for _, c := range []struct {
 		url, csp string
 	}{
