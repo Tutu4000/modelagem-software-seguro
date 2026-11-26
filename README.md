@@ -60,7 +60,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
   * as mesmas regras já rodam no Grafana do ambiente local, e os testes de ponta a ponta disparam duas delas.
 * **Etapa 7:**
   * pipeline DevSecOps em oito momentos, com seis condições que barram a mudança;
-  * o que já roda com `just` e o que falta automatizar;
+  * o pipeline roda localmente com `just ci` e `just ci-full`, imposto por um hook de `pre-push`, sem servidor de integração contínua;
   * roteiro da apresentação final, com o CA01 como fio condutor.
 * **Ambiente para a Etapa 5 (marco M2 do backlog):**
   * o sistema roda no Docker Compose: nginx com TLS, réplicas da API, worker isolado, PostgreSQL, banco de auditoria separado, RabbitMQ e Garage;

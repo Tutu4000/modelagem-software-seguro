@@ -174,7 +174,10 @@ Os binários Go rodam em imagens distroless, como não root, com sistema de arqu
 ```sh
 just test        # testes de unidade e de segurança (TS01 a TS09), sem Docker
 just test-e2e    # ponta a ponta contra o compose: precisa de `just up`
-just lint        # go vet, gosec, govulncheck e gitleaks
+just lint        # go vet, gosec, govulncheck, gitleaks, sqlc em dia e as verificações do front-end
+just ci          # o que o hook de pre-push roda: lint e testes de unidade
+just scan-images # constrói as imagens e roda o Trivy nelas (precisa de Docker)
+just ci-full     # ci, scan-images e test-e2e (sobe o ambiente)
 just zap         # varredura do OWASP ZAP da API e do app (Etapa 5; just zap <pasta> muda a saída)
 ```
 
@@ -204,6 +207,18 @@ O `just test-e2e` cobre:
 * o backup criptografado, fora do alcance da chave da API, e o restore-test.
 
 O `just zap` faz o login do `customer-a` pelo Keycloak e grava os relatórios em HTML, JSON e Markdown em [evidencias/etapa-5/relatorios-zap/](../../evidencias/etapa-5/relatorios-zap/). Cada execução sobrescreve os arquivos anteriores.
+
+### CI local
+
+Não há *workflow* do GitHub: as verificações rodam na máquina de quem desenvolve, e um hook do git as chama antes de cada `git push`.
+
+```sh
+just hooks       # uma vez por clone: aponta o git para .githooks/
+```
+
+O `.githooks/pre-push` roda o `just ci` quando o push muda algo em `codigo/`. Quando só mudam documentos, diagramas ou roteiros, roda apenas o `just gitleaks`. Para pular a verificação numa emergência, use `SKIP_CI=1 git push` (ou `--no-verify`).
+
+O `just ci` precisa de Docker (`sqlc` e `gitleaks` rodam em contêiner), de Go e de rede na primeira vez, para baixar o `gosec` e o `govulncheck`. O `just scan-images` não entra no hook: a imagem base do Keycloak tem vulnerabilidades altas ou críticas ainda sem correção, e ele reprova nela até a atualização.
 
 ## Front-end
 

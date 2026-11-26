@@ -33,7 +33,7 @@ A seta de volta é o que fecha o ciclo: um incidente ou um achado novo vira uma 
 
 ## 2. Condições que impedem a continuidade
 
-Qualquer uma destas condições barra o pull request ou a versão:
+Qualquer uma destas condições barra o `git push` (pelo hook local) ou a versão:
 
 1. **Teste de segurança reprovado.** Inclui os testes das práticas da Etapa 4 e o teste das rotas: uma rota nova sem perfis declarados não entra.
 2. **Segredo no repositório.** O `gitleaks` varre o histórico inteiro, e não só o último commit. Um segredo que entrou e saiu continua no histórico e precisa ser trocado.
@@ -48,13 +48,17 @@ Qualquer uma destas condições barra o pull request ou a versão:
 |-|-|
 |1 e 2|Feitos uma vez, nas Etapas 1 a 3, para o sistema inteiro|
 |3|O histórico mostra os testes antes da implementação nas duas práticas e nas correções da Etapa 5|
-|4|`just test`, `just test-e2e` e `just web-lint`, rodados à mão|
-|5|`just lint` roda tudo menos o Trivy, que foi rodado à mão na Etapa 5|
+|4|`just ci` roda os testes de unidade e de segurança e as verificações do front-end. `just test-e2e` roda os testes de ponta a ponta e entra no `just ci-full`|
+|5|`just lint` roda `go vet`, `gosec`, `govulncheck`, `gitleaks` e a conferência do `sqlc`, e `just scan-images` roda o Trivy nas imagens construídas|
 |6|`just zap` roda a varredura automática. A dirigida foi feita à mão, pelo método do [LEIAME da rodada 4](../evidencias/etapa-5/relatorios-zap-dirigido/LEIAME.md)|
 |7|Imagens distroless, sem root e fixadas por digest, e contêineres com `read_only`, `cap_drop: [ALL]` e `no-new-privileges` no compose|
 |8|Banco de auditoria, dashboard de segurança e oito alertas no Grafana, sem notificação fora dele. O Wazuh, proposto na Etapa 6, não foi instalado|
 
-O que falta é a automação: não há servidor de integração contínua, e os passos rodam na máquina de quem desenvolve. O épico E9 do [backlog](../codigo/etapa-4/BACKLOG.md) prevê um `ci.yml` com os momentos 4 e 5, a geração do SBOM da imagem e o ZAP contra o compose. Há também uma pendência que o pipeline barraria hoje: a imagem base do Keycloak tem 8 vulnerabilidades altas ou críticas nos pacotes do sistema, ainda sem atualização.
+A integração contínua é local, e não há servidor nem *workflow* do GitHub. O `just ci` junta os momentos 4 e 5, e o `just ci-full` acrescenta o Trivy nas imagens e os testes de ponta a ponta. O `.githooks/pre-push` chama o `just ci` quando o push muda algo em `codigo/` e, quando só mudam documentos, diagramas ou roteiros, chama apenas o `just gitleaks`, porque um segredo pode entrar em qualquer arquivo. Cada pessoa ativa o hook uma vez por clone, com `just hooks`.
+
+A primeira execução do `just ci` já barrou a versão que estava no repositório: o `govulncheck` apontou a GO-2026-6859 (queda do servidor HTTP/1 por uma corrida no `MaxBytesReader`, em `net/http`), presente no Go 1.27.3 que o `go.mod` e o `Dockerfile` fixavam e corrigida no 1.27.4. A atualização do Go resolveu o alerta, e o `just ci` passou em seguida.
+
+Isso tem limites que vale dizer. O hook é um guarda-corpo local: `SKIP_CI=1` e `git push --no-verify` o contornam, e nada impede o merge de um pull request que não passou por ele. O ZAP continua manual, por ser lento e exigir o ambiente de pé, e a geração do SBOM da imagem ainda não existe. Há também uma pendência que o pipeline barraria hoje: a imagem base do Keycloak tem 8 vulnerabilidades altas ou críticas nos pacotes do sistema, ainda sem atualização, e por isso o `just scan-images` reprova nela.
 
 ## 4. Roteiro da apresentação final
 
