@@ -1,0 +1,59 @@
+<mxfile host="app.diagrams.net" type="device">
+  <diagram id="arquitetura enxuta" name="Arquitetura segura (enxuta)">
+    <mxGraphModel grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1420" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+
+        <mxCell id="INTERNET" value="Internet (não confiável)" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#f8cecc;strokeColor=#b85450;dashed=1;" vertex="1" parent="1"><mxGeometry x="20" y="40" width="220" height="200" as="geometry"/></mxCell>
+        <mxCell id="CLI" value="Cliente" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="INTERNET"><mxGeometry x="40" y="45" width="140" height="40" as="geometry"/></mxCell>
+        <mxCell id="WEB" value="Aplicação web&lt;br&gt;+ visualizador 3D" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="INTERNET"><mxGeometry x="20" y="115" width="180" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="INTERNA" value="Rede interna / VPN" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1"><mxGeometry x="20" y="440" width="220" height="200" as="geometry"/></mxCell>
+        <mxCell id="EQ" value="Equipe interna" style="ellipse;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="INTERNA"><mxGeometry x="40" y="45" width="140" height="40" as="geometry"/></mxCell>
+        <mxCell id="PAINEL" value="Painel interno&lt;br&gt;C05: SSO com MFA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="INTERNA"><mxGeometry x="20" y="115" width="180" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="LB" value="Balanceador de carga&lt;br&gt;TLS e limite de requisições" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="1"><mxGeometry x="300" y="150" width="180" height="60" as="geometry"/></mxCell>
+        <mxCell id="IDP" value="Identidade&lt;br&gt;C07 e C08: login e sessão" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1"><mxGeometry x="300" y="320" width="180" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="API" value="API back-end" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1"><mxGeometry x="540" y="120" width="260" height="360" as="geometry"/></mxCell>
+        <mxCell id="AZ" value="Autorização central&lt;br&gt;C01 e C04: dono do objeto&lt;br&gt;e perfil por rota" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="API"><mxGeometry x="15" y="60" width="230" height="100" as="geometry"/></mxCell>
+        <mxCell id="MOD" value="Módulos de negócio&lt;br&gt;pedidos, arquivos,&lt;br&gt;pagamentos e logística" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="API"><mxGeometry x="30" y="230" width="200" height="90" as="geometry"/></mxCell>
+
+        <mxCell id="PROC" value="Processamento isolado" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#fff2cc;strokeColor=#d6b656;dashed=1;" vertex="1" parent="1"><mxGeometry x="860" y="40" width="240" height="220" as="geometry"/></mxCell>
+        <mxCell id="FILA" value="Fila&lt;br&gt;C10: cota por conta" style="shape=process;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="PROC"><mxGeometry x="30" y="50" width="180" height="60" as="geometry"/></mxCell>
+        <mxCell id="WK" value="Workers descartáveis&lt;br&gt;C11: sem rede e sem root" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="PROC"><mxGeometry x="30" y="140" width="180" height="60" as="geometry"/></mxCell>
+
+        <mxCell id="DADOS" value="Dados" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#f5f5f5;strokeColor=#666666;" vertex="1" parent="1"><mxGeometry x="860" y="320" width="240" height="340" as="geometry"/></mxCell>
+        <mxCell id="DB" value="Banco de dados&lt;br&gt;C02: UUID" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="DADOS"><mxGeometry x="30" y="45" width="180" height="80" as="geometry"/></mxCell>
+        <mxCell id="S3" value="Armazenamento privado&lt;br&gt;C03: URL pré-assinada" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="DADOS"><mxGeometry x="30" y="150" width="180" height="80" as="geometry"/></mxCell>
+        <mxCell id="RED" value="Estado compartilhado&lt;br&gt;contadores e revogação" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="DADOS"><mxGeometry x="30" y="250" width="180" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="OPS" value="Segurança e operação" style="swimlane;whiteSpace=wrap;html=1;rounded=1;arcSize=3;startSize=26;fontStyle=1;collapsible=0;container=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1"><mxGeometry x="1160" y="320" width="240" height="200" as="geometry"/></mxCell>
+        <mxCell id="AUD" value="Log de auditoria&lt;br&gt;C18: só inclusões" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=10;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="OPS"><mxGeometry x="30" y="45" width="180" height="70" as="geometry"/></mxCell>
+        <mxCell id="MON" value="Monitoramento&lt;br&gt;C19: alertas e resposta" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#ffffff;strokeColor=#333333;" vertex="1" parent="OPS"><mxGeometry x="30" y="130" width="180" height="55" as="geometry"/></mxCell>
+
+        <mxCell id="EXT" value="Gateway de pagamento&lt;br&gt;e transportadoras" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#eeeeee;strokeColor=#999999;dashed=1;" vertex="1" parent="1"><mxGeometry x="1160" y="130" width="240" height="70" as="geometry"/></mxCell>
+
+        <mxCell id="e1" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="CLI" target="WEB"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e2" value="FC1: HTTPS + token" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="WEB" target="LB"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e3" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="LB" target="AZ"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e4" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="EQ" target="PAINEL"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e5" value="FC2: VPN" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="PAINEL" target="AZ"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e6" value="login" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="WEB" target="IDP"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e7" value="login" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="PAINEL" target="IDP"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e8" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="AZ" target="MOD"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e9" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;dashed=1;" edge="1" parent="1" source="AZ" target="RED"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e10" value="FC4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="MOD" target="DB"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e11" value="FC4" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="MOD" target="S3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e12" value="FC3: tarefa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="MOD" target="FILA"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e13" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="FILA" target="WK"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e14" value="lê só o arquivo da tarefa" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="WK" target="S3"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e15" value="FC5: assinatura e HMAC" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;startArrow=classic;endArrow=classic;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="MOD" target="EXT"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e16" value="decisões e ações sensíveis" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="AZ" target="AUD"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e17" value="logs" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;dashed=1;fontSize=10;labelBackgroundColor=#ffffff;" edge="1" parent="1" source="WK" target="AUD"><mxGeometry relative="1" as="geometry"/></mxCell>
+        <mxCell id="e18" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=1;html=1;endArrow=classic;" edge="1" parent="1" source="AUD" target="MON"><mxGeometry relative="1" as="geometry"/></mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

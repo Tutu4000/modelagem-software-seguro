@@ -1,0 +1,55 @@
+flowchart LR
+    subgraph INTERNET["Internet (não confiável)"]
+        CLI(["Cliente"])
+        WEB["Aplicação web<br/>+ visualizador 3D"]
+    end
+
+    subgraph INTERNA["Rede interna / VPN"]
+        EQ(["Equipe interna"])
+        PAINEL["Painel interno<br/>C05: SSO com MFA"]
+    end
+
+    IDP["Identidade<br/>C07 e C08: login e sessão"]
+    LB["Balanceador de carga<br/>TLS e limite de requisições"]
+
+    subgraph API["API back-end"]
+        AZ{{"Autorização central<br/>C01 e C04: dono do objeto<br/>e perfil por rota"}}
+        MOD["Módulos de negócio<br/>pedidos, arquivos,<br/>pagamentos e logística"]
+    end
+
+    subgraph PROC["Processamento isolado"]
+        FILA[["Fila<br/>C10: cota por conta"]]
+        WK["Workers descartáveis<br/>C11: sem rede e sem root"]
+    end
+
+    subgraph DADOS["Dados"]
+        DB[("Banco de dados<br/>C02: UUID")]
+        S3[("Armazenamento privado<br/>C03: URL pré-assinada")]
+        RED[("Estado compartilhado<br/>contadores e revogação")]
+    end
+
+    subgraph OPS["Segurança e operação"]
+        AUD[("Log de auditoria<br/>C18: só inclusões")]
+        MON["Monitoramento<br/>C19: alertas e resposta"]
+    end
+
+    EXT["Gateway de pagamento<br/>e transportadoras"]
+
+    CLI --> WEB
+    WEB -->|"FC1: HTTPS + token"| LB
+    LB --> AZ
+    EQ --> PAINEL
+    PAINEL -->|"FC2: VPN"| AZ
+    WEB -.->|login| IDP
+    PAINEL -.->|login| IDP
+    AZ --> MOD
+    AZ -.-> RED
+    MOD -->|"FC4"| DB
+    MOD -->|"FC4"| S3
+    MOD -->|"FC3: tarefa"| FILA
+    FILA --> WK
+    WK -->|"lê só o arquivo da tarefa"| S3
+    MOD <-->|"FC5: assinatura e HMAC"| EXT
+    AZ -.->|"decisões e ações sensíveis"| AUD
+    WK -.->|logs| AUD
+    AUD --> MON

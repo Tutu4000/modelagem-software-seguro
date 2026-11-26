@@ -39,7 +39,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 * **Etapa 3:**
   * 3 requisitos de segurança verificáveis, derivados dos riscos críticos R14, R22 e R20;
   * as vulnerabilidades correspondentes mapeadas na CWE e na OWASP (Top 10:2025, API Security Top 10:2023 e ASVS 5.0.0);
-  * dois diagramas em Mermaid: o dos fluxos, com cinco fronteiras de confiança, e a visão em blocos de construção;
+  * três diagramas em Mermaid: uma versão enxuta da arquitetura, a versão completa dos fluxos, com cinco fronteiras de confiança, e a visão em blocos de construção;
   * notas sobre a escala horizontal e o efeito dela nos controles;
   * cuidados transversais: segredos, ambientes, dados de teste, idempotência e versionamento de regras;
   * 3 decisões de arquitetura justificadas, com as operações críticas do painel e a cobertura das seis categorias do STRIDE.

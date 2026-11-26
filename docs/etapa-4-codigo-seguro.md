@@ -36,7 +36,7 @@ A resposta traz só o código e um título fixo. A causa interna vai para o log 
 * **Requisito:** [RS01]. A identidade vem só do token. Antes de gerar a URL pré-assinada, a API confere se o arquivo pertence ao usuário. A URL vale 5 minutos, e o armazenamento não tem nenhum objeto público.
 * **Decisão e controles:** [D01], com [C01] (dono do objeto), [C02] (UUID) e [C03] (URL pré-assinada).
 
-O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo binário `panel` e entra com o épico E6 do backlog.
+O acesso do técnico atribuído ao pedido, também previsto no RS01, passa pelo binário `panel`, implementado no épico E6 do [backlog](../codigo/etapa-4/BACKLOG.md).
 
 ### Testes definidos antes da implementação
 
@@ -77,7 +77,7 @@ func (r *MemoryRepo) FindForUser(_ context.Context, u auth.User, id FileID) (Fil
 }
 ```
 
-Como não existe busca só por ID, uma rota nova não tem como esquecer a autorização. O arquivo inexistente e o alheio devolvem o mesmo `ErrNotFound`, o que impede descobrir quais IDs existem.
+O trecho mostra a versão em memória, usada nos testes. A versão com PostgreSQL (`PostgresRepo.FindForUser`, em `internal/files/postgres.go`) aplica a mesma regra: filtra pelo dono já na consulta e ainda passa pelo `authz`. Como não existe busca só por ID, uma rota nova não tem como esquecer a autorização. O arquivo inexistente e o alheio devolvem o mesmo `ErrNotFound`, o que impede descobrir quais IDs existem.
 
 ### Resultado esperado
 

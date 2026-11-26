@@ -99,11 +99,12 @@ A correção recusa caracteres de controle no endereço, o que cobre também as 
 |Alerta do ZAP|Risco|Ocorrências na rodada 3|Por que foi descartado|
 |-|-|-|-|
 |Unexpected Content-Type was returned|Baixo|46|Os erros saem como `application/problem+json` (RFC 9457), que o `openapi.yaml` declara. O ZAP esperava `application/json`|
-|CSP: Failure to Define Directive with No Fallback (rodada 4)|Médio|1|Não foi descartado: a CSP das respostas da API não definia `form-action`. O impacto é baixo, porque a API devolve JSON e não páginas, mas a correção é uma linha: `form-action 'none'; base-uri 'none'` nas respostas da API, do painel e do armazenamento|
 |Insufficient Site Isolation Against Spectre|Baixo|3|Risco aceito. O cabeçalho que falta (COEP) quebraria a renovação de sessão pelo Keycloak, e os apps não usam os recursos que ele protege|
 |ZAP is Out of Date|Baixo|2|É sobre a imagem do ZAP, e não sobre o sistema|
 |A Client Error response code was returned|Informativo|64|São as recusas esperadas: 400, 401, 403, 404, 409, 422 e 429|
 |Cache-control, conteúdo armazenável, comentários suspeitos e Modern Web Application|Informativo|29|Informativos. Os comentários são de bibliotecas no código minificado, sem segredo nem rota interna|
+
+Um alerta da rodada 4 não foi descartado: **CSP: Failure to Define Directive with No Fallback** (risco médio, 1 ocorrência). A CSP das respostas da API não definia `form-action`, que não herda de `default-src`. O impacto é baixo, porque a API devolve JSON e não páginas, mas a correção é pequena e foi aplicada no commit [2472ce4]: `form-action 'none'; base-uri 'none'` nas respostas da API, do painel e do armazenamento.
 
 A análise completa de cada rodada está nos arquivos `LEIAME.md` das pastas de relatórios.
 
@@ -161,3 +162,4 @@ Cada correção tem um teste que falha no código anterior e passa com ela. Os t
 [75ff909]: https://github.com/Tutu4000/modelagem-software-seguro/commit/75ff909f1d8b7c9b51ec78d5c25b6958a9099719
 [a0cd7e8]: https://github.com/Tutu4000/modelagem-software-seguro/commit/a0cd7e872446a33ba4f6368f2df0788ddd4fa821
 [7832333]: https://github.com/Tutu4000/modelagem-software-seguro/commit/783233325f087d9f766c3d261cf1ca024205d583
+[2472ce4]: https://github.com/Tutu4000/modelagem-software-seguro/commit/2472ce4270eee6572fd6a76c2206f60a8816bb4b

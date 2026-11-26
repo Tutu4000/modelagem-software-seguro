@@ -276,7 +276,7 @@ As medidas foram agrupadas por área e detalhadas como controles no [catálogo d
 |[R12]|Reduzir|Contas pessoais e log de auditoria tornam cada aprovação nominal|
 |[R13]|Aceitar|O ativo não é importante e o impacto é 1. Veja as condições abaixo|
 |[R14]|Reduzir|Armazenamento privado, URL pré-assinada e conferência do dono|
-|[R15]|Evitar|Com a página ou a tokenização do gateway, o número do cartão nunca entra no sistema. O que sobra (valor, status e token) é mascarado nos logs|
+|[R15]|Reduzir|Com a página ou a tokenização do gateway, o número do cartão não entra no sistema, mas o valor, o status e o token continuam passando por ele. Por isso o risco diminui, e não some: esses dados são mascarados nos logs e a API de checkout fica restrita|
 |[R16]|Reduzir|A mesma conferência do dono do [R06], aplicada às consultas|
 |[R17]|Reduzir|Os mesmos controles do [R14], mais a restrição dos técnicos aos arquivos dos pedidos atribuídos a eles|
 |[R18]|Reduzir|Espera crescente e CAPTCHA em vez de bloqueio permanente da conta|
@@ -345,7 +345,7 @@ Os controles abaixo detalham as medidas da [seção 3.3](#33-recomendações-pr�
 |ID|Controle (onde e como funciona)|Função e categoria NIST|Responsável|Evidência e verificação|
 |-|-|-|-|-|
 |<a id="c01"></a>C01|Toda rota da API passa por um único ponto de autorização, que nega por padrão e confere se o pedido, o arquivo ou o laudo pertence ao usuário. Técnicos só acessam os pedidos atribuídos a eles pelo líder de produção|Protect (PR.AA)|Back-end|Teste automatizado em cada rota: o usuário A pede um recurso do usuário B e recebe 403. A revisão de código confirma que nenhuma rota fica fora desse ponto, e cada 403 é registrado no log|
-|<a id="c02"></a>C02|Pedidos, arquivos e laudos são identificados por UUID v4. O número exibido ao cliente não serve para buscar o recurso|Protect (PR.DS)|Back-end|Inspeção do esquema do banco. Teste que tenta IDs sequenciais e recebe 404|
+|<a id="c02"></a>C02|Pedidos e arquivos são identificados por UUID v4, e o laudo usa o identificador do pedido. Chamados, tarefas, eventos e notificações usam UUID v7, que é ordenável por tempo mas ainda tem 74 bits aleatórios. Em nenhum caso o UUID substitui a conferência do dono ([C01]): ele só impede a enumeração em massa. O número exibido ao cliente não serve para buscar o recurso|Protect (PR.DS)|Back-end|Inspeção do esquema do banco. Teste que tenta IDs sequenciais e recebe 404|
 |<a id="c03"></a>C03|O armazenamento não tem nenhum objeto público. A API gera uma URL pré-assinada válida por 5 minutos, e só depois da conferência do C01|Protect (PR.DS, PR.AA)|Infraestrutura/DevOps e Back-end|Acesso direto ao armazenamento sem assinatura retorna 403, e uma URL expirada é recusada. A configuração do armazenamento é verificada todo mês|
 |<a id="c04"></a>C04|Os quatro perfis ([seção 3.1 da Etapa 1][e1-31]) são conferidos no servidor em todas as rotas de aprovação, edição de laudo e administração, sem depender do que a interface mostra|Protect (PR.AA)|Back-end|Um cliente que chama a rota de aprovação recebe 403 e o evento é registrado. A matriz de perfis por rota é revisada a cada versão|
 |<a id="c05"></a>C05|O painel interno fica em um endereço separado, acessível só pela VPN ou por uma lista de IPs. O login é por SSO com MFA para todos os perfis internos|Protect (PR.AA)|Infraestrutura/DevOps e Segurança da informação|Acessos de fora da VPN e logins sem o segundo fator são recusados. O relatório do SSO mostra MFA ativo em todas as contas internas|
@@ -427,7 +427,7 @@ Cada X corresponde a um controle atribuído ao risco no plano da seção 4.5. A 
 |[R12] Técnico nega a aprovação|Reduzir|[C06], [C18]|Govern, Protect, Respond|Líder de produção e Segurança da informação|Nenhuma conta compartilhada na revisão trimestral; cada aprovação ligada a uma conta pessoal no log|
 |[R13] Autoria de avaliação negada|Aceitar|[C18], [C22]|Govern, Identify|Diretoria e Segurança da informação|Aceitação aprovada em ata; cada avaliação registrada com conta, data e IP; revisão semestral|
 |[R14] Download de STL de terceiros|Reduzir|[C01], [C02], [C03], [C16], [C19]|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Segurança da informação|Troca de ID na URL retorna 403 ou 404; nenhum objeto público no armazenamento; URL expirada recusada|
-|[R15] Dados de pagamento expostos|Evitar|[C17]|Govern, Protect|Back-end e Encarregado de dados (DPO)|Nenhum número de cartão no banco nem nos logs (busca automática); revisão anual da integração com o gateway|
+|[R15] Dados de pagamento expostos|Reduzir|[C17]|Govern, Protect|Back-end e Encarregado de dados (DPO)|Nenhum número de cartão no banco nem nos logs (busca automática); revisão anual da integração com o gateway|
 |[R16] Dados de outros clientes|Reduzir|[C01], [C02], [C19]|Protect, Detect, Respond|Back-end e Encarregado de dados (DPO)|Teste de IDOR nas rotas de histórico, cadastro e laudo; plano de comunicação à ANPD revisado na simulação|
 |[R17] Desenhos técnicos expostos|Reduzir|[C01], [C03], [C16], [C19]|Protect, Detect, Respond|Back-end, Infraestrutura/DevOps e Líder de produção|Técnico não atribuído recebe 403 ao abrir o PDF; PDFs criptografados em repouso|
 |[R18] Bloqueio por força bruta|Reduzir|[C07]|Protect, Detect|Back-end|Na força bruta simulada, a espera cresce e o dono continua entrando|
@@ -490,11 +490,11 @@ Pela estimativa, nenhum risco continuaria Alto ou Crítico: 10 ficariam Médios 
 
 * **Riscos mais importantes:** os seis críticos ([R03], [R06], [R14], [R17], [R20] e [R22]), mais o [R21] e o [R24], que têm o mesmo alcance (todos os clientes) mas exigem mais capacidade técnica.
 * **Razões da priorização:** além da pontuação, pesaram o fato de que um projeto vazado não pode ser recuperado, a quantidade de clientes afetados e o custo de corrigir depois uma decisão de arquitetura. Também subiram na lista os riscos que contornam outros controles ([R24]) e os que servem de base para outros ([R25]).
-* **Estratégias predominantes:** reduzir, em 22 dos 26 riscos. Dois riscos são evitados ([R15] e [R26]), um é compartilhado com o gateway ([R10]) e um é aceito ([R13]).
+* **Estratégias predominantes:** reduzir, em 23 dos 26 riscos. Um risco é evitado ([R26]), um é compartilhado com o gateway ([R10]) e um é aceito ([R13]).
 * **Funções do NIST mais relevantes:** Protect, presente em 24 riscos, e Detect, em 19. Respond aparece em 12 riscos, Govern em 7, Recover em 4 e Identify em 2. Recover é pouco usado porque os riscos mais graves são vazamentos, que não têm como ser desfeitos.
 * **Controles essenciais:** a autorização centralizada (C01), o acesso ao painel por SSO, MFA e VPN (C05), a fila e os workers isolados (C10 e C11) e o log de auditoria (C18). Também o C19 (alertas e resposta), que aparece em 11 riscos.
 * **Principais dificuldades:**
-  * distinguir evitar de reduzir no [R15] e no [R26];
+  * distinguir evitar de reduzir: o [R26] é evitado, porque o PDF original deixa de chegar ao técnico, mas o [R15] ficou em reduzir, porque o token, o valor e o status ainda passam pelo sistema;
   * decidir quando marcar Recover em casos de vazamento;
   * definir responsáveis para uma empresa hipotética;
   * escrever controles específicos sem multiplicar o número deles.
