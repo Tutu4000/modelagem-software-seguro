@@ -161,7 +161,7 @@ Com a correção, o teste passa, e o mesmo pedido pela API recebe `400`.
 |`go vet`, `gosec` e `govulncheck`|Código Go|Nenhum achado|
 |`gitleaks`|Histórico do git (63 commits)|Nenhum segredo|
 |`npm audit`|Dependências do front-end|0 em produção; 10 moderadas só em ferramentas de desenvolvimento|
-|Trivy|Imagens Docker|`api`, `panel` e `worker` sem achados. O `nginx` tinha 10 CVEs altas ou críticas, corrigidas com a atualização dos pacotes. A imagem base do Keycloak tem 8 nos pacotes do sistema, ainda pendentes|
+|Trivy|Imagens Docker|`api`, `panel` e `worker` sem achados. O `nginx` tinha 10 CVEs altas ou críticas, corrigidas com a atualização dos pacotes. A imagem base do Keycloak tem 8 nos pacotes do sistema, ainda pendentes. Na Etapa 7, o `just scan-images` sem cache mostrou que a correção do nginx tinha ficado incompleta (6 achados, pois a base fixa o pacote) e a refez, e contou 19 no Keycloak, que seguem em aberto (ver o [roteiro da Etapa 7](../../roteiros/etapa-7-devsecops-e-video-final.md#3-o-que-já-existe-e-o-que-falta))|
 |Playwright|Os dois apps, num navegador de verdade|52 de 52 testes|
 |Testes de ponta a ponta em Go|Ambiente completo|46 de 47. O que falha exige o gVisor, ausente no Docker Desktop do Windows|
 
