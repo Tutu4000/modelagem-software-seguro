@@ -114,7 +114,7 @@ scan-images: build-images
     #!/usr/bin/env bash
     status=0
     for image in api panel worker nginx keycloak; do
-        just scan-image "nuggetmachine-$image" || status=1
+        {{ just_executable() }} scan-image "nuggetmachine-$image" || status=1
     done
     exit $status
 
