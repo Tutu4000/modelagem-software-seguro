@@ -218,7 +218,7 @@ just hooks       # uma vez por clone: aponta o git para .githooks/
 
 O `.githooks/pre-push` roda o `just ci` quando o push muda algo em `codigo/`. Quando só mudam documentos, diagramas ou roteiros, roda apenas o `just gitleaks`. Para pular a verificação numa emergência, use `SKIP_CI=1 git push` (ou `--no-verify`).
 
-O `just ci` precisa de Docker (`sqlc` e `gitleaks` rodam em contêiner), de Go e de rede na primeira vez, para baixar o `gosec` e o `govulncheck`. O `just scan-images` não entra no hook: a imagem base do Keycloak tem vulnerabilidades altas ou críticas ainda sem correção, e ele reprova nela até a atualização.
+O `just ci` precisa de Docker (`sqlc` e `gitleaks` rodam em contêiner), de Go e de rede na primeira vez, para baixar o `gosec` e o `govulncheck`. O `just scan-images` não entra no hook: constrói tudo sem cache, leva vários minutos e hoje reprova no nginx (pacote fixado pela imagem base) e no Keycloak, como descrito na Etapa 7.
 
 ## Front-end
 

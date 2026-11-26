@@ -58,7 +58,12 @@ A integração contínua é local, e não há servidor nem *workflow* do GitHub.
 
 A primeira execução do `just ci` já barrou a versão que estava no repositório: o `govulncheck` apontou a GO-2026-6859 (queda do servidor HTTP/1 por uma corrida no `MaxBytesReader`, em `net/http`), presente no Go 1.27.3 que o `go.mod` e o `Dockerfile` fixavam e corrigida no 1.27.4. A atualização do Go resolveu o alerta, e o `just ci` passou em seguida.
 
-Isso tem limites que vale dizer. O hook é um guarda-corpo local: `SKIP_CI=1` e `git push --no-verify` o contornam, e nada impede o merge de um pull request que não passou por ele. O ZAP continua manual, por ser lento e exigir o ambiente de pé, e a geração do SBOM da imagem ainda não existe. Há também uma pendência que o pipeline barraria hoje: a imagem base do Keycloak tem 8 vulnerabilidades altas ou críticas nos pacotes do sistema, ainda sem atualização, e por isso o `just scan-images` reprova nela.
+Isso tem limites que vale dizer. O hook é um guarda-corpo local: `SKIP_CI=1` e `git push --no-verify` o contornam, e nada impede o merge de um pull request que não passou por ele. O ZAP continua manual, por ser lento e exigir o ambiente de pé, e a geração do SBOM da imagem ainda não existe. Há também pendências que o pipeline barraria hoje. A primeira execução do `just scan-images` (Trivy 0.76.2, com as imagens construídas sem cache, em 26/11/2026) deixou as imagens `api`, `panel` e `worker` limpas e reprovou duas:
+
+* **nginx:** 6 vulnerabilidades (4 críticas e 2 altas), todas corrigidas no nginx 1.30.7. O `apk upgrade` do `Dockerfile` não as resolve, porque a imagem base fixa o pacote (`nginx=1.30.6-r1` no `/etc/apk/world`). A saída é trocar o digest da imagem base por um com o nginx corrigido ou liberar a versão do pacote.
+* **Keycloak:** 19 vulnerabilidades altas ou críticas, 18 nos pacotes do sistema (Red Hat 9.8) e 1 no Guava (CVE-2026-102554, corrigida na 33.7.2). Boa parte tem atualização publicada, e falta rever uma a uma.
+
+O `just scan-images` escaneia todas as imagens e só falha no fim, para mostrar todos os resultados de uma vez.
 
 ## 4. Roteiro da apresentação final
 

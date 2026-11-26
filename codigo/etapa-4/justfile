@@ -108,11 +108,19 @@ ci: lint test
 scan-image image:
     docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache {{ trivy }} image --no-progress --severity HIGH,CRITICAL --exit-code 1 {{ image }}
 
-# Build and scan the images (Keycloak last: its base image has known findings with no fix yet)
-scan-images: build-images (scan-image "nuggetmachine-api") (scan-image "nuggetmachine-panel") (scan-image "nuggetmachine-worker") (scan-image "nuggetmachine-nginx") (scan-image "nuggetmachine-keycloak")
+# Build and scan every image, and fail at the end if any of them has findings
+[unix]
+scan-images: build-images
+    #!/usr/bin/env bash
+    status=0
+    for image in api panel worker nginx keycloak; do
+        just scan-image "nuggetmachine-$image" || status=1
+    done
+    exit $status
 
+# No cache: a cached `apk upgrade` layer would be scanned as if it were fresh
 build-images:
-    {{ compose }} build
+    {{ compose }} build --no-cache
 
 # The whole Stage 7 pipeline except the ZAP: ci, image scan and e2e tests
 ci-full: up ci scan-images test-e2e
