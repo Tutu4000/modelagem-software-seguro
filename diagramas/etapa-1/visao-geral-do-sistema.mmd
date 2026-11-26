@@ -1,0 +1,14 @@
+flowchart LR
+    C([Cliente]) --> FE[Aplicação Web<br/>+ Visualizador 3D]
+    FE --> API[API Back-end]
+    API --> AUTH[Serviço de<br/>Autenticação]
+    API --> DB[(Banco de Dados)]
+    API --> S3[(Armazenamento<br/>de Arquivos)]
+    API --> W[Servidores de Processamento<br/>Render · Fatiador · DFM]
+    W --> S3
+    API --> PAY[Gateway de<br/>Pagamento]
+    API --> SHIP[API Transportadora]
+    SHIP -.->|atualização de rastreio| API
+    API --> NOTIF[Notificações<br/>e-mail/SMS]
+    T([Técnico / Suporte / Admin]) --> PAINEL[Painel Interno]
+    PAINEL --> API
