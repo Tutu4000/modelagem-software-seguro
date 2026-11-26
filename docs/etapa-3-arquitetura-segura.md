@@ -28,6 +28,68 @@ Para cada requisito, a vulnerabilidade foi buscada na CWE (MITRE) e confirmada n
 
 ## 3. Diagrama da arquitetura segura
 
+A arquitetura tem duas versões. Esta primeira é a enxuta: mostra só as zonas de confiança, o ponto central de autorização, o processamento isolado, os dados, o log e os serviços externos, com as fronteiras FC1 a FC5 nas setas e um controle da Etapa 2 em cada componente-chave. A fonte está em [arquitetura-enxuta.mmd](../diagramas/etapa-3/arquitetura-enxuta.mmd), com uma versão editável no draw.io em [arquitetura-enxuta.drawio](../diagramas/etapa-3/arquitetura-enxuta.drawio), e a imagem, em [arquitetura-enxuta.png](../diagramas/etapa-3/arquitetura-enxuta.png). A versão completa, mais densa, vem logo depois.
+
+```mermaid
+flowchart LR
+    subgraph INTERNET["Internet (não confiável)"]
+        CLI(["Cliente"])
+        WEB["Aplicação web<br/>+ visualizador 3D"]
+    end
+
+    subgraph INTERNA["Rede interna / VPN"]
+        EQ(["Equipe interna"])
+        PAINEL["Painel interno<br/>C05: SSO com MFA"]
+    end
+
+    IDP["Identidade<br/>C07 e C08: login e sessão"]
+    LB["Balanceador de carga<br/>TLS e limite de requisições"]
+
+    subgraph API["API back-end"]
+        AZ{{"Autorização central<br/>C01 e C04: dono do objeto<br/>e perfil por rota"}}
+        MOD["Módulos de negócio<br/>pedidos, arquivos,<br/>pagamentos e logística"]
+    end
+
+    subgraph PROC["Processamento isolado"]
+        FILA[["Fila<br/>C10: cota por conta"]]
+        WK["Workers descartáveis<br/>C11: sem rede e sem root"]
+    end
+
+    subgraph DADOS["Dados"]
+        DB[("Banco de dados<br/>C02: UUID")]
+        S3[("Armazenamento privado<br/>C03: URL pré-assinada")]
+        RED[("Estado compartilhado<br/>contadores e revogação")]
+    end
+
+    subgraph OPS["Segurança e operação"]
+        AUD[("Log de auditoria<br/>C18: só inclusões")]
+        MON["Monitoramento<br/>C19: alertas e resposta"]
+    end
+
+    EXT["Gateway de pagamento<br/>e transportadoras"]
+
+    CLI --> WEB
+    WEB -->|"FC1: HTTPS + token"| LB
+    LB --> AZ
+    EQ --> PAINEL
+    PAINEL -->|"FC2: VPN"| AZ
+    WEB -.->|login| IDP
+    PAINEL -.->|login| IDP
+    AZ --> MOD
+    AZ -.-> RED
+    MOD -->|"FC4"| DB
+    MOD -->|"FC4"| S3
+    MOD -->|"FC3: tarefa"| FILA
+    FILA --> WK
+    WK -->|"lê só o arquivo da tarefa"| S3
+    MOD <-->|"FC5: assinatura e HMAC"| EXT
+    AZ -.->|"decisões e ações sensíveis"| AUD
+    WK -.->|logs| AUD
+    AUD --> MON
+```
+
+### Versão completa
+
 O diagrama mostra os usuários, as interfaces, a autenticação, o ponto central de autorização, os dados, o log, o monitoramento e os serviços externos. Também aparecem os elementos que permitem escalar na horizontal: o balanceador de carga, as réplicas da API, o estado compartilhado entre elas, as réplicas de leitura do banco e o autoscaler dos workers. Cada subgrafo é uma zona de confiança, as setas FC1 a FC5 marcam onde os dados cruzam de uma zona para outra, e as notas em amarelo, ligadas por linha pontilhada, mostram os controles da Etapa 2 (C01 a C20) e as regras de segurança de cada componente. A fonte do diagrama está em [arquitetura-segura.mmd](../diagramas/etapa-3/arquitetura-segura.mmd), com uma versão editável no draw.io em [arquitetura-segura.drawio](../diagramas/etapa-3/arquitetura-segura.drawio), e a imagem, em [arquitetura-segura.png](../diagramas/etapa-3/arquitetura-segura.png). A [seção 3.2](#32-visão-em-blocos-de-construção) mostra a mesma arquitetura dividida em blocos de construção.
 
 ```mermaid
