@@ -243,6 +243,9 @@ just web-dev            # Vite em http://localhost:5173, com a API do compose po
 just web-dev panel      # o painel em http://localhost:5174
 just web-lint           # tipos gerados em dia, tsc, eslint, vitest e npm audit
 just web-e2e            # Playwright contra o compose, na imagem oficial
+just demo               # grava o pedido, do upload à entrega, em web/demo/out (partir de `just reset` e `just up`)
+just demo-gifs          # converte os clipes em um GIF por etapa e um MP4 do conjunto
+just demo-video          # junta os clipes em um MP4 1920x1080 com legenda e capítulos por passo
 ```
 
 O `just web-e2e` inclui os casos de abuso (`e2e/abuse.spec.ts`), a verificação de acessibilidade com o axe nas telas dos dois apps e o uso só pelo teclado (`e2e/a11y.spec.ts`). Os logins da equipe esperam um código TOTP novo, então a suíte leva cerca de 10 minutos. Duas observações:

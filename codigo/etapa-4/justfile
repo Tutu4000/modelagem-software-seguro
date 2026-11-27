@@ -60,6 +60,35 @@ grafana:
     @echo "Grafana: https://localhost:9446 (user admin)"
     @echo "Password: secrets/grafana_admin_password"
 
+# Record the order walkthrough (upload to delivery) in web/demo/out, one clip per stage (needs `just up`, from a clean state)
+demo:
+    mkdir -p web/demo/out
+    docker run --rm --network host --ipc=host --user "$(id -u):$(id -g)" -e HOME=/tmp \
+        -v "{{ justfile_directory() }}/web:/web" -v "{{ justfile_directory() }}/secrets:/secrets:ro" -e SECRETS_DIR=/secrets \
+        -w /web {{ playwright }} npx playwright test -c playwright.demo.config.ts
+
+# Turn the clips of `just demo` into GIFs (one per stage) and one MP4 with all of them
+[unix]
+demo-gifs:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd web/demo/out
+    rm -f *.gif *.mp4
+    for clip in 0*.webm; do
+        name="${clip%.webm}"
+        ffmpeg -v error -y -ss 0.8 -i "$clip" -vf "fps=10,scale=960:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=128[p];[b][p]paletteuse=dither=bayer:bayer_scale=4" -loop 0 "$name.gif"
+        ffmpeg -v error -y -ss 0.8 -i "$clip" -vf "scale=1920:1080,fps=25" -c:v libx264 -crf 28 -pix_fmt yuv420p -an "$name.mp4"
+    done
+    printf "file '%s'\n" 0*.mp4 > list.txt
+    ffmpeg -v error -y -f concat -safe 0 -i list.txt -c copy fluxo-completo.mp4
+    rm list.txt
+    ls -lh *.gif fluxo-completo.mp4
+
+# Join the clips of `just demo` into one MP4 with a caption and chapters per step
+[unix]
+demo-video:
+    web/demo/chapters.sh
+
 # Make one encrypted backup now, instead of waiting for the daily one
 backup:
     {{ compose }} run --rm backup -once
