@@ -30,7 +30,7 @@ O ativo mais sensível são os projetos dos clientes, que podem conter segredos 
 |5|Verificação de vulnerabilidades|[docs/etapa-5-verificacao-vulnerabilidades.md](docs/etapa-5-verificacao-vulnerabilidades.md) e [evidencias/etapa-5/](evidencias/etapa-5/)|Concluída|
 |6|Monitoramento e detecção de intrusões|[roteiros/etapa-6-deteccao-de-intrusoes.md](roteiros/etapa-6-deteccao-de-intrusoes.md)|Concluída|
 |7|DevSecOps e apresentação final|[roteiros/etapa-7-devsecops-e-video-final.md](roteiros/etapa-7-devsecops-e-video-final.md)|Concluída|
-|-|Artigo (template SBC ou IEEE)|-|Pendente|
+|-|Artigo (template SBC ou IEEE)|-|Concluída|
 
 **Resultados até agora:**
 
