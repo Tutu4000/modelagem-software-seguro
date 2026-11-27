@@ -95,7 +95,7 @@ just token a      # token do cliente A, para o pedido do arquivo do cliente B
 just grafana      # endereço e senha do Grafana
 ```
 
-Se o ambiente falhar na hora, as capturas de tela das Etapas 5 e 6 substituem as demonstrações. A gravação de um vídeo, opcional no enunciado, seguiria o mesmo roteiro.
+Se o ambiente falhar na hora, as capturas de tela das Etapas 5 e 6 substituem as demonstrações, e o fluxo do pedido (upload do STL, revisão técnica, pagamento e entrega) também existe gravado: `just demo` e `just demo-gifs` geram um GIF por etapa e um MP4 do conjunto, sem versionar os arquivos. A gravação de um vídeo, opcional no enunciado, seguiria o mesmo roteiro.
 
 [Etapa 1]: ../docs/etapa-1-ameacas-stride.md
 [Etapa 2]: ../docs/etapa-2-riscos-nist.md
